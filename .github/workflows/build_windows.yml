@@ -28,6 +28,11 @@ jobs:
     - name: Setup .NET Core SDK
       uses: actions/setup-dotnet@v4.3.0
 
+    - name: Setup Node
+      uses: actions/setup-node@v4.2.0
+      with:
+        node-version: 22
+
     - name: Build Windows binaries with build_scripts\build_windows.ps1
       run: |
         $env:path="C:\Program` Files` (x86)\Microsoft` Visual` Studio\2019\Enterprise\SDK\ScopeCppSDK\vc15\VC\bin\;$env:path"
