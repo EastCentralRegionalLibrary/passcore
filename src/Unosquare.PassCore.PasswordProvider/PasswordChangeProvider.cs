@@ -184,8 +184,11 @@ public class PasswordChangeProvider : IPasswordChangeProvider
                 return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted,
                     "The User principal is listed as restricted");
             }
-
-            return groups.Any(x => _options.AllowedAdGroups?.Contains(x.Name) == true)
+            if (_options.AllowedAdGroups == null)
+            {
+                return null;
+            }
+            return groups.Any(x => _options.AllowedAdGroups.Contains(x.Name) == true)
                 ? null
                 : new ApiErrorItem(ApiErrorCode.ChangeNotPermitted, "The User principal is not listed as allowed");
         }
