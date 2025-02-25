@@ -28,6 +28,7 @@
         "deasync": "^0.1.30",
         "react": "^16.14.0",
         "react-dom": "^16.14.0",
+        "react-form-validator-core": "^2.0.2",
         "uno-js": "^0.7.32",
         "zxcvbn": "^4.4.2"
     },
