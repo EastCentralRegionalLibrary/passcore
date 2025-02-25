@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { SnackbarContainer, snackbarService } from 'uno-material-ui';
+import { SnackbarContainer } from '../Components/SnackbarContainer';
+import { snackbarService } from '../Components/SnackbarService';
 import { SnackbarContext } from './GlobalContext';
 
 interface ISnackbarProvdierProps {
