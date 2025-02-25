@@ -13,7 +13,7 @@ import Info from '@material-ui/icons/Info';
 import Warning from '@material-ui/icons/Warning';
 import makeStyles from '@material-ui/styles/makeStyles';
 import * as React from 'react';
-import { Theme } from '@material-ui/core/styles/createMuiTheme';
+import { Theme } from '@material-ui/core/styles/createTheme';
 
 export type MessageType = 'success' | 'error' | 'warning' | 'info';
 
