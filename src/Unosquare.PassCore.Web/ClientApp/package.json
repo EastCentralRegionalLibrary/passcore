@@ -29,7 +29,6 @@
         "react": "^16.14.0",
         "react-dom": "^16.14.0",
         "uno-js": "^3.127.8",
-        "uno-material-ui": "^2.0.10",
         "uno-react": "^0.17.2",
         "zxcvbn": "^4.4.2"
     },
