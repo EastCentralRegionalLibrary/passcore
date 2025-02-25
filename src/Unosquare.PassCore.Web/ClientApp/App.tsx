@@ -1,13 +1,13 @@
 import './vendor';
 
-import createTheme from '@material-ui/core/styles/createTheme';
+import createMuiTheme from '@material-ui/core/styles/createMuiTheme';
 import responsiveFontSizes from '@material-ui/core/styles/responsiveFontSizes';
 import ThemeProvider from '@material-ui/styles/ThemeProvider';
 import * as React from 'react';
 import { render } from 'react-dom';
 import { Main } from './Main';
 
-const theme = createTheme({
+const theme = createMuiTheme({
     palette: {
         error: {
             main: '#f44336',
