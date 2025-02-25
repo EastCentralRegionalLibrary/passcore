@@ -1,7 +1,7 @@
 import Grid from '@material-ui/core/Grid/Grid';
 import Typography from '@material-ui/core/Typography/Typography';
 import * as React from 'react';
-import { LoadingIcon } from 'uno-material-ui';
+import { LoadingIcon } from './Components/LoadingIcon';
 import { useEffectWithLoading } from 'uno-react';
 import { EntryPoint } from './Components/EntryPoint';
 import { loadReCaptcha } from './Components/GoogleReCaptcha';

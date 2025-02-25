@@ -5,7 +5,7 @@ import FileCopy from '@material-ui/icons/FileCopy';
 import Visibility from '@material-ui/icons/Visibility';
 import VisibilityOff from '@material-ui/icons/VisibilityOff';
 import * as React from 'react';
-import { LoadingIcon } from 'uno-material-ui/dist/LoadingIcon';
+import { LoadingIcon } from './LoadingIcon';
 import { SnackbarContext } from '../Provider/GlobalContext';
 import { IPasswordGenProps } from '../types/Components';
 import { fetchRequest } from '../Utils/FetchRequest';

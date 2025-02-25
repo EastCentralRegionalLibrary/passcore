@@ -1,6 +1,6 @@
 import FormGroup from '@material-ui/core/FormGroup/FormGroup';
 import * as React from 'react';
-import { TextValidator } from 'uno-material-ui';
+import { TextValidator } from './TextValidator';
 import { useStateForModel } from 'uno-react';
 import { GlobalContext } from '../Provider/GlobalContext';
 import { IChangePasswordFormInitialModel, IChangePasswordFormProps } from '../types/Components';
