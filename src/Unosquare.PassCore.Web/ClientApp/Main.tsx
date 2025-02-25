@@ -1,5 +1,5 @@
-import Grid from '@material-ui/core/Grid/Grid';
-import Typography from '@material-ui/core/Typography/Typography';
+import Grid from '@mui/material/Grid/Grid';
+import Typography from '@mui/material/Typography/Typography';
 import * as React from 'react';
 import { LoadingIcon } from './Components/LoadingIcon';
 import { useEffectWithLoading } from './Components/hooks/useEffectWithLoading';
@@ -22,7 +22,7 @@ export const Main: React.FunctionComponent<any> = () => {
 
     if (isLoading) {
         return (
-            <Grid container={true} alignItems="center" direction="column" justify="center">
+            (<Grid container={true} alignItems="center" direction="column" justifyContent="center">
                 <Grid item={true} key="title">
                     <Typography variant="h3" align="center">
                         Loading Passcore...
@@ -31,7 +31,7 @@ export const Main: React.FunctionComponent<any> = () => {
                 <Grid item={true}>
                     <LoadingIcon />
                 </Grid>
-            </Grid>
+            </Grid>)
         );
     }
 

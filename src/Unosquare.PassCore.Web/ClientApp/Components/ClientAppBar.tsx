@@ -1,8 +1,8 @@
-import AppBar from '@material-ui/core/AppBar/AppBar';
-import Grid from '@material-ui/core/Grid/Grid';
-import Tooltip from '@material-ui/core/Tooltip/Tooltip';
-import Typography from '@material-ui/core/Typography/Typography';
-import HelpIcon from '@material-ui/icons/Help';
+import AppBar from '@mui/material/AppBar/AppBar';
+import Grid from '@mui/material/Grid/Grid';
+import Tooltip from '@mui/material/Tooltip/Tooltip';
+import Typography from '@mui/material/Typography/Typography';
+import HelpIcon from '@mui/icons-material/Help';
 import * as React from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
@@ -11,7 +11,7 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
     const { helpText } = changePasswordForm;
 
     return (
-        <AppBar
+        (<AppBar
             position="fixed"
             style={{
                 backgroundColor: '#304FF3',
@@ -23,7 +23,7 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
                 container={true}
                 style={{ height: '64px', width: '100%' }}
                 direction="row"
-                justify="space-between"
+                justifyContent="space-between"
                 alignItems="center"
             >
                 <Typography
@@ -40,6 +40,6 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
                     <HelpIcon color="secondary" style={{ paddingRight: '1%' }} />
                 </Tooltip>
             </Grid>
-        </AppBar>
+        </AppBar>)
     );
 };

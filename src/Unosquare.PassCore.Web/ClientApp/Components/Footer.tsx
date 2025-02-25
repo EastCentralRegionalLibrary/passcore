@@ -1,5 +1,5 @@
-import Grid from '@material-ui/core/Grid/Grid';
-import Typography from '@material-ui/core/Typography/Typography';
+import Grid from '@mui/material/Grid/Grid';
+import Typography from '@mui/material/Typography/Typography';
 import * as React from 'react';
 import mitLogo from '../assets/images/License_icon-mit.svg.png';
 import uslogo from '../assets/images/logo.png';
@@ -13,7 +13,7 @@ export const Footer: React.FunctionComponent<any> = () => (
             width: '650px',
         }}
     >
-        <Grid alignItems="center" container={true} direction="row" justify="space-between">
+        <Grid alignItems="center" container={true} direction="row" justifyContent="space-between">
             <Grid item={true} xs={8}>
                 <img src={passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} />
             </Grid>
@@ -23,7 +23,7 @@ export const Footer: React.FunctionComponent<any> = () => (
                 <img src={uslogo} style={{ maxHeight: '30px' }} />
             </Grid>
         </Grid>
-        <Grid alignItems="center" container={true} direction="column" justify="space-evenly">
+        <Grid alignItems="center" container={true} direction="column" justifyContent="space-evenly">
             <Typography align="center" variant="caption">
                 Powered by PassCore v4.5.0 - Open Source Initiative and MIT Licensed
             </Typography>

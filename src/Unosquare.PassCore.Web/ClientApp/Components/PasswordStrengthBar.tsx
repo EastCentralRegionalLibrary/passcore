@@ -1,5 +1,5 @@
-import LinearProgress from '@material-ui/core/LinearProgress';
-import makeStyles from '@material-ui/core/styles/makeStyles';
+import LinearProgress from '@mui/material/LinearProgress';
+import makeStyles from '@mui/styles/makeStyles';
 import * as React from 'react';
 import * as zxcvbn from 'zxcvbn';
 

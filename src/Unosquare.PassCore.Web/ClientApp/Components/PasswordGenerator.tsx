@@ -1,9 +1,9 @@
-import IconButton from '@material-ui/core/IconButton/IconButton';
-import InputAdornment from '@material-ui/core/InputAdornment/InputAdornment';
-import TextField from '@material-ui/core/TextField/TextField';
-import FileCopy from '@material-ui/icons/FileCopy';
-import Visibility from '@material-ui/icons/Visibility';
-import VisibilityOff from '@material-ui/icons/VisibilityOff';
+import IconButton from '@mui/material/IconButton/IconButton';
+import InputAdornment from '@mui/material/InputAdornment/InputAdornment';
+import TextField from '@mui/material/TextField/TextField';
+import FileCopy from '@mui/icons-material/FileCopy';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import * as React from 'react';
 import { LoadingIcon } from './LoadingIcon';
 import { SnackbarContext } from '../Provider/GlobalContext';
@@ -62,10 +62,14 @@ export const PasswordGenerator: React.FunctionComponent<IPasswordGenProps> = ({
                             onMouseDown={onMouseDownVisibility}
                             onMouseUp={onMouseUpVisibility}
                             tabIndex={-1}
-                        >
+                            size="large">
                             {visibility ? <Visibility /> : <VisibilityOff />}
                         </IconButton>
-                        <IconButton aria-label="Copy password to clipboard" onClick={copyPassword} tabIndex={-1}>
+                        <IconButton
+                            aria-label="Copy password to clipboard"
+                            onClick={copyPassword}
+                            tabIndex={-1}
+                            size="large">
                             <FileCopy />
                         </IconButton>
                     </InputAdornment>
