@@ -1,19 +1,17 @@
-import amber from '@material-ui/core/colors/amber';
-import blue from '@material-ui/core/colors/blue';
-import green from '@material-ui/core/colors/green';
-import red from '@material-ui/core/colors/red';
-import IconButton from '@material-ui/core/IconButton';
-import Snackbar, { SnackbarOrigin } from '@material-ui/core/Snackbar';
-import SnackbarContent from '@material-ui/core/SnackbarContent';
-import Typography from '@material-ui/core/Typography';
-import CheckCircle from '@material-ui/icons/CheckCircle';
-import Close from '@material-ui/icons/Close';
-import Error from '@material-ui/icons/Error';
-import Info from '@material-ui/icons/Info';
-import Warning from '@material-ui/icons/Warning';
-import makeStyles from '@material-ui/styles/makeStyles';
+import IconButton from '@mui/material/IconButton';
+import Snackbar, { SnackbarOrigin } from '@mui/material/Snackbar';
+import SnackbarContent from '@mui/material/SnackbarContent';
+import Typography from '@mui/material/Typography';
+import CheckCircle from '@mui/icons-material/CheckCircle';
+import Close from '@mui/icons-material/Close';
+import Error from '@mui/icons-material/Error';
+import Info from '@mui/icons-material/Info';
+import Warning from '@mui/icons-material/Warning';
+import makeStyles from '@mui/styles/makeStyles';
 import * as React from 'react';
-import { Theme } from '@material-ui/core/styles/createTheme';
+import { Theme } from '@mui/material/styles';
+
+import { amber, blue, green, red } from '@mui/material/colors';
 
 export type MessageType = 'success' | 'error' | 'warning' | 'info';
 
@@ -117,7 +115,7 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
     };
 
     return (
-        <Snackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
+        (<Snackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
             <SnackbarContent
                 className={getStyle()}
                 message={
@@ -127,12 +125,12 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
                 }
                 action={
                     !mobile && (
-                        <IconButton onClick={onClose}>
+                        <IconButton onClick={onClose} size="large">
                             <Close className={classes.closeIcon} />
                         </IconButton>
                     )
                 }
             />
-        </Snackbar>
+        </Snackbar>)
     );
 };

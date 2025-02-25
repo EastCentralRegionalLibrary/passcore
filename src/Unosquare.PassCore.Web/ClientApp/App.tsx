@@ -1,13 +1,13 @@
 import './vendor';
 
-import createTheme from '@material-ui/core/styles/createTheme';
-import responsiveFontSizes from '@material-ui/core/styles/responsiveFontSizes';
-import ThemeProvider from '@material-ui/styles/ThemeProvider';
+import { adaptV4Theme, createTheme, responsiveFontSizes } from '@mui/material/styles';
+
+import ThemeProvider from '@mui/styles/ThemeProvider';
 import * as React from 'react';
 import { render } from 'react-dom';
 import { Main } from './Main';
 
-const theme = createTheme({
+const theme = createTheme(adaptV4Theme({
     palette: {
         error: {
             main: '#f44336',
@@ -26,13 +26,15 @@ const theme = createTheme({
     zIndex: {
         appBar: 1201,
     },
-});
+}));
 
 const passcoreTheme = responsiveFontSizes(theme);
 
 render(
-    <ThemeProvider theme={passcoreTheme}>
-        <Main />
-    </ThemeProvider>,
+    <StyledEngineProvider injectFirst>
+        <ThemeProvider theme={passcoreTheme}>
+            <Main />
+        </ThemeProvider>
+    </StyledEngineProvider>,
     document.getElementById('rootNode'),
 );

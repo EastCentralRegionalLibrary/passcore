@@ -1,4 +1,4 @@
-import FormGroup from '@material-ui/core/FormGroup/FormGroup';
+import FormGroup from '@mui/material/FormGroup/FormGroup';
 import * as React from 'react';
 import { TextValidator } from './TextValidator';
 import { useStateForModel } from './hooks/useStateForModel';

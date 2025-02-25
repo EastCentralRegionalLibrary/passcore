@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-import TextField from '@material-ui/core/TextField';
+import TextField from '@mui/material/TextField';
 import * as React from 'react';
 import { ValidatorComponent } from 'react-form-validator-core';
 import { humanize } from 'uno-js';
