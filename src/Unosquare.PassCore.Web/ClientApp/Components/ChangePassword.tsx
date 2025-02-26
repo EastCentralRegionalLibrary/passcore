@@ -112,7 +112,7 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
                 <ValidatorForm
                     ref={validatorFormRef}
                     autoComplete="off"
-                    instantValidate={true}
+                    instantValidate
                     onSubmit={onSubmitValidatorForm}
                 >
                     <ChangePasswordForm

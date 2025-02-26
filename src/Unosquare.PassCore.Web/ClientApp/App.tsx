@@ -7,26 +7,28 @@ import * as React from 'react';
 import { render } from 'react-dom';
 import { Main } from './Main';
 
-const theme = createTheme(adaptV4Theme({
-    palette: {
-        error: {
-            main: '#f44336',
+const theme = createTheme(
+    adaptV4Theme({
+        palette: {
+            error: {
+                main: '#f44336',
+            },
+            primary: {
+                main: '#304FF3',
+            },
+            secondary: {
+                main: '#fff',
+            },
+            text: {
+                primary: '#191919',
+                secondary: '#000',
+            },
         },
-        primary: {
-            main: '#304FF3',
+        zIndex: {
+            appBar: 1201,
         },
-        secondary: {
-            main: '#fff',
-        },
-        text: {
-            primary: '#191919',
-            secondary: '#000',
-        },
-    },
-    zIndex: {
-        appBar: 1201,
-    },
-}));
+    }),
+);
 
 const passcoreTheme = responsiveFontSizes(theme);
 

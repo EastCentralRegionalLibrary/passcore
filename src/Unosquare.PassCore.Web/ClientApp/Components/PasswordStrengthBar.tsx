@@ -39,8 +39,8 @@ export const PasswordStrengthBar: React.FunctionComponent<IStrengthBarProps> = (
             strength < 33
                 ? classes.progressBarColorLow
                 : strength < 66
-                ? classes.progressBarColorMedium
-                : classes.progressBarColorHigh,
+                  ? classes.progressBarColorMedium
+                  : classes.progressBarColorHigh,
     });
 
     const newStrength = measureStrength(newPassword);

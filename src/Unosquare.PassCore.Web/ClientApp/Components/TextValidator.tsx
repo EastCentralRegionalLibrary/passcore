@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import TextField from '@mui/material/TextField';
 import * as React from 'react';
 import { ValidatorComponent } from 'react-form-validator-core';

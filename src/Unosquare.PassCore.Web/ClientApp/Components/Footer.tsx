@@ -13,17 +13,17 @@ export const Footer: React.FunctionComponent<any> = () => (
             width: '650px',
         }}
     >
-        <Grid alignItems="center" container={true} direction="row" justifyContent="space-between">
-            <Grid item={true} xs={8}>
+        <Grid alignItems="center" container direction="row" justifyContent="space-between">
+            <Grid item xs={8}>
                 <img src={passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} />
             </Grid>
-            <Grid item={true} xs={4}>
+            <Grid item xs={4}>
                 <img src={osiLogo} style={{ margin: '0 10px 0 40px', maxHeight: '30px' }} />
                 <img src={mitLogo} style={{ marginRight: '10px', maxHeight: '30px' }} />
                 <img src={uslogo} style={{ maxHeight: '30px' }} />
             </Grid>
         </Grid>
-        <Grid alignItems="center" container={true} direction="column" justifyContent="space-evenly">
+        <Grid alignItems="center" container direction="column" justifyContent="space-evenly">
             <Typography align="center" variant="caption">
                 Powered by PassCore v4.5.0 - Open Source Initiative and MIT Licensed
             </Typography>

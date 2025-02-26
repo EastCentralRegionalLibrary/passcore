@@ -17,7 +17,7 @@ export const ChangePasswordDialog: React.FunctionComponent<IChangePasswordDialog
 }: IChangePasswordDialogProps) => {
     const { successAlertBody, successAlertTitle } = React.useContext(GlobalContext).alerts;
     return (
-        (<Dialog open={open} disableEscapeKeyDown={true}>
+        <Dialog open={open} disableEscapeKeyDown>
             <DialogTitle>{successAlertTitle}</DialogTitle>
             <DialogContent>
                 <Typography variant="subtitle1">{successAlertBody}</Typography>
@@ -33,6 +33,6 @@ export const ChangePasswordDialog: React.FunctionComponent<IChangePasswordDialog
                     Ok
                 </Button>
             </DialogContent>
-        </Dialog>)
+        </Dialog>
     );
 };

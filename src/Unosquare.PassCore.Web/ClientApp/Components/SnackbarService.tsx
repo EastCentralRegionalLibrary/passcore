@@ -14,8 +14,8 @@ class SnackbarService extends SimpleObservable {
         return this.snackbar;
     }
 
-    public showSnackbar(message: string, type: MessageType = 'success', milliSeconds = 5000): Promise<{}> {
-        return new Promise(() => {
+    public async showSnackbar(message: string, type: MessageType = 'success', milliSeconds = 5000): Promise<{}> {
+        return await new Promise(() => {
             this.snackbar = {
                 isMobile: false,
                 message: {

@@ -86,7 +86,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
     return (
         <FormGroup row={false} style={{ width: '80%', margin: '15px 0 0 10%' }}>
             <TextValidator
-                autoFocus={true}
+                autoFocus
                 inputProps={{
                     tabIndex: 1,
                 }}
@@ -98,7 +98,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 onChange={handleChange}
                 validators={userNameValidations}
                 value={fields.Username}
-                fullWidth={true}
+                fullWidth
                 errorMessages={userNameErrorMessages}
             />
             <TextValidator
@@ -114,7 +114,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 type="password"
                 validators={['required']}
                 value={fields.CurrentPassword}
-                fullWidth={true}
+                fullWidth
                 errorMessages={[fieldRequired]}
             />
             {usePasswordGeneration ? (
@@ -133,7 +133,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         type="password"
                         validators={['required']}
                         value={fields.NewPassword}
-                        fullWidth={true}
+                        fullWidth
                         errorMessages={[fieldRequired]}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.NewPassword} />}
@@ -154,7 +154,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         type="password"
                         validators={['required', `isPasswordMatch:${fields.NewPassword}`]}
                         value={fields.NewPasswordVerify}
-                        fullWidth={true}
+                        fullWidth
                         errorMessages={[fieldRequired, passwordMatch]}
                     />
                 </>

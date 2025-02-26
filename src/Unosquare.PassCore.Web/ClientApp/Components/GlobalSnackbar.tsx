@@ -115,7 +115,7 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
     };
 
     return (
-        (<Snackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
+        <Snackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
             <SnackbarContent
                 className={getStyle()}
                 message={
@@ -131,6 +131,6 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
                     )
                 }
             />
-        </Snackbar>)
+        </Snackbar>
     );
 };

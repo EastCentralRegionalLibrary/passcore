@@ -4,7 +4,7 @@ import { ClientAppBar } from './ClientAppBar';
 import { Footer } from './Footer';
 
 export const EntryPoint: React.FunctionComponent<any> = () => (
-    <React.Fragment>
+    <>
         <ClientAppBar />
         <main
             style={{
@@ -14,5 +14,5 @@ export const EntryPoint: React.FunctionComponent<any> = () => (
             <ChangePassword />
             <Footer />
         </main>
-    </React.Fragment>
+    </>
 );
