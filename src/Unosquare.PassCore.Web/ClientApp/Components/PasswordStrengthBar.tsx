@@ -1,21 +1,31 @@
 import LinearProgress from '@mui/material/LinearProgress';
-import makeStyles from '@mui/styles/makeStyles';
+import { styled } from '@mui/material/styles';
 import * as React from 'react';
 import * as zxcvbn from 'zxcvbn';
 
-const useStyles = makeStyles({
-    progressBar: {
+const PREFIX = 'PasswordStrengthBar';
+
+const classes = {
+    progressBar: `${PREFIX}-progressBar`,
+    progressBarColorHigh: `${PREFIX}-progressBarColorHigh`,
+    progressBarColorLow: `${PREFIX}-progressBarColorLow`,
+    progressBarColorMedium: `${PREFIX}-progressBarColorMedium`
+};
+
+// TODO jss-to-styled codemod: The Fragment root was replaced by div. Change the tag if needed.
+const Root = styled('div')({
+    [`& .${classes.progressBar}`]: {
         color: '#000000',
         display: 'flex',
         flexGrow: 1,
     },
-    progressBarColorHigh: {
+    [`& .${classes.progressBarColorHigh}`]: {
         backgroundColor: '#4caf50',
     },
-    progressBarColorLow: {
+    [`& .${classes.progressBarColorLow}`]: {
         backgroundColor: '#ff5722',
     },
-    progressBarColorMedium: {
+    [`& .${classes.progressBarColorMedium}`]: {
         backgroundColor: '#ffc107',
     },
 });
@@ -32,7 +42,7 @@ interface IStrengthBarProps {
 }
 
 export const PasswordStrengthBar: React.FunctionComponent<IStrengthBarProps> = ({ newPassword }: IStrengthBarProps) => {
-    const classes = useStyles({});
+
 
     const getProgressColor = (strength: number) => ({
         barColorPrimary:
