@@ -6,7 +6,7 @@
     "scripts": {
         "lint": "tsc --noEmit && eslint ./**/*.{js,ts,tsx}  --quiet",
         "lint:fix": "eslint ./**/*.{js,ts,tsx}  --quiet --fix",
-        "build": "parcel build index.html --dist-dir ../wwwroot",
+        "build": "parcel build index.html --dist-dir ../wwwroot --log-level warn",
         "build:tsc": "tsc",
         "prettier": "prettier --check ./**/*.ts*",
         "prettier:fix": "prettier --write ./**/*.ts*",
@@ -14,14 +14,14 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/unosquare/passcore.git"
+        "url": "git+https://github.com/EastCentralRegionalLibrary/passcore.git"
     },
     "author": "Unosquare",
     "license": "MIT",
     "bugs": {
-        "url": "https://github.com/unosquare/passcore/issues"
+        "url": "https://github.com/EastCentralRegionalLibrary/passcore/issues"
     },
-    "homepage": "https://github.com/unosquare/passcore",
+    "homepage": "https://github.com/EastCentralRegionalLibrary/passcore",
     "dependencies": {
         "@emotion/react": "^11.14.0",
         "@emotion/styled": "^11.14.0",
