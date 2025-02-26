@@ -1,6 +1,6 @@
 import './vendor';
 
-import { adaptV4Theme, createTheme, responsiveFontSizes } from '@mui/material/styles';
+import { adaptV4Theme, StyledEngineProvider, createTheme, responsiveFontSizes } from '@mui/material/styles';
 
 import ThemeProvider from '@mui/styles/ThemeProvider';
 import * as React from 'react';
