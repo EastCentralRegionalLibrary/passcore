@@ -2,7 +2,7 @@
     "name": "passcore",
     "version": "1.0.0",
     "description": "PassCore is a self-service password change utility for Active Directory.",
-    "main": "index.html",
+    "source": "index.html",
     "scripts": {
         "lint": "tsc --noEmit && eslint ./**/*.{js,ts,tsx}  --quiet",
         "lint:fix": "eslint ./**/*.{js,ts,tsx}  --quiet --fix",
