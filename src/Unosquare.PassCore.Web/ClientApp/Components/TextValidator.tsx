@@ -9,7 +9,7 @@ export class TextValidator extends ValidatorComponent {
         isValid: true,
     };
 
-    public render() {
+    public renderValidatorComponent() {
         const {
             error,
             errorMessages,
