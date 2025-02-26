@@ -92,15 +92,12 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 }}
                 id="Username"
                 label={usernameLabel}
+                variant="standard"
                 helperText={userNameHelperText}
                 name="Username"
                 onChange={handleChange}
                 validators={userNameValidations}
                 value={fields.Username}
-                style={{
-                    height: '20px',
-                    margin: '15px 0 50px 0',
-                }}
                 fullWidth={true}
                 errorMessages={userNameErrorMessages}
             />
@@ -109,6 +106,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                     tabIndex: 2,
                 }}
                 label={currentPasswordLabel}
+                variant="standard"
                 helperText={currentPasswordHelpblock}
                 id="CurrentPassword"
                 name="CurrentPassword"
@@ -116,10 +114,6 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 type="password"
                 validators={['required']}
                 value={fields.CurrentPassword}
-                style={{
-                    height: '20px',
-                    marginBottom: '50px',
-                }}
                 fullWidth={true}
                 errorMessages={[fieldRequired]}
             />
@@ -132,16 +126,13 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                             tabIndex: 3,
                         }}
                         label={newPasswordLabel}
+                        variant="standard"
                         id="NewPassword"
                         name="NewPassword"
                         onChange={handleChange}
                         type="password"
                         validators={['required']}
                         value={fields.NewPassword}
-                        style={{
-                            height: '20px',
-                            marginBottom: '30px',
-                        }}
                         fullWidth={true}
                         errorMessages={[fieldRequired]}
                     />
@@ -155,6 +146,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                             tabIndex: 4,
                         }}
                         label={newPasswordVerifyLabel}
+                        variant="standard"
                         helperText={newPasswordVerifyHelpblock}
                         id="NewPasswordVerify"
                         name="NewPasswordVerify"
@@ -162,10 +154,6 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         type="password"
                         validators={['required', `isPasswordMatch:${fields.NewPassword}`]}
                         value={fields.NewPasswordVerify}
-                        style={{
-                            height: '20px',
-                            marginBottom: '50px',
-                        }}
                         fullWidth={true}
                         errorMessages={[fieldRequired, passwordMatch]}
                     />
