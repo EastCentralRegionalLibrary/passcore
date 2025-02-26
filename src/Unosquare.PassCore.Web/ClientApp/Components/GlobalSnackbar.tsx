@@ -1,5 +1,4 @@
 import IconButton from '@mui/material/IconButton';
-import { styled } from '@mui/material/styles';
 import Snackbar, { SnackbarOrigin } from '@mui/material/Snackbar';
 import SnackbarContent from '@mui/material/SnackbarContent';
 import Typography from '@mui/material/Typography';
@@ -8,78 +7,55 @@ import Close from '@mui/icons-material/Close';
 import Error from '@mui/icons-material/Error';
 import Info from '@mui/icons-material/Info';
 import Warning from '@mui/icons-material/Warning';
+import makeStyles from '@mui/styles/makeStyles';
 import * as React from 'react';
 import { Theme } from '@mui/material/styles';
 
 import { amber, blue, green, red } from '@mui/material/colors';
 
-const PREFIX = 'GlobalSnackbar';
+export type MessageType = 'success' | 'error' | 'warning' | 'info';
 
-const classes = {
-    closeIcon: `${PREFIX}-closeIcon`,
-    error: `${PREFIX}-error`,
-    icon: `${PREFIX}-icon`,
-    iconMobile: `${PREFIX}-iconMobile`,
-    info: `${PREFIX}-info`,
-    success: `${PREFIX}-success`,
-    text: `${PREFIX}-text`,
-    textMobile: `${PREFIX}-textMobile`,
-    warning: `${PREFIX}-warning`
-};
-
-const StyledSnackbar = styled(Snackbar)(({
-    theme: { palette }: Theme
-}) => ({
-    [`& .${classes.closeIcon}`]: {
+const useStyles = makeStyles(({ palette }: Theme) => ({
+    closeIcon: {
         color: '#fff !important',
         fontSize: '20px  !important',
     },
-
-    [`& .${classes.error}`]: {
+    error: {
         backgroundColor: palette ? `${palette.error.main} !important` : `${red[600]} !important`,
         display: 'flex !important',
     },
-
-    [`& .${classes.icon}`]: {
+    icon: {
         fontSize: '20px  !important',
         marginRight: '15px  !important',
     },
-
-    [`& .${classes.iconMobile}`]: {
+    iconMobile: {
         fontSize: '34px  !important',
         marginRight: '15px  !important',
     },
-
-    [`& .${classes.info}`]: {
+    info: {
         backgroundColor: palette ? `${palette.primary.main} !important` : `${blue[600]} !important`,
         display: 'flex !important',
     },
-
-    [`& .${classes.success}`]: {
+    success: {
         backgroundColor: `${green[600]} !important`,
         display: 'flex !important',
     },
-
-    [`& .${classes.text}`]: {
+    text: {
         alignItems: 'center',
         color: '#fff !important',
         display: 'inline-flex !important',
         fontSize: '18px !important',
     },
-
-    [`& .${classes.textMobile}`]: {
+    textMobile: {
         color: '#fff !important',
         display: 'inline-flex !important',
         fontSize: '28px !important',
     },
-
-    [`& .${classes.warning}`]: {
+    warning: {
         backgroundColor: `${amber[700]} !important`,
         display: 'flex !important',
-    }
+    },
 }));
-
-export type MessageType = 'success' | 'error' | 'warning' | 'info';
 
 export interface GlobalSnackbarProps {
     message: { messageText: string; messageType: MessageType };
@@ -92,7 +68,7 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
     milliSeconds = 2500,
     mobile = false,
 }) => {
-
+    const classes = useStyles({});
     const [open, setOpen] = React.useState(false);
 
     const getIconStyle = (): string => (mobile ? classes.iconMobile : classes.icon);
@@ -139,7 +115,7 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
     };
 
     return (
-        <StyledSnackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
+        (<Snackbar anchorOrigin={anchorOrigin} className={getStyle()} open={open}>
             <SnackbarContent
                 className={getStyle()}
                 message={
@@ -155,6 +131,6 @@ export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
                     )
                 }
             />
-        </StyledSnackbar>
+        </Snackbar>)
     );
 };
