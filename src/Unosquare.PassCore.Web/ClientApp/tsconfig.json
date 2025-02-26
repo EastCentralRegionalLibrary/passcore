@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-        "sourceMap": false,
+        "sourceMap": true,
         "noImplicitAny": true,
         "module": "esnext",
         "target": "es5",
@@ -10,7 +10,6 @@
         "strictNullChecks": false,
         "noImplicitReturns": true,
         "forceConsistentCasingInFileNames": true,
-        "suppressImplicitAnyIndexErrors": true,
         "noEmit": true,
         "noUnusedLocals": true
     },

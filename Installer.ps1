@@ -8,7 +8,7 @@ Set-Location $directory
 
 # Determining latest release
 Write-Host "Determining latest release"
-$releasesUrl = "https://api.github.com/repos/unosquare/passcore/releases"
+$releasesUrl = "https://api.github.com/repos/EastCentralRegionalLibrary/passcore/releases"
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $releases = Invoke-WebRequest $releasesUrl -UseBasicParsing
@@ -39,7 +39,7 @@ if([string]::IsNullOrEmpty($netCoreHost)) {
 # IIS setup script
 # Comment or delete the follow lines if you are making a custom installation and setup
 Write-Host "IIS setup running"
-$iisSetup = (new-object net.webclient).DownloadString('https://raw.githubusercontent.com/unosquare/passcore/master/IISSetup.ps1')
+$iisSetup = (new-object net.webclient).DownloadString('https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/IISSetup.ps1')
 
 Invoke-Command -ScriptBlock ([scriptblock]::Create($iisSetup)) -ArgumentList $directory
 

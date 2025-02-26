@@ -1,7 +1,7 @@
-[![Github All Releases](https://img.shields.io/github/downloads/unosquare/passcore/total.svg)](https://github.com/unosquare/passcore/releases)
-![Buils status](https://github.com/unosquare/passcore/workflows/ASP.NET%20Core%20CI/badge.svg)
+[![Github All Releases](https://img.shields.io/github/downloads/EastCentralRegionalLibrary/passcore/total.svg)](https://github.com/EastCentralRegionalLibrary/passcore/releases)
+![Buils status](https://github.com/EastCentralRegionalLibrary/passcore/workflows/ASP.NET%20Core%20CI/badge.svg)
 
-![Passcore Logo](https://github.com/unosquare/passcore/raw/master/src/Unosquare.PassCore.Web/ClientApp/assets/images/passcore-logo.png)
+![Passcore Logo](https://github.com/EastCentralRegionalLibrary/passcore/raw/master/src/Unosquare.PassCore.Web/ClientApp/assets/images/passcore-logo.png)
 # PassCore: A self-service password change utility for Active Directory
 
 *:star: Please star this project if you find it useful!*
@@ -53,7 +53,7 @@ PassCore has the following features:
 1. Ensure the server running IIS is domain-joined. To determine if the computer is domain-joined:
     - Go to the *Start* menu, right-click on *Computer*, then select *Properties*
     - Make sure the *Domain* field contains the correct setting.
-1. You need a Passcore copy to continue. We recommend to download the latest binary release of [PassCore](https://github.com/unosquare/passcore/releases/download/4.2.4/PassCore424.zip).
+1. You need a Passcore copy to continue. We recommend to download the latest binary release of [PassCore](https://github.com/EastCentralRegionalLibrary/passcore/releases/).
 1. **NOTE:** Before extracting the contents of the file, please right-click on it, select Properties and make sure the file is Unblocked (Click on the Unblock button at the bottom of the dialog if it is available). Then, extract the contents of the zip file to the directory where you will be serving the website from.
     - If you download the source code you need to run the following command via an Command Prompt. Make sure you start the Command Prompt with the Administrator option.
     - `dotnet publish --configuration Release --runtime win-x64 --output "<path>"`
@@ -77,13 +77,13 @@ PassCore has the following features:
 Use PowerShell to download and setup Passcore using the following command line, just make sure you have installed the [.NET Core 5.0.1 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/dotnet/thank-you/runtime-aspnetcore-5.0.1-windows-hosting-bundle-installer) and enabled World Wide Web publishing service:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/unosquare/passcore/master/Installer.ps1'))
+Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/Installer.ps1'))
 ```
 
 Using the command shown above will install to the folder `C:\passcore` and using the HTTP Port 8080 with the default (localhost) binding. 
 
-If you want to customize your installation please download the [installer script](https://raw.githubusercontent.com/unosquare/passcore/master/Installer.ps1) and 
-the [IIS setup script](https://raw.githubusercontent.com/unosquare/passcore/master/IISSetup.ps1).
+If you want to customize your installation please download the [installer script](https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/Installer.ps1) and 
+the [IIS setup script](https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/IISSetup.ps1).
 
 **NOTE:** You need [PowerShell version 5 or better](https://docs.microsoft.com/en-us/powershell/scripting/setup/windows-powershell-system-requirements?view=powershell-6) 
 to execute the script.
@@ -194,18 +194,3 @@ icacls "<logfolder>/" /grant "IIS AppPool\<passcoreAppPoolAccount>:M" /t
 
 PassCore is open source software and MIT licensed. Please star this project if you like it.
 
-## passcorepro
-
-PassCore is free and will continue to be free forever.
-However, you can access a complete, brand new version with new features and tools.
-
-Introducing passcorepro.
-This new, enhanced version of our self-service password manager comes with new features such as:
-
-*	Display and manage your Active Directory information with our user profile system.
-*	Search for any staff member with the new Directory grid.
-*	Forgot your password? We help you reset it via Email or SMS (via [Twillio Verify API](https://www.twilio.com/docs/verify/api) or custom SMS Gateway).
-*	Administrate your AD using our new Dashboard tool.
-*	Parlez-vous français? You can now add any language to PassCorePro!
-
-Go to our store and download a free trial: https://store.unosquare.com/PasscorePro
