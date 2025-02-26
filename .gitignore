@@ -153,6 +153,7 @@ AppPackages/
 
 # Others
 *.[Cc]ache
+.parcel-cache
 ClientBin/
 [Ss]tyle[Cc]op.*
 ~$*
