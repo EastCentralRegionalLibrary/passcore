@@ -46,7 +46,7 @@ export const PasswordGenerator: React.FunctionComponent<IPasswordGenProps> = ({
     ) : (
         <TextField
             id="generatedPassword"
-            disabled={true}
+            disabled
             label="New Password"
             value={value}
             type={visibility ? 'text' : 'Password'}
@@ -62,14 +62,16 @@ export const PasswordGenerator: React.FunctionComponent<IPasswordGenProps> = ({
                             onMouseDown={onMouseDownVisibility}
                             onMouseUp={onMouseUpVisibility}
                             tabIndex={-1}
-                            size="large">
+                            size="large"
+                        >
                             {visibility ? <Visibility /> : <VisibilityOff />}
                         </IconButton>
                         <IconButton
                             aria-label="Copy password to clipboard"
                             onClick={copyPassword}
                             tabIndex={-1}
-                            size="large">
+                            size="large"
+                        >
                             <FileCopy />
                         </IconButton>
                     </InputAdornment>

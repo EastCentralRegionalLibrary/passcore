@@ -22,16 +22,16 @@ export const Main: React.FunctionComponent<any> = () => {
 
     if (isLoading) {
         return (
-            (<Grid container={true} alignItems="center" direction="column" justifyContent="center">
-                <Grid item={true} key="title">
+            <Grid container alignItems="center" direction="column" justifyContent="center">
+                <Grid item key="title">
                     <Typography variant="h3" align="center">
                         Loading Passcore...
                     </Typography>
                 </Grid>
-                <Grid item={true}>
+                <Grid item>
                     <LoadingIcon />
                 </Grid>
-            </Grid>)
+            </Grid>
         );
     }
 

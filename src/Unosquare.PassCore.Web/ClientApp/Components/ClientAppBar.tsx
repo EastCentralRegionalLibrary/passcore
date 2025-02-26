@@ -11,7 +11,7 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
     const { helpText } = changePasswordForm;
 
     return (
-        (<AppBar
+        <AppBar
             position="fixed"
             style={{
                 backgroundColor: '#304FF3',
@@ -20,7 +20,7 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
             elevation={0}
         >
             <Grid
-                container={true}
+                container
                 style={{ height: '64px', width: '100%' }}
                 direction="row"
                 justifyContent="space-between"
@@ -40,6 +40,6 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
                     <HelpIcon color="secondary" style={{ paddingRight: '1%' }} />
                 </Tooltip>
             </Grid>
-        </AppBar>)
+        </AppBar>
     );
 };
