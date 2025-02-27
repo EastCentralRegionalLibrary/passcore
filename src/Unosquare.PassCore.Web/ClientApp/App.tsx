@@ -1,42 +1,39 @@
 import './vendor';
 
-import { adaptV4Theme, StyledEngineProvider, createTheme, responsiveFontSizes } from '@mui/material/styles';
+import { StyledEngineProvider, createTheme, responsiveFontSizes, ThemeProvider } from '@mui/material/styles';
 
-import ThemeProvider from '@mui/styles/ThemeProvider';
 import * as React from 'react';
-import { render } from 'react-dom';
+import * as ReactDOMClient from 'react-dom/client';
 import { Main } from './Main';
 
-const theme = createTheme(
-    adaptV4Theme({
-        palette: {
-            error: {
-                main: '#f44336',
-            },
-            primary: {
-                main: '#304FF3',
-            },
-            secondary: {
-                main: '#fff',
-            },
-            text: {
-                primary: '#191919',
-                secondary: '#000',
-            },
+const theme = createTheme({
+    palette: {
+        error: {
+            main: '#f44336',
         },
-        zIndex: {
-            appBar: 1201,
+        primary: {
+            main: '#304FF3',
         },
-    }),
-);
+        secondary: {
+            main: '#fff',
+        },
+        text: {
+            primary: '#191919',
+            secondary: '#000',
+        },
+    },
+    zIndex: {
+        appBar: 1201,
+    },
+});
 
 const passcoreTheme = responsiveFontSizes(theme);
-
-render(
+const rootNode = document.getElementById('rootNode');
+const root = ReactDOMClient.createRoot(rootNode);
+root.render(
     <StyledEngineProvider injectFirst>
         <ThemeProvider theme={passcoreTheme}>
             <Main />
         </ThemeProvider>
     </StyledEngineProvider>,
-    document.getElementById('rootNode'),
 );
