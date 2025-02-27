@@ -84,12 +84,27 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
         });
 
     return (
-        <FormGroup row={false} style={{ width: '80%', margin: '15px 0 0 10%' }}>
+        <FormGroup
+            row={false}
+            sx={{
+                width: '80%',
+                display: 'flex',
+                flexDirection: 'column', // if row is false, use column.
+                justifyContent: 'center',
+                alignItems: 'stretch', // fill the width of the FormGroup
+                paddingTop: '16px', // shift the first TextValidator down for aesthetics
+                margin: '0 auto', // for centering the FormGroup itself
+            }}
+        >
             <TextValidator
                 autoFocus
                 inputProps={{
                     tabIndex: 1,
                 }}
+                sx={{ 
+                    flex: 1,
+                    margin: 'auto',
+                 }}
                 id="Username"
                 label={usernameLabel}
                 variant="standard"
@@ -105,6 +120,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 inputProps={{
                     tabIndex: 2,
                 }}
+                sx={{ 
+                    flex: 1,
+                    margin: 'auto',
+                 }}
                 label={currentPasswordLabel}
                 variant="standard"
                 helperText={currentPasswordHelpblock}
@@ -125,6 +144,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         inputProps={{
                             tabIndex: 3,
                         }}
+                        sx={{ 
+                            flex: 1,
+                            margin: 'auto',
+                         }}
                         label={newPasswordLabel}
                         variant="standard"
                         id="NewPassword"
@@ -145,6 +168,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         inputProps={{
                             tabIndex: 4,
                         }}
+                        sx={{ 
+                            flex: 1,
+                            margin: 'auto',
+                         }}
                         label={newPasswordVerifyLabel}
                         variant="standard"
                         helperText={newPasswordVerifyHelpblock}
