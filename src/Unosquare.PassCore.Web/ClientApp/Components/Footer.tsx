@@ -1,6 +1,7 @@
 import Grid from '@mui/material/Grid/Grid';
 import Typography from '@mui/material/Typography/Typography';
 import * as React from 'react';
+import { appVersion } from '../version';
 import mitLogo from '../assets/images/License_icon-mit.svg.png';
 import uslogo from '../assets/images/logo.png';
 import osiLogo from '../assets/images/osi.png';
@@ -25,10 +26,10 @@ export const Footer: React.FunctionComponent<any> = () => (
         </Grid>
         <Grid alignItems="center" container direction="column" justifyContent="space-evenly">
             <Typography align="center" variant="caption">
-                Powered by PassCore v4.5.0 - Open Source Initiative and MIT Licensed
+                Powered by PassCore {appVersion} - Open Source Initiative and MIT Licensed
             </Typography>
             <Typography align="center" variant="caption">
-                Copyright © 2016-2022 Unosquare
+                Copyright © 2016-{new Date().getFullYear()} Unosquare
             </Typography>
         </Grid>
     </div>
