@@ -1,13 +1,14 @@
 ---
 name: Feature request
 about: Suggest an idea for this project
+title: ''
+labels: enhancement
+assignees: ECRLib
 
 ---
 
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
-
-*Note:* If you want to request a feature of passcorepro, please use the proper bug report form at https://store.unosquare.com/passcorepro
 
 **Describe the solution you'd like**
 A clear and concise description of what you want to happen.
