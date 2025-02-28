@@ -18,8 +18,8 @@
   - [Running as a sub application](#running-as-a-sub-application)
 - [Troubleshooting](#troubleshooting)
   - [LDAP Support](#ldap-support)
+- [Build Your Own Version](#build-your-own-version)
 - [License](#license)
-- [passcorepro](#passcorepro)
 
 ## Overview
 
@@ -27,9 +27,8 @@ PassCore is a very simple 1-page web application written in [C#](https://docs.mi
 
 It allows users to change their Active Directory/LDAP password on their own, provided the user is not disabled.
 
-PassCore does not require any configuration, as it obtains the principal context from the current domain. I wrote this because a number of people have requested several features that the [original version](http://unopasscore.codeplex.com/) did not have. The original version of this tool was downloaded around 8000 times in 2.5 years. My hope is that the new version continues to be just as popular. There really is no free alternative out there (that I know of) so hopefully this saves someone else some time and money.
-
-You can check [the wiki section](https://github.com/unosquare/passcore/wiki) for additional content related to development of this project.
+Created by [Geovanni Perez](https://github.com/geoperez) of [Unosquare](https://github.com/unosquare/)
+> PassCore does not require any configuration, as it obtains the principal context from the current domain. I wrote this because a number of people have requested several features that the [original version](http://unopasscore.codeplex.com/) did not have. The original version of this tool was downloaded around 8000 times in 2.5 years. My hope is that the new version continues to be just as popular. There really is no free alternative out there (that I know of) so hopefully this saves someone else some time and money.
 
 ### Features
 
@@ -166,7 +165,7 @@ To run as a sub-application you need to modify the `base href="/"` value in the 
 
 ## Troubleshooting
 
-- At first run if you find an error (e.g. **HTTP Error 502.5**) first ensure you have installed [.NET Core 3.1.0 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/thank-you/dotnet-runtime-3.1.0-windows-hosting-bundle-installer), or better.
+- At first run if you find an error (e.g. **HTTP Error 502.5**) first ensure you have installed [.NET Core 5.0.1 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/dotnet/thank-you/runtime-aspnetcore-5.0.1-windows-hosting-bundle-installer), or better.
 - If you find an [HTTP Error 500](https://stackoverflow.com/questions/45415832/http-error-500-19-in-iis-10-and-visual-studio-2017) you can try
   1. Press Win Key+R to Open Run Window
   1. in the Run Window, enter "OptionalFeatures.exe"
@@ -189,6 +188,24 @@ icacls "<logfolder>/" /grant "IIS AppPool\<passcoreAppPoolAccount>:M" /t
   1. Ensure `LdapPassword` is set to the correct password for the admin user mentioned above
   1. User @gadams65 suggests the following: Use the FQDN of your LDAP host. Enter the LDAP username without any other prefix or suffix such as `domain\\` or `@domain`. Only the username.
 - You can also opt to use the Linux or macOS version of PassCore. This version includes a LDAP Provider based on Novell. The same provider can be used with Windows, you must build it by yourself.
+
+
+## Build your own version
+
+If you need to modify the source code (either backend or frontend). You may require to install .NET Core SDK and Node.js. Run the following command according to your target platform.
+Windows
+```
+dotnet publish --configuration Release --runtime win-x64 --output "<path>"
+```
+Linux (portable)
+```
+dotnet publish --configuration Release --runtime linux-x64 /p:PASSCORE_PROVIDER=LDAP --output "<path>"
+```
+MacOS (OS X)
+```
+dotnet publish --configuration Release --runtime osx-x64 /p:PASSCORE_PROVIDER=LDAP --output "<path>"
+```
+Note - The PASSCORE_PROVIDER modifier will use the LDAP Provider instead of Active Directory Provider.
 
 ## License
 
