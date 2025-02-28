@@ -294,7 +294,7 @@ public class PasswordChangeProvider : IPasswordChangeProvider
         }
         catch (Exception ex) // Catch exceptions during attribute update
         {
-            throw new ApiErrorException("Failed to update 'pwdLastSet' attribute.", ApiErrorCode.ChangeNotPermitted, ex); // Throw API error exception on failure
+            throw new ApiErrorException("Failed to update 'pwdLastSet' attribute.", ApiErrorCode.ChangeNotPermitted); // Throw API error exception on failure
         }
     }
 
