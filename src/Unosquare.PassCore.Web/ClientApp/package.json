@@ -31,7 +31,7 @@
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
         "react-form-validator-core": "^2.0.2",
-        "uno-js": "^0.7.32",
+        "uno-js": "^3.127.8",
         "zxcvbn": "^4.4.2"
     },
     "devDependencies": {
