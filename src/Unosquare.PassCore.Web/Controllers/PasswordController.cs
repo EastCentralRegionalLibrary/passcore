@@ -131,8 +131,9 @@ public class PasswordController : Controller
         if (_options.Recaptcha != null && string.IsNullOrWhiteSpace(_options.Recaptcha.PrivateKey))
             return true;
 
-        if (_options.Recaptcha == null || string.IsNullOrEmpty(recaptchaResponse) == false)
+        if (_options.Recaptcha == null || string.IsNullOrEmpty(recaptchaResponse))
             return false;
+
 
         var requestUrl = new Uri(
             $"https://www.google.com/recaptcha/api/siteverify?secret={_options.Recaptcha.PrivateKey}&response={recaptchaResponse}");
