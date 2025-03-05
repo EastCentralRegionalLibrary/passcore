@@ -164,6 +164,46 @@ namespace Unosquare.PassCore.PasswordProvider
                 new EventId(888, "GroupValidationError"),
                 "Error during group membership validation: {ErrorMessage}");
 
+        // Add new LoggerMessage delegates for AcquireDomainPasswordLength
+        private static readonly Action<ILogger, Exception?> LogPasswordLengthRetrievalError =
+            LoggerMessage.Define(
+                LogLevel.Error,
+                new EventId(121, "PasswordLengthRetrievalError"),
+                "Error retrieving domain password length policy from Active Directory. Defaulting to 6.");
+
+        private static readonly Action<ILogger, Exception?> LogPasswordLengthRetrievalWarning =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(122, "PasswordLengthRetrievalWarning"),
+                "Could not retrieve 'minPwdLength' from Active Directory or property value was not an integer. Defaulting to 6.");
+
+        // Add new LoggerMessage delegates for AcquirePrincipalContext
+        private static readonly Action<ILogger, Exception?> LogPrincipalContextCreationFailedError =
+            LoggerMessage.Define(
+                LogLevel.Error,
+                new EventId(123, "PrincipalContextCreationFailedError"),
+                "Error creating PrincipalContext with provided LDAP settings.");
+
+        private static readonly Action<ILogger, Exception?> LogLdapHostnamesNotConfiguredWarning =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(124, "LdapHostnamesNotConfiguredWarning"),
+                "LDAP Hostnames are not configured when UseAutomaticContext is false. PrincipalContext cannot be created.");
+
+        // Add new LoggerMessage delegates for GetDirectoryEntry
+        private static readonly Action<ILogger, Exception?> LogLdapHostnamesEmptyWarning =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(125, "LdapHostnamesEmptyWarning"),
+                "LDAP Hostnames are not configured. Cannot create DirectoryEntry.");
+
+        private static readonly Action<ILogger, Exception?> LogDirectoryEntryCreationFailedError =
+            LoggerMessage.Define(
+                LogLevel.Error,
+                new EventId(126, "DirectoryEntryCreationFailedError"),
+                "Error creating DirectoryEntry with provided LDAP settings.");
+
+
         /// <summary>
         /// Initializes a new instance of the <see cref="PasswordChangeProvider"/> class.
         /// Constructor to inject logger and options.
@@ -499,53 +539,114 @@ namespace Unosquare.PassCore.PasswordProvider
         /// Acquires a PrincipalContext object for Active Directory operations.
         /// If 'UseAutomaticContext' is enabled, it uses the automatic domain context.
         /// Otherwise, it creates a context based on LDAP hostname, port, username, and password from options.
+        /// Throws an exception if PrincipalContext cannot be acquired when not using automatic context.
         /// </summary>
         /// <returns>A <see cref="PrincipalContext"/> object for Active Directory interaction.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if LDAP Hostnames are not configured when not using automatic context, or if PrincipalContext creation fails.</exception>
         private PrincipalContext AcquirePrincipalContext()
         {
             if (_options.UseAutomaticContext) // Check if automatic context is enabled
             {
-                LogAutomaticDomainContext(_logger, null);
+                LogAutomaticDomainContext(_logger, null); // Using existing delegate
                 return new PrincipalContext(ContextType.Domain); // Create PrincipalContext using automatic domain context
             }
+            else
+            {
+                if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty when not using automatic context
+                {
+                    // Using logging delegate for warning about missing LDAP Hostnames
+                    LogLdapHostnamesNotConfiguredWarning(_logger);
+                    throw new InvalidOperationException("LDAP Hostnames are not configured."); // Throw exception to signal configuration error
+                }
 
-            // Create PrincipalContext using provided LDAP hostname and credentials
-            var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string from hostname and port
-            LogDomainContext(_logger, domain, null);
-            return new PrincipalContext(
-                ContextType.Domain,
-                domain,
-                _options.LdapUsername,
-                _options.LdapPassword);
+                var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string from hostname and port
+                LogDomainContext(_logger, domain, null); // Using existing delegate
+                try
+                {
+                    return new PrincipalContext( // Create PrincipalContext with LDAP credentials
+                        ContextType.Domain,
+                        domain,
+                        _options.LdapUsername,
+                        _options.LdapPassword);
+                }
+                catch (Exception ex)
+                {
+                    // Using logging delegate for error during PrincipalContext creation
+                    LogPrincipalContextCreationFailedError(_logger, ex);
+                    throw new InvalidOperationException("Failed to create PrincipalContext.", ex); // Re-throw exception to signal failure
+                }
+            }
         }
 
         /// <summary>
         /// Retrieves the minimum password length policy from Active Directory.
         /// Uses either automatic domain context or specified LDAP connection details based on 'UseAutomaticContext' option.
+        /// Returns a default value of 6 if retrieval fails.
         /// </summary>
         /// <returns>The minimum password length as an integer.</returns>
         private int AcquireDomainPasswordLength()
         {
-            DirectoryEntry entry = _options.UseAutomaticContext // Determine DirectoryEntry creation method based on UseAutomaticContext
-                ? Domain.GetCurrentDomain().GetDirectoryEntry() // Get DirectoryEntry using automatic domain context
-                : GetDirectoryEntry(); // Use extracted method to get DirectoryEntry with LDAP credentials
+            DirectoryEntry? entry = null; // Initialize to null for try-finally and error handling
+            try
+            {
+                entry = _options.UseAutomaticContext
+                    ? Domain.GetCurrentDomain().GetDirectoryEntry()
+                    : GetDirectoryEntry();
 
-            return (int)entry.Properties["minPwdLength"].Value; // Retrieve minimum password length from 'minPwdLength' property
+                if (entry?.Properties["minPwdLength"]?.Value is int minLength) // Null-conditional checks and type check
+                {
+                    return minLength;
+                }
+                else
+                {
+                    // Using logging delegate for warning about missing/invalid property
+                    LogPasswordLengthRetrievalWarning(_logger, null);
+                    return 6; // Default minimum password length
+                }
+            }
+            catch (Exception ex)
+            {
+                // Using logging delegate for error during retrieval
+                LogPasswordLengthRetrievalError(_logger, ex);
+                return 6; // Default minimum password length in case of exception
+            }
+            finally
+            {
+                entry?.Dispose(); // Ensure disposal in finally block
+            }
         }
+
 
         /// <summary>
         /// Creates and returns a DirectoryEntry object using LDAP connection details from options.
         /// This method is extracted for better readability and reusability.
+        /// Returns null and logs a warning if LDAP Hostnames are not configured.
         /// </summary>
-        /// <returns>A <see cref="DirectoryEntry"/> object configured with LDAP credentials.</returns>
-        private DirectoryEntry GetDirectoryEntry() // Extracted method for DirectoryEntry creation
+        /// <returns>A <see cref="DirectoryEntry"/> object configured with LDAP credentials, or null if configuration is missing.</returns>
+        private DirectoryEntry? GetDirectoryEntry()
         {
+            if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty
+            {
+                // Use logging delegate for warning about missing LDAP Hostnames
+                LogLdapHostnamesEmptyWarning(_logger, null);
+                return null; // Return null to indicate failure to create DirectoryEntry
+            }
+
             var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string
-            LogCreatingDirectoryEntry(_logger, domain, null);
-            return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
-                domain,
-                _options.LdapUsername,
-                _options.LdapPassword);
+            LogCreatingDirectoryEntry(_logger, domain, null); // Already using delegate
+            try
+            {
+                return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
+                    domain,
+                    _options.LdapUsername,
+                    _options.LdapPassword);
+            }
+            catch (Exception ex)
+            {
+                // Use logging delegate for error during DirectoryEntry creation
+                LogDirectoryEntryCreationFailedError(_logger, ex);
+                return null; // Return null if DirectoryEntry creation fails
+            }
         }
     }
 }
