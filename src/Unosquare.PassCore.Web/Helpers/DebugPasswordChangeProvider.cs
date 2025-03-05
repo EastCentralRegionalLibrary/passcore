@@ -9,7 +9,7 @@ internal class DebugPasswordChangeProvider : IPasswordChangeProvider
             : username;
 
         // Even in DEBUG, it is safe to make this call and check the password anyway
-        if (PwnedPasswordsSearch.PwnedSearch.IsPwnedPassword(newPassword))
+        if (PwnedPasswordsSearch.PwnedSearch.IsPwnedPasswordAsync(newPassword).GetAwaiter().GetResult())
             return new ApiErrorItem(ApiErrorCode.PwnedPassword);
 
         return currentUsername switch

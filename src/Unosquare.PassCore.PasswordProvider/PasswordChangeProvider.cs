@@ -8,6 +8,7 @@ using System.DirectoryServices.AccountManagement;
 using System.DirectoryServices.ActiveDirectory;
 using System.Linq;
 using Unosquare.PassCore.Common;
+using System.Threading.Tasks;
 
 namespace Unosquare.PassCore.PasswordProvider
 {
@@ -206,6 +207,18 @@ namespace Unosquare.PassCore.PasswordProvider
                 new EventId(126, "DirectoryEntryCreationFailedError"),
                 "Error creating DirectoryEntry with provided LDAP settings.");
 
+        // LoggerMessage delegates for PwnedPasswordCheckAsync
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckApiError =
+            LoggerMessage.Define<string>(
+                LogLevel.Warning,
+                new EventId(205, "PwnedPasswordCheckApiError"),
+                "Error during Pwned Password API check: {ErrorMessage}");
+
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckUnexpectedError =
+            LoggerMessage.Define<string>(LogLevel.Error,
+            new EventId(206, "PwnedPasswordCheckUnexpectedError"),
+            "Unexpected error during Pwned Password check: {ErrorMessage}");
+
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PasswordChangeProvider"/> class.
@@ -224,6 +237,45 @@ namespace Unosquare.PassCore.PasswordProvider
 
         /// <inheritdoc />
         /// <summary>
+        /// Performs the password change using the credentials provided.
+        /// <remarks>
+        /// This method is a synchronous wrapper around the asynchronous <see cref="PerformPasswordChangeAsync"/> method.
+        /// It blocks the calling thread while waiting for the asynchronous operation to complete.
+        /// Any exceptions thrown by the asynchronous operation are caught, logged, and returned as an <see cref="ApiErrorItem"/>.
+        /// </remarks>
+        /// </summary>
+        /// <param name="username">The username.</param>
+        /// <param name="currentPassword">The current password.</param>
+        /// <param name="newPassword">The new password.</param>
+        /// <returns>
+        /// An <see cref="ApiErrorItem"/> describing the error if the password change operation failed in the synchronous wrapper,
+        /// otherwise null if the asynchronous operation completed successfully (success of the underlying password change is indicated by a null return, errors during the change itself within the async method are also handled and returned as ApiErrorItems by the async method).
+        /// In case of an exception in the wrapper itself, an <see cref="ApiErrorItem"/> with <see cref="ApiErrorCode.Generic"/> is returned.
+        /// </returns>
+        public ApiErrorItem? PerformPasswordChange(string username, string currentPassword, string newPassword)
+        {
+            // Call the asynchronous implementation and BLOCK to get the result.
+            try
+            {
+                return PerformPasswordChangeAsync(username, currentPassword, newPassword).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                // Log using LogPasswordChangeUnexpectedError - as it represents an unexpected failure in the synchronous wrapper context
+                LogPasswordChangeUnexpectedError(
+                    _logger,
+                    "Synchronous wrapper failed during password change operation.", // More specific message for wrapper context
+                    $"Exception details: {ex.Message}. Inner exception: {ex.InnerException?.Message}", // Include both exception messages for better context
+                    ex);
+
+                // Return ApiErrorItem with ApiErrorCode.PasswordChangeApiError to indicate a general password change API failure in the synchronous context
+                return new ApiErrorItem(ApiErrorCode.Generic, "Password change operation failed."); // More general message for the API error
+            }
+        }
+
+
+        /// <inheritdoc />
+        /// <summary>
         /// Executes the password change operation for a given user.
         /// This is the main entry point for changing a user's password. It performs several validations
         /// before attempting to update the password in Active Directory.
@@ -232,7 +284,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="currentPassword">The user's current password, required for password change validation.</param>
         /// <param name="newPassword">The new password to set for the user.</param>
         /// <returns>An <see cref="ApiErrorItem"/> if the password change fails, otherwise null for success.</returns>
-        public ApiErrorItem? PerformPasswordChange(string username, string currentPassword, string newPassword)
+        public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword)
         {
             ApiErrorItem? errorItem = null; // Initialize error item to null (success case)
 
@@ -257,7 +309,7 @@ namespace Unosquare.PassCore.PasswordProvider
                 errorItem = ValidateNewPasswordComplexity(newPassword); // Validate new password against complexity rules
                 if (errorItem != null) return errorItem; // Return immediately if validation fails
 
-                errorItem = ValidatePwnedPassword(newPassword); // Check if the new password is in a list of pwned passwords
+                errorItem = await ValidatePwnedPassword(newPassword); // Check if the new password is in a list of pwned passwords
                 if (errorItem != null) return errorItem; // Return immediately if validation fails
 
                 errorItem = ValidateGroupsMembership(userPrincipal); // Validate user's group membership against allowed/restricted groups
@@ -340,14 +392,39 @@ namespace Unosquare.PassCore.PasswordProvider
         /// </summary>
         /// <param name="newPassword">The new password to validate.</param>
         /// <returns>An <see cref="ApiErrorItem"/> if the new password is a known compromised password, otherwise null.</returns>
-        private ApiErrorItem? ValidatePwnedPassword(string newPassword)
+        private async Task<ApiErrorItem?> ValidatePwnedPassword(string newPassword)
         {
-            if (PwnedPasswordsSearch.PwnedSearch.IsPwnedPassword(newPassword)) // Check if password is in pwned password list
+            try
             {
-                LogPwnedPasswordUsed(_logger, null);
-                return new ApiErrorItem(ApiErrorCode.PwnedPassword); // Return PwnedPassword error
+                if (await PwnedPasswordsSearch.PwnedSearch.IsPwnedPasswordAsync(newPassword, _logger)) // Check if password is in pwned password list
+                {
+                    LogPwnedPasswordUsed(_logger, null);
+                    return new ApiErrorItem(ApiErrorCode.PwnedPassword); // Return PwnedPassword error
+                }
+                return null; // Password is not a known compromised password
             }
-            return null; // Password is not a known compromised password
+            catch (PwnedPasswordsSearch.PwnedPasswordsApiException apiException)
+            {
+                // Log the API exception as a warning, as it's an external service issue.
+                LogPwnedPasswordCheckApiError(_logger, apiException.Message, apiException);
+                // Decide how to handle API errors. Returning null means we don't consider API errors as "pwned password" errors for validation purposes.
+                // The password validation might proceed as if the check was inconclusive in terms of pwned status due to API issue.
+                return new ApiErrorItem(ApiErrorCode.Generic, "Error during Pwned Password API check: {apiException.Message}"); // Return PwnedPassword error
+            }
+            catch (PwnedPasswordsSearch.PwnedPasswordsSearchException searchException)
+            {
+                // Log unexpected errors during the search process as errors.
+                LogPwnedPasswordCheckUnexpectedError(_logger, searchException.Message, searchException);
+                // Similar to API exceptions, it's not a "pwned password" error in the context of validation, but an internal error.
+                return new ApiErrorItem(ApiErrorCode.Generic, "Unexpected error during Pwned Password search: {searchException.Message}");
+            }
+            catch (Exception unexpectedException)
+            {
+                // Catch any other unexpected exceptions (although ideally, only the custom exceptions should be thrown).
+                // Log as a critical error as it's something unexpected in the validation process.
+                LogPwnedPasswordCheckUnexpectedError(_logger, unexpectedException.Message, unexpectedException);
+                return new ApiErrorItem(ApiErrorCode.Generic, "Unexpected error during Pwned Password search: {unexpectedException.Message}");
+            }
         }
 
         /// <summary>
