@@ -77,6 +77,7 @@ public class PasswordChangeProvider : IPasswordChangeProvider
             if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
             {
                 SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
+                if (errorItem != null) return errorItem; // Return immediately if setting LastPassword fails
             }
 
             if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, currentPassword, principalContext)) // Validate provided current password
@@ -199,8 +200,8 @@ public class PasswordChangeProvider : IPasswordChangeProvider
         }
         catch (Exception exception) // Catch any exceptions during group validation
         {
-            _logger.LogError(new EventId(888), exception, "Error during group membership validation.");
-            return null; // Group validation failed, but allow password change to proceed (or handle differently as per requirement) - Consider logging a warning or throwing an exception depending on desired behavior in case of group validation failure.
+            _logger.LogError(new EventId(888), exception, "Error during group membership validation: {ErrorMessage}", exception.Message);
+            return new ApiErrorItem(ApiErrorCode.Generic, "Error during group membership validation."); // Return error item to indicate validation failure
         }
     }
 
@@ -263,10 +264,9 @@ public class PasswordChangeProvider : IPasswordChangeProvider
         if (_idType != IdentityType.UserPrincipalName) return username; // No fixing needed if IdentityType is not UserPrincipalName
 
         var parts = username.Split('@', StringSplitOptions.RemoveEmptyEntries); // Split username by '@' to check for domain part
-        var domain = parts.Length > 1 ? parts[1] : _options.DefaultDomain; // Extract domain from username or use default domain from options
 
         // Append domain to username if no domain part is present and default domain is configured
-        return string.IsNullOrWhiteSpace(domain) || parts.Length > 1 ? username : $"{username}@{domain}";
+        return parts.Length > 1 || string.IsNullOrWhiteSpace(_options.DefaultDomain) ? username : $"{username}@{_options.DefaultDomain}";
     }
 
 
@@ -275,7 +275,7 @@ public class PasswordChangeProvider : IPasswordChangeProvider
     /// This is used when the 'UpdateLastPassword' option is enabled and the LastPasswordSet is null.
     /// </summary>
     /// <param name="userPrincipal">The UserPrincipal object for which to set the 'pwdLastSet' attribute.</param>
-    private void SetLastPassword(Principal userPrincipal)
+    private ApiErrorItem? SetLastPassword(Principal userPrincipal)
     {
         var directoryEntry = (DirectoryEntry)userPrincipal.GetUnderlyingObject(); // Get the underlying DirectoryEntry object
         var pwdLastSetProperty = directoryEntry.Properties["pwdLastSet"]; // Get the 'pwdLastSet' property
@@ -283,7 +283,7 @@ public class PasswordChangeProvider : IPasswordChangeProvider
         if (pwdLastSetProperty == null) // Check if 'pwdLastSet' property exists
         {
             _logger.LogWarning("The 'pwdLastSet' property is missing on the user principal.");
-            return; // Or consider throwing an exception as this is unexpected - Currently returns without action if property is missing
+            return new ApiErrorItem(ApiErrorCode.Generic, "The 'pwdLastSet' property is missing on the user principal."); // Return error item to indicate failure
         }
 
         try
@@ -291,10 +291,12 @@ public class PasswordChangeProvider : IPasswordChangeProvider
             pwdLastSetProperty.Value = -1; // Set 'pwdLastSet' to -1 to force password change at next logon
             directoryEntry.CommitChanges(); // Commit changes to Active Directory
             _logger.LogInformation("The 'pwdLastSet' attribute was successfully updated.");
+            return null; // Indicate success
         }
         catch (Exception ex) // Catch exceptions during attribute update
         {
-            throw new ApiErrorException("Failed to update 'pwdLastSet' attribute.", ApiErrorCode.ChangeNotPermitted); // Throw API error exception on failure
+            _logger.LogError(ex, "Failed to update 'pwdLastSet' attribute: {ErrorMessage}", ex.Message);
+            return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted, "Failed to update 'pwdLastSet' attribute."); // Return error item to indicate failure
         }
     }
 
