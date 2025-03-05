@@ -214,8 +214,8 @@ namespace Unosquare.PassCore.PasswordProvider
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options)
         {
-            _logger = logger;
-            _options = options.Value;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _options = (options?.Value) ?? throw new ArgumentNullException(nameof(options));
             SetIdType(); // Determine IdentityType from options
         }
 
@@ -235,6 +235,13 @@ namespace Unosquare.PassCore.PasswordProvider
 
             try
             {
+                if (username is null)
+                    throw new ArgumentNullException(nameof(username));
+                if (currentPassword is null)
+                    throw new ArgumentNullException(nameof(currentPassword));
+                if (newPassword is null)
+                    throw new ArgumentNullException(nameof(newPassword));
+
                 var fixedUsername = FixUsernameWithDomain(username); // Ensure username is correctly formatted with domain if needed
                 LogPerformingPasswordChange(_logger, fixedUsername, null);
 
@@ -555,7 +562,7 @@ namespace Unosquare.PassCore.PasswordProvider
                 if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty when not using automatic context
                 {
                     // Using logging delegate for warning about missing LDAP Hostnames
-                    LogLdapHostnamesNotConfiguredWarning(_logger);
+                    LogLdapHostnamesNotConfiguredWarning(_logger, null);
                     throw new InvalidOperationException("LDAP Hostnames are not configured."); // Throw exception to signal configuration error
                 }
 
