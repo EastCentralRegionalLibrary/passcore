@@ -1,4 +1,5 @@
 ﻿#if WINDOWS
+using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -18,6 +19,8 @@ namespace Unosquare.PassCore.PasswordProvider
     /// This implementation is intended for Windows platforms only.
     /// </summary>
     /// <seealso cref="IPasswordChangeProvider" />
+    /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
+    [SupportedOSPlatform("windows")]
     public class PasswordChangeProvider : IPasswordChangeProvider
     {
         // Readonly fields
