@@ -1,35 +1,23 @@
-import TextField from '@mui/material/TextField';
+import TextField, { TextFieldProps } from '@mui/material/TextField';
 import * as React from 'react';
-import { ValidatorComponent } from 'react-form-validator-core';
+import { ValidatorComponent, ValidatorComponentProps } from 'react-form-validator-core';
 import { humanize } from 'uno-js';
 
-export class TextValidator extends ValidatorComponent {
-    public state = {
-        isValid: true,
-    };
+export type TextValidatorProps = ValidatorComponentProps & TextFieldProps;
 
+export class TextValidator extends ValidatorComponent<TextValidatorProps> {
+    /**
+     * Renders the TextField component with validation logic.
+     */
     public renderValidatorComponent() {
-        const {
-            error,
-            errorMessages,
-            validators,
-            requiredError,
-            helperText,
-            validatorListener,
-            withRequiredValidator,
-            label,
-            id,
-            ...rest
-        } = this.props;
-        const { isValid } = this.state;
+        const { error, helperText, label, id, ...rest } = this.props;
 
         return (
             <TextField
                 {...rest}
-                id={id}
                 label={label || humanize(id)}
-                error={!isValid || error}
-                helperText={(!isValid && this.getErrorMessage()) || helperText}
+                error={!this.isValid() || error}
+                helperText={(!this.isValid() && this.getErrorMessage()) || helperText}
             />
         );
     }
