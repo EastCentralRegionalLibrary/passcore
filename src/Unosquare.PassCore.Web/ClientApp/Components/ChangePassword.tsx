@@ -6,6 +6,7 @@ import { ChangePasswordDialog } from '../Dialogs/ChangePasswordDialog';
 import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { fetchRequest } from '../Utils/FetchRequest';
 import { ChangePasswordForm } from './ChangePasswordForm';
+import { IChangePasswordFormInitialModel } from '../types/Components';
 
 export const ChangePassword: React.FunctionComponent<{}> = () => {
     const [disabled, setDisabled] = React.useState(true);
@@ -17,67 +18,50 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
     const { changePasswordButtonLabel } = changePasswordForm;
     const { sendMessage } = React.useContext(SnackbarContext);
     const [shouldReset, setReset] = React.useState(false);
+    const errorMessages: Record<number, string> = {
+        1: alerts.errorFieldRequired,
+        2: alerts.errorFieldMismatch,
+        3: alerts.errorInvalidUser,
+        4: alerts.errorInvalidCredentials,
+        5: alerts.errorCaptcha,
+        6: alerts.errorPasswordChangeNotAllowed,
+        7: alerts.errorInvalidDomain,
+        8: alerts.errorConnectionLdap,
+        9: alerts.errorComplexPassword,
+        10: alerts.errorScorePassword,
+        11: alerts.errorDistancePassword,
+        12: alerts.errorPwnedPassword,
+    };
 
     const onSubmitValidatorForm = () => setSubmit(true);
 
-    const toSubmitData = (formData: {}) => {
+    const toSubmitData = async (formData: IChangePasswordFormInitialModel): Promise<void> => {
         setDisabled(true);
-        fetchRequest('api/password', 'POST', JSON.stringify({ ...formData, Recaptcha: token })).then(
-            (response: any) => {
-                setSubmit(false);
-                if (response.errors && response.errors.length) {
-                    let errorAlertMessage = '';
-                    response.errors.forEach((error: any) => {
-                        switch (error.errorCode) {
-                            case 0:
-                                errorAlertMessage += error.message;
-                                break;
-                            case 1:
-                                errorAlertMessage += alerts.errorFieldRequired;
-                                break;
-                            case 2:
-                                errorAlertMessage += alerts.errorFieldMismatch;
-                                break;
-                            case 3:
-                                errorAlertMessage += alerts.errorInvalidUser;
-                                break;
-                            case 4:
-                                errorAlertMessage += alerts.errorInvalidCredentials;
-                                break;
-                            case 5:
-                                errorAlertMessage += alerts.errorCaptcha;
-                                break;
-                            case 6:
-                                errorAlertMessage += alerts.errorPasswordChangeNotAllowed;
-                                break;
-                            case 7:
-                                errorAlertMessage += alerts.errorInvalidDomain;
-                                break;
-                            case 8:
-                                errorAlertMessage += alerts.errorConnectionLdap;
-                                break;
-                            case 9:
-                                errorAlertMessage += alerts.errorComplexPassword;
-                                break;
-                            case 10:
-                                errorAlertMessage += alerts.errorScorePassword;
-                                break;
-                            case 11:
-                                errorAlertMessage += alerts.errorDistancePassword;
-                                break;
-                            case 12:
-                                errorAlertMessage += alerts.errorPwnedPassword;
-                                break;
-                        }
-                    });
+        try {
+            // Merge formData with the recaptcha token. Ensure `token` is available in this scope.
+            const payload = JSON.stringify({ ...formData, Recaptcha: token });
+            const response = await fetchRequest('api/password', 'POST', payload);
 
-                    sendMessage(errorAlertMessage, 'error');
-                    return;
-                }
-                setDialog(true);
-                setDisabled(false);
-            },
-        );
+            setSubmit(false);
+
+            if (response?.errors?.length) {
+                const errorAlertMessage = response.errors
+                    .map((error: any) =>
+                        error.errorCode === 0
+                            ? error.message
+                            : errorMessages[error.errorCode] || 'An unknown error occurred.',
+                    )
+                    .join(' ');
+                sendMessage(errorAlertMessage, 'error');
+                return;
+            }
+            setDialog(true);
+        } catch (err) {
+            // Optionally log the error here.
+            sendMessage('An unexpected error occurred. Please try again later.', 'error');
+        } finally {
+            setDisabled(false);
+        }
     };
 
     const onCloseDialog = () => {
