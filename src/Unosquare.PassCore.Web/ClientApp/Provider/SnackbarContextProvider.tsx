@@ -2,17 +2,17 @@ import * as React from 'react';
 import { SnackbarContainer } from '../Components/SnackbarContainer';
 import { snackbarService } from '../Components/SnackbarService';
 import { SnackbarContext } from './GlobalContext';
+import { SnackbarMessageType } from '../types/Components';
 
-interface ISnackbarProvdierProps {
-    children: any;
+interface ISnackbarProviderProps {
+    children: React.ReactNode;
 }
 
-export const SnackbarContextProvider: React.FunctionComponent<ISnackbarProvdierProps> = ({
-    children,
-}: ISnackbarProvdierProps) => {
+export const SnackbarContextProvider: React.FunctionComponent<ISnackbarProviderProps> = ({ children }) => {
     const [providerValue] = React.useState({
-        sendMessage: async (messageText: string, messageType = 'success') =>
-            await snackbarService.showSnackbar(messageText, messageType),
+        sendMessage: async (messageText: string, messageType: SnackbarMessageType = 'success') => {
+            return snackbarService.showSnackbar(messageText, messageType);
+        },
     });
 
     return (
