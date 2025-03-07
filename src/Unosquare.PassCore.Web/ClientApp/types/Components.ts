@@ -21,3 +21,5 @@ export interface IPasswordGenProps {
     value: string;
     setValue: any;
 }
+
+export type SnackbarMessageType = 'success' | 'error' | 'warning' | 'info';

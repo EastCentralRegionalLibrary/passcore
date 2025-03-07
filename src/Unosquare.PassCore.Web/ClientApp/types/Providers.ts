@@ -1,3 +1,5 @@
+import { SnackbarMessageType } from "./Components";
+
 interface IAlerts {
     errorCaptcha: string;
     errorComplexPassword: string;
@@ -61,5 +63,38 @@ export interface IGlobalContext {
 }
 
 export interface ISnackbarContext {
-    sendMessage: (messageText: string, messageType?: string) => void;
+    sendMessage: (messageText: string, messageType?: SnackbarMessageType) => void;
 }
+
+/**
+ * Represents a single error item returned from the API.
+ * Corresponds to the server-side ApiErrorItem.
+ */
+export interface ApiError {
+    /** The error code, corresponding to the ApiErrorCode enum on the server */
+    errorCode: number;
+    /** A descriptive error message */
+    message: string;
+    /** Optional field name associated with the error, if applicable */
+    fieldName?: string;
+}
+
+/**
+ * Represents a generic API response.
+ * This mirrors the server-side ApiResult, which contains a list of errors and a payload.
+ *
+ * @template T - The type of the payload.
+ */
+export interface ApiResponse<T = unknown> {
+    /** A list of error items that occurred during the API call. */
+    errors?: ApiError[];
+    /** The payload data returned from the API call. */
+    payload?: T;
+}
+
+/**
+ * Represents the response from the password generation endpoint.
+ * In this endpoint, the payload is expected to be a string (the generated password).
+ */
+export type PasswordGenResponse = ApiResponse<string>;
+

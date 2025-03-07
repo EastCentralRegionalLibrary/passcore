@@ -26,7 +26,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
     setReCaptchaToken,
     ReCaptchaToken,
 }: IChangePasswordFormProps) => {
-    const [fields, handleChange] = useStateForModel({ ...defaultState });
+    const [fields, handleChange, setFields] = useStateForModel(defaultState);
 
     const { changePasswordForm, errorsPasswordForm, usePasswordGeneration, useEmail, showPasswordMeter, recaptcha } =
         React.useContext(GlobalContext);
@@ -69,7 +69,7 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
 
     React.useEffect(() => {
         if (shouldReset) {
-            handleChange({ ...defaultState });
+            setFields({ ...defaultState });
             changeResetState(false);
             if (parentRef.current && parentRef.current.resetValidations) {
                 parentRef.current.resetValidations();
@@ -77,8 +77,8 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
         }
     }, [shouldReset]);
 
-    const setGenerated = (password: any) =>
-        handleChange({
+    const setGenerated = (password: string) =>
+        setFields({
             NewPassword: password,
             NewPasswordVerify: password,
         });
@@ -101,10 +101,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 inputProps={{
                     tabIndex: 1,
                 }}
-                sx={{ 
+                sx={{
                     flex: 1,
                     margin: 'auto',
-                 }}
+                }}
                 id="Username"
                 label={usernameLabel}
                 variant="standard"
@@ -120,10 +120,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                 inputProps={{
                     tabIndex: 2,
                 }}
-                sx={{ 
+                sx={{
                     flex: 1,
                     margin: 'auto',
-                 }}
+                }}
                 label={currentPasswordLabel}
                 variant="standard"
                 helperText={currentPasswordHelpblock}
@@ -144,10 +144,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         inputProps={{
                             tabIndex: 3,
                         }}
-                        sx={{ 
+                        sx={{
                             flex: 1,
                             margin: 'auto',
-                         }}
+                        }}
                         label={newPasswordLabel}
                         variant="standard"
                         id="NewPassword"
@@ -168,10 +168,10 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         inputProps={{
                             tabIndex: 4,
                         }}
-                        sx={{ 
+                        sx={{
                             flex: 1,
                             margin: 'auto',
-                         }}
+                        }}
                         label={newPasswordVerifyLabel}
                         variant="standard"
                         helperText={newPasswordVerifyHelpblock}
