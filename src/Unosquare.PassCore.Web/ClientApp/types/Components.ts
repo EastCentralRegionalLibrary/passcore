@@ -1,3 +1,5 @@
+import { MutableRefObject } from 'react';
+
 export interface IChangePasswordFormInitialModel {
     CurrentPassword: string;
     NewPassword: string;
@@ -8,18 +10,18 @@ export interface IChangePasswordFormInitialModel {
 
 export interface IChangePasswordFormProps {
     submitData: boolean;
-    toSubmitData: any;
-    parentRef: any;
-    onValidated: any;
+    toSubmitData: (data: IChangePasswordFormInitialModel) => void;
+    parentRef: MutableRefObject<{ isFormValid: () => Promise<boolean>; resetValidations?: () => void } | null>;
+    onValidated: (isValid: boolean) => void;
     shouldReset: boolean;
-    changeResetState: any;
-    setReCaptchaToken: any;
+    changeResetState: (state: boolean) => void;
+    setReCaptchaToken: (token: string) => void;
     ReCaptchaToken: string;
 }
 
 export interface IPasswordGenProps {
     value: string;
-    setValue: any;
+    setValue: (password: string) => void;
 }
 
 export type SnackbarMessageType = 'success' | 'error' | 'warning' | 'info';
