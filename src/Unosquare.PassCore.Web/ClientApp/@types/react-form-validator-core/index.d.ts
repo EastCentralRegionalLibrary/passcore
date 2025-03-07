@@ -10,12 +10,26 @@ declare module 'react-form-validator-core' {
         containerProps?: Record<string, any>;
     }
 
-    export class ValidatorComponent<P = ValidatorComponentProps, S = {}> extends React.Component<P, S> {
+    interface ValidatorComponentState {
+        isValid: boolean;
+        value: any;
+        errorMessages: string | string[];
+        validators: string[];
+    }
+
+
+    export class ValidatorComponent<
+        P = ValidatorComponentProps,
+        S = ValidatorComponentState
+    > extends React.Component<P, S> {
+        instantValidate?: boolean;
+        form?: ValidatorForm;
         validate(value?: any, includeRequired?: boolean, dryRun?: boolean): Promise<boolean>;
         getErrorMessage(): string;
         isValid(): boolean;
         makeInvalid(): void;
         makeValid(): void;
+        validateDebounced: (value: any, includeRequired?: boolean, dryRun?: boolean) => Promise<boolean>;
     }
 
     export interface ValidatorFormProps {
