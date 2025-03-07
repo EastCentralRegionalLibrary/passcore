@@ -10,10 +10,9 @@ import Warning from '@mui/icons-material/Warning';
 import makeStyles from '@mui/styles/makeStyles';
 import * as React from 'react';
 import { Theme } from '@mui/material/styles';
+import { SnackbarMessageType } from '../types/Components';
 
 import { amber, blue, green, red } from '@mui/material/colors';
-
-export type MessageType = 'success' | 'error' | 'warning' | 'info';
 
 const useStyles = makeStyles(({ palette }: Theme) => ({
     closeIcon: {
@@ -58,7 +57,7 @@ const useStyles = makeStyles(({ palette }: Theme) => ({
 }));
 
 export interface GlobalSnackbarProps {
-    message: { messageText: string; messageType: MessageType };
+    message: { messageText: string; messageType: SnackbarMessageType };
     milliSeconds: number;
     mobile: boolean;
 }

@@ -7,6 +7,7 @@ import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { fetchRequest } from '../Utils/FetchRequest';
 import { ChangePasswordForm } from './ChangePasswordForm';
 import { IChangePasswordFormInitialModel } from '../types/Components';
+import { ApiError } from '../types/Providers';
 
 export const ChangePassword: React.FunctionComponent<{}> = () => {
     const [disabled, setDisabled] = React.useState(true);
@@ -38,7 +39,7 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
     const toSubmitData = async (formData: IChangePasswordFormInitialModel): Promise<void> => {
         setDisabled(true);
         try {
-            // Merge formData with the recaptcha token. Ensure `token` is available in this scope.
+            // Merge formData with the recaptcha token.
             const payload = JSON.stringify({ ...formData, Recaptcha: token });
             const response = await fetchRequest('api/password', 'POST', payload);
 
@@ -46,7 +47,7 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
 
             if (response?.errors?.length) {
                 const errorAlertMessage = response.errors
-                    .map((error: any) =>
+                    .map((error: ApiError) =>
                         error.errorCode === 0
                             ? error.message
                             : errorMessages[error.errorCode] || 'An unknown error occurred.',
@@ -57,8 +58,8 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
             }
             setDialog(true);
         } catch (err) {
-            // Optionally log the error here.
-            sendMessage('An unexpected error occurred. Please try again later.', 'error');
+            const errorMsg = err && typeof err === 'object' && 'message' in err ? err.message : String(err);
+            sendMessage(`An unexpected error occurred. Please try again later. Error: ${errorMsg}`, 'error');
         } finally {
             setDisabled(false);
         }
@@ -79,7 +80,7 @@ export const ChangePassword: React.FunctionComponent<{}> = () => {
         new RegExp(validationRegex.emailRegex).test(value),
     );
 
-    ValidatorForm.addValidationRule('isPasswordMatch', (value: string, comparedValue: any) => value === comparedValue);
+    ValidatorForm.addValidationRule('isPasswordMatch', (value: string, comparedValue: string | undefined) => value === comparedValue);
 
     return (
         <>

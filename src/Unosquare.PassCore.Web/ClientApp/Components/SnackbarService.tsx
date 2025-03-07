@@ -1,21 +1,24 @@
 import { SimpleObservable } from 'uno-js';
-import { MessageType } from './GlobalSnackbar';
+import { SnackbarMessageType } from '../types/Components';
 
 export interface Snackbar {
-    message: { messageText: string; messageType: MessageType };
+    message: { messageText: string; messageType: SnackbarMessageType };
     milliSeconds?: number;
     isMobile: boolean;
 }
 
 class SnackbarService extends SimpleObservable {
-    private snackbar: Snackbar;
+    private snackbar: Snackbar = {
+        isMobile: false,
+        message: { messageText: '', messageType: 'success' },
+    };
 
     public getSnackbar(): Snackbar {
         return this.snackbar;
     }
 
-    public async showSnackbar(message: string, type: MessageType = 'success', milliSeconds = 5000): Promise<{}> {
-        return await new Promise(() => {
+    public async showSnackbar(message: string, type: SnackbarMessageType = 'success', milliSeconds = 5000): Promise<void> {
+        return new Promise((resolve) => {
             this.snackbar = {
                 isMobile: false,
                 message: {
@@ -25,6 +28,7 @@ class SnackbarService extends SimpleObservable {
                 milliSeconds,
             };
             this.inform();
+            resolve(); // Ensure the promise resolves
         });
     }
 }
