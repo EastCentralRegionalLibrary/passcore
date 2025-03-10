@@ -7,6 +7,8 @@ import { IChangePasswordFormInitialModel, IChangePasswordFormProps } from '../ty
 import { PasswordGenerator } from './PasswordGenerator';
 import { PasswordStrengthBar } from './PasswordStrengthBar';
 import { ReCaptcha } from './ReCaptcha';
+import Typography from '@mui/material/Typography';
+import { parsePlainTextAndLinks } from '../Utils/HtmlStringUtils';
 
 const defaultState: IChangePasswordFormInitialModel = {
     CurrentPassword: '',
@@ -160,10 +162,12 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
                         errorMessages={[fieldRequired]}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.NewPassword} />}
-                    <div
-                        dangerouslySetInnerHTML={{ __html: newPasswordHelpblock }}
-                        style={{ font: '12px Roboto,Helvetica, Arial, sans-serif', marginBottom: '15px' }}
-                    />
+                    <Typography
+                        variant="body2" // Use the appropriate variant (e.g., body2)
+                        sx={{ marginBottom: '15px' }} // Use sx for styling
+                    >
+                        {parsePlainTextAndLinks(newPasswordHelpblock)}
+                    </Typography>
                     <TextValidator
                         inputProps={{
                             tabIndex: 4,
