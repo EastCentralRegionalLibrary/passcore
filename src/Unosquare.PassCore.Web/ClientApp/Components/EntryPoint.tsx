@@ -3,7 +3,7 @@ import { ChangePassword } from './ChangePassword';
 import { ClientAppBar } from './ClientAppBar';
 import { Footer } from './Footer';
 
-export const EntryPoint: React.FunctionComponent<any> = () => (
+export const EntryPoint: React.FC = () => (
     <>
         <ClientAppBar />
         <main

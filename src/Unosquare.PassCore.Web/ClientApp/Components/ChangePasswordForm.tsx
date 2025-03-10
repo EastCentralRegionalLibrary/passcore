@@ -1,7 +1,6 @@
-import FormGroup from '@mui/material/FormGroup/FormGroup';
+import FormGroup from '@mui/material/FormGroup';
 import * as React from 'react';
-import { TextValidator } from './TextValidator';
-import { useStateForModel } from './hooks/useStateForModel';
+import TextField from '@mui/material/TextField';
 import { GlobalContext } from '../Provider/GlobalContext';
 import { IChangePasswordFormInitialModel, IChangePasswordFormProps } from '../types/Components';
 import { PasswordGenerator } from './PasswordGenerator';
@@ -9,6 +8,8 @@ import { PasswordStrengthBar } from './PasswordStrengthBar';
 import { ReCaptcha } from './ReCaptcha';
 import Typography from '@mui/material/Typography';
 import { parsePlainTextAndLinks } from '../Utils/HtmlStringUtils';
+import validateForm, { ValidationRule, FieldValidationRules } from '../Utils/ValidateForm';
+import { IGlobalContext } from '../types/Providers';
 
 const defaultState: IChangePasswordFormInitialModel = {
     CurrentPassword: '',
@@ -18,20 +19,19 @@ const defaultState: IChangePasswordFormInitialModel = {
     Username: new URLSearchParams(window.location.search).get('userName') || '',
 };
 
-export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProps> = ({
+export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     submitData,
     toSubmitData,
-    parentRef,
     onValidated,
     shouldReset,
     changeResetState,
     setReCaptchaToken,
     ReCaptchaToken,
-}: IChangePasswordFormProps) => {
-    const [fields, handleChange, setFields] = useStateForModel(defaultState);
-
-    const { changePasswordForm, errorsPasswordForm, usePasswordGeneration, useEmail, showPasswordMeter, recaptcha } =
-        React.useContext(GlobalContext);
+}) => {
+    const [fields, setFields] = React.useState<IChangePasswordFormInitialModel>(defaultState);
+    const [errors, setErrors] = React.useState<{ [key: string]: string | undefined }>({});
+    const context = React.useContext(GlobalContext);
+    const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
 
     const {
         currentPasswordHelpblock,
@@ -45,153 +45,180 @@ export const ChangePasswordForm: React.FunctionComponent<IChangePasswordFormProp
         usernameLabel,
     } = changePasswordForm;
 
-    const { fieldRequired, passwordMatch, usernameEmailPattern, usernamePattern } = errorsPasswordForm;
+    const userNameHelperText = context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock;
 
-    const userNameValidations = ['required', useEmail ? 'isUserEmail' : 'isUserName'];
-    const userNameErrorMessages = [fieldRequired, useEmail ? usernameEmailPattern : usernamePattern];
-    const userNameHelperText = useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock;
+    const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = event.target;
+        setFields((prevFields) => ({
+            ...prevFields,
+            [name]: value,
+        }));
+    };
+
+    const isRequired: ValidationRule = {
+        name: 'isRequired',
+        rule: async (value: string) => {
+            return !!value.trim(); // Returns a Promise resolving to a boolean
+        },
+        message: context.errorsPasswordForm.fieldRequired,
+    };
+
+    const isUsernamePatternValid = async (
+        value: string,
+        _formData: IChangePasswordFormInitialModel,
+        context: IGlobalContext,
+    ): Promise<boolean> => {
+        const regex = context.useEmail
+            ? new RegExp(context.validationRegex.emailRegex)
+            : new RegExp(context.validationRegex.usernameRegex);
+        return regex.test(value);
+    };
+
+    const isPasswordMatchRule = async (value: string, formData: IChangePasswordFormInitialModel): Promise<boolean> => {
+        return value === formData.NewPassword;
+    };
+
+    const fieldRules: FieldValidationRules = {
+        Username: [
+            isRequired,
+            {
+                name: 'isUsernameValid',
+                rule: isUsernamePatternValid,
+                message: context.useEmail
+                    ? context.errorsPasswordForm.usernameEmailPattern
+                    : context.errorsPasswordForm.usernamePattern,
+            } as ValidationRule,
+        ],
+        CurrentPassword: [isRequired],
+        NewPassword: [isRequired],
+        NewPasswordVerify: [
+            isRequired,
+            {
+                name: 'isPasswordMatch',
+                rule: isPasswordMatchRule,
+                message: context.errorsPasswordForm.passwordMatch,
+            } as ValidationRule,
+        ],
+    };
+
+    const validateAllFields = async () => {
+        const validationErrors = await validateForm(fields, context, fieldRules);
+        setErrors(validationErrors);
+        return validationErrors;
+    };
 
     React.useEffect(() => {
         if (submitData) {
-            toSubmitData(fields);
-        }
-    }, [submitData]);
-
-    React.useEffect(() => {
-        if (parentRef.current !== null && parentRef.current.isFormValid !== null) {
-            parentRef.current.isFormValid().then((response: any) => {
-                let validated = response;
-                if (recaptcha.siteKey && recaptcha.siteKey !== '') {
-                    validated = validated && ReCaptchaToken !== '';
+            validateAllFields().then((validationErrors) => {
+                if (Object.keys(validationErrors).length === 0) {
+                    toSubmitData(fields);
                 }
-                onValidated(!validated);
             });
         }
-    });
+    }, [submitData, fields, toSubmitData]);
+
+    React.useEffect(() => {
+        onValidated(
+            Object.keys(errors).some((key) => errors[key]) ||
+                (recaptcha?.siteKey && recaptcha.siteKey !== '' && ReCaptchaToken === ''),
+        );
+    }, [errors, onValidated, recaptcha?.siteKey, ReCaptchaToken]);
 
     React.useEffect(() => {
         if (shouldReset) {
             setFields({ ...defaultState });
+            setErrors({});
             changeResetState(false);
-            if (parentRef.current && parentRef.current.resetValidations) {
-                parentRef.current.resetValidations();
-            }
         }
-    }, [shouldReset]);
+    }, [shouldReset, changeResetState]);
 
-    const setGenerated = (password: string) =>
-        setFields({
+    const setGenerated = (password: string) => {
+        setFields((prevFields) => ({
+            ...prevFields,
             NewPassword: password,
             NewPasswordVerify: password,
-        });
+        }));
+    };
+
+    const formGroupStyle = {
+        width: '80%',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'stretch',
+        paddingTop: '16px',
+        margin: '0 auto',
+    };
 
     return (
-        <FormGroup
-            row={false}
-            sx={{
-                width: '80%',
-                display: 'flex',
-                flexDirection: 'column', // if row is false, use column.
-                justifyContent: 'center',
-                alignItems: 'stretch', // fill the width of the FormGroup
-                paddingTop: '16px', // shift the first TextValidator down for aesthetics
-                margin: '0 auto', // for centering the FormGroup itself
-            }}
-        >
-            <TextValidator
+        <FormGroup row={false} sx={formGroupStyle}>
+            <TextField
                 autoFocus
-                inputProps={{
-                    tabIndex: 1,
-                }}
-                sx={{
-                    flex: 1,
-                    margin: 'auto',
-                }}
+                slotProps={{ htmlInput: { tabIndex: 1 } }}
+                sx={{ flex: 1, margin: 'auto' }}
                 id="Username"
                 label={usernameLabel}
                 variant="standard"
-                helperText={userNameHelperText}
                 name="Username"
                 onChange={handleChange}
-                validators={userNameValidations}
                 value={fields.Username}
                 fullWidth
-                errorMessages={userNameErrorMessages}
+                error={!!errors.Username}
+                helperText={errors.Username || userNameHelperText}
             />
-            <TextValidator
-                inputProps={{
-                    tabIndex: 2,
-                }}
-                sx={{
-                    flex: 1,
-                    margin: 'auto',
-                }}
+            <TextField
+                slotProps={{ htmlInput: { tabIndex: 2 } }}
+                sx={{ flex: 1, margin: 'auto' }}
                 label={currentPasswordLabel}
                 variant="standard"
-                helperText={currentPasswordHelpblock}
                 id="CurrentPassword"
                 name="CurrentPassword"
                 onChange={handleChange}
                 type="password"
-                validators={['required']}
                 value={fields.CurrentPassword}
                 fullWidth
-                errorMessages={[fieldRequired]}
+                error={!!errors.CurrentPassword}
+                helperText={errors.CurrentPassword || currentPasswordHelpblock}
             />
             {usePasswordGeneration ? (
                 <PasswordGenerator value={fields.NewPassword} setValue={setGenerated} />
             ) : (
                 <>
-                    <TextValidator
-                        inputProps={{
-                            tabIndex: 3,
-                        }}
-                        sx={{
-                            flex: 1,
-                            margin: 'auto',
-                        }}
+                    <TextField
+                        slotProps={{ htmlInput: { tabIndex: 3 } }}
+                        sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordLabel}
                         variant="standard"
                         id="NewPassword"
                         name="NewPassword"
                         onChange={handleChange}
                         type="password"
-                        validators={['required']}
                         value={fields.NewPassword}
                         fullWidth
-                        errorMessages={[fieldRequired]}
+                        error={!!errors.NewPassword}
+                        helperText={errors.NewPassword || ''}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.NewPassword} />}
-                    <Typography
-                        variant="body2" // Use the appropriate variant (e.g., body2)
-                        sx={{ marginBottom: '15px' }} // Use sx for styling
-                    >
+                    <Typography variant="body2" sx={{ marginBottom: '15px' }}>
                         {parsePlainTextAndLinks(newPasswordHelpblock)}
                     </Typography>
-                    <TextValidator
-                        inputProps={{
-                            tabIndex: 4,
-                        }}
-                        sx={{
-                            flex: 1,
-                            margin: 'auto',
-                        }}
+                    <TextField
+                        slotProps={{ htmlInput: { tabIndex: 4 } }}
+                        sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordVerifyLabel}
                         variant="standard"
-                        helperText={newPasswordVerifyHelpblock}
                         id="NewPasswordVerify"
                         name="NewPasswordVerify"
                         onChange={handleChange}
                         type="password"
-                        validators={['required', `isPasswordMatch:${fields.NewPassword}`]}
                         value={fields.NewPasswordVerify}
                         fullWidth
-                        errorMessages={[fieldRequired, passwordMatch]}
+                        error={!!errors.NewPasswordVerify}
+                        helperText={errors.NewPasswordVerify || newPasswordVerifyHelpblock}
                     />
                 </>
             )}
-
-            {recaptcha.siteKey && recaptcha.siteKey !== '' && (
+            {recaptcha?.siteKey && recaptcha.siteKey !== '' && (
                 <ReCaptcha setToken={setReCaptchaToken} shouldReset={false} />
             )}
         </FormGroup>

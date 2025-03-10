@@ -1,5 +1,3 @@
-import { MutableRefObject } from 'react';
-
 export interface IChangePasswordFormInitialModel {
     CurrentPassword: string;
     NewPassword: string;
@@ -11,7 +9,6 @@ export interface IChangePasswordFormInitialModel {
 export interface IChangePasswordFormProps {
     submitData: boolean;
     toSubmitData: (data: IChangePasswordFormInitialModel) => void;
-    parentRef: MutableRefObject<{ isFormValid: () => Promise<boolean>; resetValidations?: () => void } | null>;
     onValidated: (isValid: boolean) => void;
     shouldReset: boolean;
     changeResetState: (state: boolean) => void;

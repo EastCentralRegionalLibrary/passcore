@@ -22,7 +22,7 @@ const useStyles = makeStyles({
 
 const measureStrength = (password: string): number =>
     Math.min(
-        // @ts-expect-error
+        // @ts-expect-error - this is using zxcvbn, lint etc. doesn't like the import or using default
         zxcvbn.default(password).guesses_log10 * 10,
         100,
     );
@@ -31,7 +31,7 @@ interface IStrengthBarProps {
     newPassword: string;
 }
 
-export const PasswordStrengthBar: React.FunctionComponent<IStrengthBarProps> = ({ newPassword }: IStrengthBarProps) => {
+export const PasswordStrengthBar: React.FC<IStrengthBarProps> = ({ newPassword }: IStrengthBarProps) => {
     const classes = useStyles({});
 
     const getProgressColor = (strength: number) => ({

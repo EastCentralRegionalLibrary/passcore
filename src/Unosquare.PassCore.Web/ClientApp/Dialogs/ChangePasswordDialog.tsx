@@ -11,7 +11,7 @@ interface IChangePasswordDialogProps {
     onClose: any;
 }
 
-export const ChangePasswordDialog: React.FunctionComponent<IChangePasswordDialogProps> = ({
+export const ChangePasswordDialog: React.FC<IChangePasswordDialogProps> = ({
     open,
     onClose,
 }: IChangePasswordDialogProps) => {

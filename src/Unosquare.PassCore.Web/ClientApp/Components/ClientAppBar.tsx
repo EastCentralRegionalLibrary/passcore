@@ -1,12 +1,12 @@
 import AppBar from '@mui/material/AppBar/AppBar';
-import Grid from '@mui/material/Grid/Grid';
+import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip/Tooltip';
 import Typography from '@mui/material/Typography/Typography';
 import HelpIcon from '@mui/icons-material/Help';
 import * as React from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
-export const ClientAppBar: React.FunctionComponent<any> = () => {
+export const ClientAppBar: React.FC = () => {
     const { changePasswordForm, changePasswordTitle } = React.useContext(GlobalContext);
     const { helpText } = changePasswordForm;
 
@@ -19,27 +19,27 @@ export const ClientAppBar: React.FunctionComponent<any> = () => {
             }}
             elevation={0}
         >
-            <Grid
-                container
-                style={{ height: '64px', width: '100%' }}
-                direction="row"
+            <Box
+                display="flex"
                 justifyContent="space-between"
                 alignItems="center"
+                height="64px"
+                width="100%"
+                padding="0 1.5%" // Add padding to the sides
             >
                 <Typography
                     variant="h6"
                     color="secondary"
                     style={{
-                        paddingLeft: '1.5%',
                         width: '70%',
                     }}
                 >
                     {changePasswordTitle}
                 </Typography>
                 <Tooltip title={helpText} placement="left">
-                    <HelpIcon color="secondary" style={{ paddingRight: '1%' }} />
+                    <HelpIcon color="secondary" />
                 </Tooltip>
-            </Grid>
+            </Box>
         </AppBar>
     );
 };

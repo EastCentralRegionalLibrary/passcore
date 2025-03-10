@@ -7,7 +7,7 @@ interface IRecaptchaProps {
     shouldReset: boolean;
 }
 
-export const ReCaptcha: React.FunctionComponent<IRecaptchaProps> = ({ setToken, shouldReset }: IRecaptchaProps) => {
+export const ReCaptcha: React.FC<IRecaptchaProps> = ({ setToken, shouldReset }: IRecaptchaProps) => {
     // tslint:disable-next-line
     let captchaRef: any;
 

@@ -8,7 +8,7 @@ interface ISnackbarProviderProps {
     children: React.ReactNode;
 }
 
-export const SnackbarContextProvider: React.FunctionComponent<ISnackbarProviderProps> = ({ children }) => {
+export const SnackbarContextProvider: React.FC<ISnackbarProviderProps> = ({ children }) => {
     const [providerValue] = React.useState({
         sendMessage: async (messageText: string, messageType: SnackbarMessageType = 'success') => {
             return snackbarService.showSnackbar(messageText, messageType);

@@ -11,7 +11,7 @@ import { IPasswordGenProps } from '../types/Components';
 import { fetchRequest } from '../Utils/FetchRequest';
 import { PasswordGenResponse } from '../types/Providers'; // Imported shared API type
 
-export const PasswordGenerator: React.FunctionComponent<IPasswordGenProps> = ({
+export const PasswordGenerator: React.FC<IPasswordGenProps> = ({
     value,
     setValue,
 }: IPasswordGenProps) => {
