@@ -2,7 +2,7 @@ import * as React from 'react';
 import { GlobalSnackbar } from './GlobalSnackbar';
 import { Snackbar, snackbarService } from './SnackbarService';
 
-export const SnackbarContainer: React.FunctionComponent = () => {
+export const SnackbarContainer: React.FC = () => {
     const [snackbar, setSnackbar] = React.useState<Snackbar>();
 
     const onUpdate = (): void => setSnackbar({ ...snackbarService.getSnackbar() });

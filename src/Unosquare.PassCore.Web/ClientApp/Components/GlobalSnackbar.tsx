@@ -62,7 +62,7 @@ export interface GlobalSnackbarProps {
     mobile: boolean;
 }
 
-export const GlobalSnackbar: React.FunctionComponent<GlobalSnackbarProps> = ({
+export const GlobalSnackbar: React.FC<GlobalSnackbarProps> = ({
     message,
     milliSeconds = 2500,
     mobile = false,
