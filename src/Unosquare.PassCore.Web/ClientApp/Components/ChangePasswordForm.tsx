@@ -171,8 +171,8 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     const setGenerated = (password: string) => {
         setFields((prevFields) => ({
             ...prevFields,
-            NewPassword: password,
-            NewPasswordVerify: password,
+            newPassword: password,
+            newPasswordVerify: password,
         }));
     };
 
@@ -192,15 +192,15 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 autoFocus
                 slotProps={{ htmlInput: { tabIndex: 1 } }}
                 sx={{ flex: 1, margin: 'auto' }}
-                id="Username"
+                id="username"
                 label={usernameLabel}
                 variant="standard"
-                name="Username"
+                name="username"
                 onBlur={handleBlur}
                 onChange={handleChange}
                 value={fields.username}
                 fullWidth
-                error={errors.Username && (touched.username || !!fields.username)}
+                error={errors.username && (touched.username || !!fields.username)}
                 helperText={getHelperText("username")}
             />
             <TextField
@@ -208,14 +208,14 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 sx={{ flex: 1, margin: 'auto' }}
                 label={currentPasswordLabel}
                 variant="standard"
-                id="CurrentPassword"
-                name="CurrentPassword"
+                id="currentPassword"
+                name="currentPassword"
                 onBlur={handleBlur}
                 onChange={handleChange}
                 type="password"
                 value={fields.currentPassword}
                 fullWidth
-                error={errors.CurrentPassword && (touched.currentPassword || !!fields.currentPassword)}
+                error={errors.currentPassword && (touched.currentPassword || !!fields.currentPassword)}
                 helperText={getHelperText("currentPassword")}
             />
             {usePasswordGeneration ? (
@@ -227,14 +227,14 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordLabel}
                         variant="standard"
-                        id="NewPassword"
-                        name="NewPassword"
+                        id="newPassword"
+                        name="newPassword"
                         onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
                         value={fields.newPassword}
                         fullWidth
-                        error={errors.NewPassword && (touched.newPassword || !!fields.newPassword)}
+                        error={errors.newPassword && (touched.newPassword || !!fields.newPassword)}
                         // helperText={errors.NewPassword || ''}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.newPassword} />}
@@ -246,8 +246,8 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordVerifyLabel}
                         variant="standard"
-                        id="NewPasswordVerify"
-                        name="NewPasswordVerify"
+                        id="newPasswordVerify"
+                        name="newPasswordVerify"
                         onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
