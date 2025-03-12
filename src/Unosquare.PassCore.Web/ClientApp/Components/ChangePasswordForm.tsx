@@ -32,6 +32,12 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     const [errors, setErrors] = React.useState<{ [key: string]: string | undefined }>({});
     const context = React.useContext(GlobalContext);
     const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
+    const [touched, setTouched] = React.useState(() =>
+        Object.keys(defaultState).reduce(
+            (acc, key) => ({ ...acc, [key]: false }),
+            {} as Record<keyof IChangePasswordFormInitialModel, boolean>,
+        ),
+    );
 
     const {
         currentPasswordHelpblock,
@@ -46,6 +52,14 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     } = changePasswordForm;
 
     const userNameHelperText = context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock;
+
+    const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+        const { name } = event.target;
+        setTouched((prevTouched) => ({
+            ...prevTouched,
+            [name]: true,
+        }));
+    };
 
     const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = event.target;
@@ -158,11 +172,12 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 label={usernameLabel}
                 variant="standard"
                 name="Username"
+                onBlur={handleBlur}
                 onChange={handleChange}
                 value={fields.Username}
                 fullWidth
-                error={!!errors.Username}
-                helperText={errors.Username || userNameHelperText}
+                error={!!errors.Username && touched.Username}
+                helperText={(errors.Username && touched.Username) || userNameHelperText}
             />
             <TextField
                 slotProps={{ htmlInput: { tabIndex: 2 } }}
@@ -171,12 +186,13 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 variant="standard"
                 id="CurrentPassword"
                 name="CurrentPassword"
+                onBlur={handleBlur}
                 onChange={handleChange}
                 type="password"
                 value={fields.CurrentPassword}
                 fullWidth
-                error={!!errors.CurrentPassword}
-                helperText={errors.CurrentPassword || currentPasswordHelpblock}
+                error={!!errors.CurrentPassword && touched.CurrentPassword}
+                helperText={(errors.CurrentPassword && touched.CurrentPassword) || currentPasswordHelpblock}
             />
             {usePasswordGeneration ? (
                 <PasswordGenerator value={fields.NewPassword} setValue={setGenerated} />
@@ -189,12 +205,13 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         variant="standard"
                         id="NewPassword"
                         name="NewPassword"
+                        onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
                         value={fields.NewPassword}
                         fullWidth
-                        error={!!errors.NewPassword}
-                        helperText={errors.NewPassword || ''}
+                        error={!!errors.NewPassword && touched.NewPassword}
+                        // helperText={errors.NewPassword || ''}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.NewPassword} />}
                     <Typography variant="body2" sx={{ marginBottom: '15px' }}>
@@ -207,12 +224,15 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         variant="standard"
                         id="NewPasswordVerify"
                         name="NewPasswordVerify"
+                        onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
                         value={fields.NewPasswordVerify}
                         fullWidth
-                        error={!!errors.NewPasswordVerify}
-                        helperText={errors.NewPasswordVerify || newPasswordVerifyHelpblock}
+                        error={!!errors.NewPasswordVerify && touched.NewPasswordVerify}
+                        helperText={
+                            (errors.NewPasswordVerify && touched.NewPasswordVerify) || newPasswordVerifyHelpblock
+                        }
                     />
                 </>
             )}
