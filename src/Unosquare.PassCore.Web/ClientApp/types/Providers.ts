@@ -17,7 +17,7 @@ interface IAlerts {
     errorPwnedPassword: string;
 }
 
-interface IChangePasswordForm {
+export interface IChangePasswordForm {
     changePasswordButtonLabel: string;
     currentPasswordHelpblock: string;
     currentPasswordLabel: string;
@@ -29,6 +29,7 @@ interface IChangePasswordForm {
     usernameDefaultDomainHelperBlock: string;
     usernameHelpblock: string;
     usernameLabel: string;
+    recaptchaHelpblock?: string;
 }
 
 interface IErrorsPasswordForm {
