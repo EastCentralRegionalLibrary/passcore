@@ -18,6 +18,7 @@ export const ChangePassword: React.FC = () => {
     const { changePasswordButtonLabel } = changePasswordForm;
     const { sendMessage } = React.useContext(SnackbarContext);
     const [shouldReset, setReset] = React.useState(false);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
 
     const errorMessages: Record<number, string> = {
         1: alerts.errorFieldRequired,
@@ -47,15 +48,25 @@ export const ChangePassword: React.FC = () => {
         width: '240px',
     };
 
+    const handleSubmit = () => {
+        if (!isSubmitting) {
+            setIsSubmitting(true);
+            setSubmit(true); // triggers form submission
+        }
+    };
+
     const toSubmitData = async (formData: IChangePasswordFormInitialModel): Promise<void> => {
-        setDisabled(true);
+        setSubmit(false);
         try {
             const payload = JSON.stringify({ ...formData, Recaptcha: token });
             const response = await fetchRequest('api/password', 'POST', payload);
-
             if (response?.errors?.length) {
                 const errorAlertMessage = response.errors
-                    .map((error: ApiError) => error.errorCode === 0 ? error.message : errorMessages[error.errorCode] || 'An unknown error occurred.')
+                    .map((error: ApiError) =>
+                        error.errorCode === 0
+                            ? error.message
+                            : errorMessages[error.errorCode] || 'An unknown error occurred.',
+                    )
                     .join(' ');
                 sendMessage(errorAlertMessage, 'error');
                 return;
@@ -65,7 +76,7 @@ export const ChangePassword: React.FC = () => {
             const errorMsg = (err as { message?: string })?.message || String(err);
             sendMessage(`An unexpected error occurred. Please try again later. Error: ${errorMsg}`, 'error');
         } finally {
-            setDisabled(false);
+            setIsSubmitting(false);
         }
     };
 
@@ -90,9 +101,9 @@ export const ChangePassword: React.FC = () => {
                     type="button"
                     variant="contained"
                     color="primary"
-                    disabled={disabled}
+                    disabled={disabled || isSubmitting} // disable if form is not validated or submitting
                     sx={buttonStyle}
-                    onClick={() => setSubmit(true)}
+                    onClick={handleSubmit}
                 >
                     {changePasswordButtonLabel}
                 </Button>
