@@ -108,13 +108,11 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     };
 
     React.useEffect(() => {
-        if (submitData) {
-            validateAllFields().then((validationErrors) => {
-                if (Object.keys(validationErrors).length === 0) {
-                    toSubmitData(fields);
-                }
-            });
-        }
+        validateAllFields().then((validationErrors) => {
+            if (!Object.keys(validationErrors).length && submitData) {
+                toSubmitData(fields);
+            }
+        });
     }, [submitData, fields, toSubmitData]);
 
     React.useEffect(() => {
