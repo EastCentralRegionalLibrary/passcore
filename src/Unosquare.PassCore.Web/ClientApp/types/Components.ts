@@ -1,9 +1,9 @@
 export interface IChangePasswordFormInitialModel {
-    CurrentPassword: string;
-    NewPassword: string;
-    NewPasswordVerify: string;
-    Recaptcha: string;
-    Username: string;
+    currentPassword: string;
+    newPassword: string;
+    newPasswordVerify: string;
+    recaptcha: string;
+    username: string;
 }
 
 export interface IChangePasswordFormProps {

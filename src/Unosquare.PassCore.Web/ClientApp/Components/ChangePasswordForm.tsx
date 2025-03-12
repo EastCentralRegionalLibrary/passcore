@@ -12,11 +12,11 @@ import validateForm, { ValidationRule, FieldValidationRules } from '../Utils/Val
 import { IGlobalContext } from '../types/Providers';
 
 const defaultState: IChangePasswordFormInitialModel = {
-    CurrentPassword: '',
-    NewPassword: '',
-    NewPasswordVerify: '',
-    Recaptcha: '',
-    Username: new URLSearchParams(window.location.search).get('userName') || '',
+    currentPassword: '',
+    newPassword: '',
+    newPasswordVerify: '',
+    recaptcha: '',
+    username: new URLSearchParams(window.location.search).get('userName') || '',
 };
 
 export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
@@ -51,7 +51,30 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         usernameLabel,
     } = changePasswordForm;
 
-    const userNameHelperText = context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock;
+    const fieldHelpTextMap: Record<keyof IChangePasswordFormInitialModel, string> = {
+        username: context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
+        currentPassword: currentPasswordHelpblock,
+        recaptcha: '',
+        newPassword: newPasswordHelpblock,
+        newPasswordVerify: newPasswordVerifyHelpblock,
+    };
+
+    const getHelperText = (fieldName: keyof IChangePasswordFormInitialModel) => {
+        if (errors[fieldName] && (touched[fieldName] || !!fields[fieldName])) {
+            return errors[fieldName];
+        }
+    
+        return fieldHelpTextMap[fieldName] || '';
+    };
+
+    const resetTouchedState = () => {
+        setTouched(
+            Object.keys(defaultState).reduce(
+                (acc, key) => ({ ...acc, [key]: false }),
+                {} as Record<keyof IChangePasswordFormInitialModel, boolean>,
+            ),
+        );
+    };
 
     const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => {
         const { name } = event.target;
@@ -89,11 +112,11 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     };
 
     const isPasswordMatchRule = async (value: string, formData: IChangePasswordFormInitialModel): Promise<boolean> => {
-        return value === formData.NewPassword;
+        return value === formData.newPassword;
     };
 
     const fieldRules: FieldValidationRules = {
-        Username: [
+        username: [
             isRequired,
             {
                 name: 'isUsernameValid',
@@ -103,9 +126,9 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                     : context.errorsPasswordForm.usernamePattern,
             } as ValidationRule,
         ],
-        CurrentPassword: [isRequired],
-        NewPassword: [isRequired],
-        NewPasswordVerify: [
+        currentPassword: [isRequired],
+        newPassword: [isRequired],
+        newPasswordVerify: [
             isRequired,
             {
                 name: 'isPasswordMatch',
@@ -140,6 +163,7 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         if (shouldReset) {
             setFields({ ...defaultState });
             setErrors({});
+            resetTouchedState();
             changeResetState(false);
         }
     }, [shouldReset, changeResetState]);
@@ -174,10 +198,10 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 name="Username"
                 onBlur={handleBlur}
                 onChange={handleChange}
-                value={fields.Username}
+                value={fields.username}
                 fullWidth
-                error={!!errors.Username && touched.Username}
-                helperText={(errors.Username && touched.Username) || userNameHelperText}
+                error={errors.Username && (touched.username || !!fields.username)}
+                helperText={getHelperText("username")}
             />
             <TextField
                 slotProps={{ htmlInput: { tabIndex: 2 } }}
@@ -189,13 +213,13 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 onBlur={handleBlur}
                 onChange={handleChange}
                 type="password"
-                value={fields.CurrentPassword}
+                value={fields.currentPassword}
                 fullWidth
-                error={!!errors.CurrentPassword && touched.CurrentPassword}
-                helperText={(errors.CurrentPassword && touched.CurrentPassword) || currentPasswordHelpblock}
+                error={errors.CurrentPassword && (touched.currentPassword || !!fields.currentPassword)}
+                helperText={getHelperText("currentPassword")}
             />
             {usePasswordGeneration ? (
-                <PasswordGenerator value={fields.NewPassword} setValue={setGenerated} />
+                <PasswordGenerator value={fields.newPassword} setValue={setGenerated} />
             ) : (
                 <>
                     <TextField
@@ -208,12 +232,12 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
-                        value={fields.NewPassword}
+                        value={fields.newPassword}
                         fullWidth
-                        error={!!errors.NewPassword && touched.NewPassword}
+                        error={errors.NewPassword && (touched.newPassword || !!fields.newPassword)}
                         // helperText={errors.NewPassword || ''}
                     />
-                    {showPasswordMeter && <PasswordStrengthBar newPassword={fields.NewPassword} />}
+                    {showPasswordMeter && <PasswordStrengthBar newPassword={fields.newPassword} />}
                     <Typography variant="body2" sx={{ marginBottom: '15px' }}>
                         {parsePlainTextAndLinks(newPasswordHelpblock)}
                     </Typography>
@@ -227,12 +251,10 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                         onBlur={handleBlur}
                         onChange={handleChange}
                         type="password"
-                        value={fields.NewPasswordVerify}
+                        value={fields.newPasswordVerify}
                         fullWidth
-                        error={!!errors.NewPasswordVerify && touched.NewPasswordVerify}
-                        helperText={
-                            (errors.NewPasswordVerify && touched.NewPasswordVerify) || newPasswordVerifyHelpblock
-                        }
+                        error={errors.newPasswordVerify && (touched.newPasswordVerify || !!fields.newPasswordVerify)}
+                        helperText={getHelperText("newPasswordVerify")}
                     />
                 </>
             )}
