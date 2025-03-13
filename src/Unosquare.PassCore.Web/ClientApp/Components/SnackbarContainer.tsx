@@ -11,5 +11,11 @@ export const SnackbarContainer: React.FC<SnackbarContainerProps> = ({ snackbar }
         return null;
     }
 
-    return <GlobalSnackbar milliSeconds={5000} message={snackbar.message} mobile={snackbar.isMobile} />;
+    return (
+        <GlobalSnackbar
+            milliSeconds={snackbar.milliSeconds ?? 5000}
+            message={snackbar.message}
+            mobile={snackbar.isMobile}
+        />
+    );
 };
