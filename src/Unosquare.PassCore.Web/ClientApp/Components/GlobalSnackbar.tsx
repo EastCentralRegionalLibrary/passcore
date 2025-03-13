@@ -16,17 +16,19 @@ interface GlobalSnackbarProps {
     mobile: boolean;
 }
 
-const StyledAlert = styled(Alert)(({ theme }) => ({
+const StyledAlert = styled(Alert)<{ severity: AlertProps['severity'] }>(({ theme, severity }) => ({
     '& .MuiAlert-icon': {
         fontSize: '20px',
         marginRight: theme.spacing(2),
+        color: theme.palette.secondary.main,
     },
     '& .MuiAlert-message': {
         fontSize: '18px',
-        color: theme.palette.common.white,
+        color: theme.palette.secondary.main,
         display: 'inline-flex',
         alignItems: 'center',
     },
+    backgroundColor: theme.palette[severity]?.main, // Set background color based on severity
     [theme.breakpoints.down('sm')]: {
         '& .MuiAlert-icon': {
             fontSize: '34px',
@@ -37,11 +39,7 @@ const StyledAlert = styled(Alert)(({ theme }) => ({
     },
 }));
 
-const GlobalSnackbarComponent: React.FC<GlobalSnackbarProps> = ({
-    message,
-    milliSeconds = 2500,
-    mobile = false,
-}) => {
+const GlobalSnackbarComponent: React.FC<GlobalSnackbarProps> = ({ message, milliSeconds = 2500, mobile = false }) => {
     const [open, setOpen] = React.useState(false);
 
     React.useEffect(() => {
@@ -74,10 +72,7 @@ const GlobalSnackbarComponent: React.FC<GlobalSnackbarProps> = ({
     const handleClose = (): void => setOpen(false);
 
     return (
-        <Snackbar
-            anchorOrigin={{ horizontal: mobile ? 'center' : 'right', vertical: 'bottom' }}
-            open={open}
-        >
+        <Snackbar anchorOrigin={{ horizontal: mobile ? 'center' : 'right', vertical: 'bottom' }} open={open}>
             <StyledAlert
                 severity={getSeverity()}
                 icon={getIcon()}
