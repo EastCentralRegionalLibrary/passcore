@@ -24,6 +24,8 @@ const StyledAlert = styled(Alert)(({ theme }) => ({
     '& .MuiAlert-message': {
         fontSize: '18px',
         color: theme.palette.common.white,
+        display: 'inline-flex',
+        alignItems: 'center',
     },
     [theme.breakpoints.down('sm')]: {
         '& .MuiAlert-icon': {
