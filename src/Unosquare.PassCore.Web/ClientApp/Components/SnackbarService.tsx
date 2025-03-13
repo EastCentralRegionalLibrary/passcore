@@ -1,4 +1,4 @@
-import { SimpleObservable } from 'uno-js';
+import { useState, useCallback } from 'react';
 import { SnackbarMessageType } from '../types/Components';
 
 export interface Snackbar {
@@ -7,30 +7,27 @@ export interface Snackbar {
     isMobile: boolean;
 }
 
-class SnackbarService extends SimpleObservable {
-    private snackbar: Snackbar = {
+export function useSnackbarService() {
+    const [snackbar, setSnackbar] = useState<Snackbar>({
         isMobile: false,
         message: { messageText: '', messageType: 'success' },
-    };
+    });
 
-    public getSnackbar(): Snackbar {
-        return this.snackbar;
-    }
-
-    public async showSnackbar(message: string, type: SnackbarMessageType = 'success', milliSeconds = 5000): Promise<void> {
-        return new Promise((resolve) => {
-            this.snackbar = {
+    const showSnackbar = useCallback(
+        (message: string, type: SnackbarMessageType = 'success', milliSeconds = 5000) => {
+            setSnackbar({
                 isMobile: false,
                 message: {
                     messageText: message,
                     messageType: type,
                 },
                 milliSeconds,
-            };
-            this.inform();
-            resolve(); // Ensure the promise resolves
-        });
-    }
+            });
+        },
+        [setSnackbar],
+    );
+
+    return { snackbar, showSnackbar };
 }
 
-export const snackbarService = new SnackbarService();
+export default useSnackbarService;

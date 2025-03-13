@@ -1,17 +1,13 @@
 import * as React from 'react';
 import { GlobalSnackbar } from './GlobalSnackbar';
-import { Snackbar, snackbarService } from './SnackbarService';
+import { Snackbar } from './SnackbarService';
 
-export const SnackbarContainer: React.FC = () => {
-    const [snackbar, setSnackbar] = React.useState<Snackbar>();
+interface SnackbarContainerProps {
+    snackbar: Snackbar;
+}
 
-    const onUpdate = (): void => setSnackbar({ ...snackbarService.getSnackbar() });
-
-    React.useEffect(() => {
-        snackbarService.subscribe(onUpdate);
-    }, []);
-
-    if (!snackbar) {
+export const SnackbarContainer: React.FC<SnackbarContainerProps> = ({ snackbar }) => {
+    if (!snackbar || !snackbar.message.messageText) {
         return null;
     }
 
