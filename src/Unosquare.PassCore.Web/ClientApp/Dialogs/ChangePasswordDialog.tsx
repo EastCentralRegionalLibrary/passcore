@@ -8,7 +8,7 @@ import { GlobalContext } from '../Provider/GlobalContext';
 
 interface IChangePasswordDialogProps {
     open: boolean;
-    onClose: any;
+    onClose: () => void;
 }
 
 export const ChangePasswordDialog: React.FC<IChangePasswordDialogProps> = ({

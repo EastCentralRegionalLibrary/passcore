@@ -1,9 +1,14 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net.Http;
+using Microsoft.Extensions.Http;
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using System.Net.Http;
+using Microsoft.Extensions.Http;
+
 using Microsoft.Extensions.Logging;
 
 namespace PwnedPasswordsSearch
@@ -19,8 +24,15 @@ namespace PwnedPasswordsSearch
         public PwnedPasswordsSearchException(string message, Exception? innerException) : base(message, innerException) { }
     }
 
-    public static class PwnedSearch
+    public class PwnedSearch : IPwnedPasswordSearch
     {
+        private readonly IHttpClientFactory _httpClientFactory;
+
+        public PwnedSearch(IHttpClientFactory httpClientFactory)
+        {
+            _httpClientFactory = httpClientFactory;
+        }
+
         // LoggerMessage delegates for performance optimization
         private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordCheckRequest =
             LoggerMessage.Define<string>(
@@ -63,7 +75,7 @@ namespace PwnedPasswordsSearch
         /// <returns>True if the password is pwned (found in the API), false otherwise.</returns>
         /// <exception cref="PwnedPasswordsApiException">Thrown when the API request fails (e.g., network error, API down).</exception>
         /// <exception cref="PwnedPasswordsSearchException">Thrown for unexpected errors during the password check process.</exception>
-        public static async Task<bool> IsPwnedPasswordAsync(string plaintext, ILogger? logger = null)
+        public async Task<bool> IsPwnedPasswordAsync(string plaintext, ILogger? logger = null)
         {
             try
             {
@@ -83,14 +95,12 @@ namespace PwnedPasswordsSearch
 
                 LogPwnedPasswordCheckRequest(logger, hashPrefix, null);
 
-                var uriString = $"https://api.pwnedpasswords.com/range/{hashPrefix}";
-
-                using var client = new HttpClient();
+                var client = _httpClientFactory.CreateClient("PwnedPasswords");
                 HttpResponseMessage response = null; // Declare response outside using for error context
 
                 try
                 {
-                    response = await client.GetAsync(new Uri(uriString));
+                    response = await client.GetAsync($"range/{hashPrefix}");
                     response.EnsureSuccessStatusCode(); // Throw exception for non-success status codes
 
                     string responseContent = await response.Content.ReadAsStringAsync();
@@ -120,6 +130,10 @@ namespace PwnedPasswordsSearch
                     LogPwnedPasswordApiError(logger, ex.Message, ex);
                     throw new PwnedPasswordsApiException("Error calling Pwned Passwords API.", ex);
                 }
+            }
+            catch (PwnedPasswordsApiException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
