@@ -3,7 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Unosquare.PassCore.Web.Models;
-using Swan.Net;
+using System.Text.Json;
+using System.Net.Http;
 using Zxcvbn;
 
 namespace Unosquare.PassCore.Web.Controllers;
@@ -17,6 +18,7 @@ public class PasswordController : Controller
     private readonly ILogger _logger;
     private readonly ClientSettings _options;
     private readonly IPasswordChangeProvider _passwordChangeProvider;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PasswordController" /> class.
@@ -27,11 +29,13 @@ public class PasswordController : Controller
     public PasswordController(
         ILogger<PasswordController> logger,
         IOptions<ClientSettings> optionsAccessor,
-        IPasswordChangeProvider passwordChangeProvider)
+        IPasswordChangeProvider passwordChangeProvider,
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _options = optionsAccessor.Value;
         _passwordChangeProvider = passwordChangeProvider;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -49,7 +53,7 @@ public class PasswordController : Controller
     [Route("generated")]
     public IActionResult GetGeneratedPassword()
     {
-        using var generator = new PasswordGenerator();
+        var generator = new PasswordGenerator();
         return Json(new { password = generator.Generate(_options.PasswordEntropy) });
     }
 
@@ -61,13 +65,6 @@ public class PasswordController : Controller
     [HttpPost]
     public async Task<IActionResult> Post([FromBody] ChangePasswordModel model)
     {
-        if (model.NewPassword != model.NewPasswordVerify)
-        {
-            _logger.LogWarning("Invalid model, passwords don't match");
-
-            return BadRequest(ApiResult.InvalidRequest());
-        }
-
         // Validate the model
         if (ModelState.IsValid == false)
         {
@@ -105,7 +102,7 @@ public class PasswordController : Controller
                 return BadRequest(result);
             }
 
-            var resultPasswordChange = _passwordChangeProvider.PerformPasswordChange(
+            var resultPasswordChange = await _passwordChangeProvider.PerformPasswordChangeAsync(
                 model.Username,
                 model.CurrentPassword,
                 model.NewPassword);
@@ -134,11 +131,17 @@ public class PasswordController : Controller
         if (_options.Recaptcha == null || string.IsNullOrEmpty(recaptchaResponse))
             return false;
 
+        var client = _httpClientFactory.CreateClient("Recaptcha");
+        var response = await client.PostAsync("siteverify", new FormUrlEncodedContent(new[]
+        {
+            new KeyValuePair<string?, string?>("secret", _options.Recaptcha.PrivateKey),
+            new KeyValuePair<string?, string?>("response", recaptchaResponse)
+        }));
 
-        var requestUrl = new Uri(
-            $"https://www.google.com/recaptcha/api/siteverify?secret={_options.Recaptcha.PrivateKey}&response={recaptchaResponse}");
-        var validationResponse = await JsonClient.Get<Dictionary<string, object>>(requestUrl);
+        response.EnsureSuccessStatusCode();
 
-        return Convert.ToBoolean(validationResponse["success"], System.Globalization.CultureInfo.InvariantCulture);
+        var validationResponse = await JsonSerializer.DeserializeAsync<Dictionary<string, object>>(await response.Content.ReadAsStreamAsync());
+
+        return validationResponse != null && validationResponse.TryGetValue("success", out var success) && ((JsonElement)success).GetBoolean();
     }
 }

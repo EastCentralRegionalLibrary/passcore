@@ -3,62 +3,7 @@
 import { IGlobalContext } from "../types/Providers";
 
 // This should be completely implemented in IGlobalContext
-/*
-export interface IAppSettings {
-    ValidationRegex?: {
-        EmailRegex?: string;
-        UsernameRegex?: string;
-    };
-    UsePasswordGeneration?: boolean;
-    MinimumDistance?: number;
-    PasswordEntropy?: number;
-    ShowPasswordMeter?: boolean;
-    MinimumScore?: number;
-    Recaptcha?: {
-        SiteKey?: string;
-        PrivateKey?: string;
-        LanguageCode?: string;
-    };
-    UseEmail?: string;
-    ApplicationTitle?: string;
-    ChangePasswordTitle?: string;
-    ChangePasswordForm?: {
-        HelpText?: string;
-        UsernameLabel?: string;
-        UsernameHelpblock?: string;
-        UsernameDefaultDomainHelperBlock?: string;
-        CurrentPasswordLabel?: string;
-        CurrentPasswordHelpblock?: string;
-        NewPasswordLabel?: string;
-        NewPasswordHelpblock?: string;
-        NewPasswordVerifyLabel?: string;
-        NewPasswordVerifyHelpblock?: string;
-        ChangePasswordButtonLabel?: string;
-    };
-    ErrorsPasswordForm?: {
-        FieldRequired?: string;
-        UsernamePattern?: string;
-        UsernameEmailPattern?: string;
-        PasswordMatch?: string;
-    };
-    Alerts?: {
-        SuccessAlertTitle?: string;
-        SuccessAlertBody?: string;
-        ErrorPasswordChangeNotAllowed?: string;
-        ErrorInvalidCredentials?: string;
-        ErrorInvalidDomain?: string;
-        ErrorInvalidUser?: string;
-        ErrorCaptcha?: string;
-        ErrorFieldRequired?: string;
-        ErrorFieldMismatch?: string;
-        ErrorComplexPassword?: string;
-        ErrorConnectionLdap?: string;
-        ErrorScorePassword?: string;
-        ErrorDistancePassword?: string;
-        ErrorPwnedPassword?: string;
-    };
-}
-*/
+
 
 export async function resolveAppSettings(): Promise<IGlobalContext> {
     const response = await fetch('api/password');

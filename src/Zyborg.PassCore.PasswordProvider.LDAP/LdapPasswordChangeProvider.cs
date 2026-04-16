@@ -8,6 +8,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Unosquare.PassCore.Common;
 using LdapRemoteCertificateValidationCallback =
     Novell.Directory.Ldap.RemoteCertificateValidationCallback;
@@ -62,8 +63,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
     ///
     /// Check the above links for more information.
     /// </remarks>
-    [Obsolete]
-    public ApiErrorItem? PerformPasswordChange(
+        public Task<ApiErrorItem?> PerformPasswordChangeAsync(
         string username,
         string currentPassword,
         string newPassword)
@@ -92,9 +92,9 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
             {
                 _logger.LogWarning("Unable to find username: [{0}]", cleanUsername);
 
-                return new ApiErrorItem(
+                return Task.FromResult<ApiErrorItem?>(new ApiErrorItem(
                     _options.HideUserNotFound ? ApiErrorCode.InvalidCredentials : ApiErrorCode.UserNotFound,
-                    _options.HideUserNotFound ? "Invalid credentials" : "Username could not be located");
+                    _options.HideUserNotFound ? "Invalid credentials" : "Username could not be located"));
             }
 
             if (search.Count > 1)
@@ -103,7 +103,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
 
                 // Hopefully this should not ever happen if AD is preserving SAM Account Name
                 // uniqueness constraint, but just in case, handling this corner case
-                return new ApiErrorItem(ApiErrorCode.UserNotFound, "Multiple matching user entries resolved");
+                return Task.FromResult<ApiErrorItem?>(new ApiErrorItem(ApiErrorCode.UserNotFound, "Multiple matching user entries resolved"));
             }
 
             var userDN = search.Next().Dn;
@@ -128,7 +128,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
 
             _logger.LogWarning(item.Message, ex);
 
-            return item;
+            return Task.FromResult<ApiErrorItem?>(item);
         }
         catch (Exception ex)
         {
@@ -138,11 +138,11 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
 
             _logger.LogWarning(item.Message, ex);
 
-            return item;
+            return Task.FromResult<ApiErrorItem?>(item);
         }
 
         // Everything seems to have worked:
-        return null;
+        return Task.FromResult<ApiErrorItem?>(null);
     }
 
     private static void ChangePasswordReplace(string newPassword, ILdapConnection ldap, string userDN)

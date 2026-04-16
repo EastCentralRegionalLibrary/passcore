@@ -1,4 +1,5 @@
 ﻿using Novell.Directory.Ldap;
+using System;
 using Unosquare.PassCore.Common;
 
 namespace Zyborg.PassCore.PasswordProvider.LDAP;
@@ -17,7 +18,7 @@ public class LdapPasswordChangeOptions : IAppSettings
     /// <inheritdoc />
     public string[] LdapHostnames
     {
-        get => ldapHostnames ?? new string[] { };
+        get => ldapHostnames ?? Array.Empty<string>();
         set => ldapHostnames = value;
     }
 

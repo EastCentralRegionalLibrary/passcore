@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System;
 using Unosquare.PassCore.Common;
 
 namespace Unosquare.PassCore.PasswordProvider;
@@ -67,7 +68,7 @@ public class PasswordChangeOptions : IAppSettings
     /// <inheritdoc />
     public string[] LdapHostnames
     {
-        get => _ldapHostnames ?? new string[] { };
+        get => _ldapHostnames ?? Array.Empty<string>();
         set => _ldapHostnames = value;
     }
 

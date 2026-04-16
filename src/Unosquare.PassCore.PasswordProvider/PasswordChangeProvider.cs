@@ -1,14 +1,16 @@
-﻿#if WINDOWS
+#if WINDOWS
 using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.DirectoryServices;
+// TODO: [NET8-UPGRADE] Must target net8.0-windows to avoid PlatformNotSupportedException
 using System.DirectoryServices.AccountManagement;
 using System.DirectoryServices.ActiveDirectory;
 using System.Linq;
 using Unosquare.PassCore.Common;
 using System.Threading.Tasks;
+using PwnedPasswordsSearch;
 
 namespace Unosquare.PassCore.PasswordProvider
 {
@@ -27,6 +29,7 @@ namespace Unosquare.PassCore.PasswordProvider
         // Readonly fields
         private readonly PasswordChangeOptions _options;
         private readonly ILogger<PasswordChangeProvider> _logger;
+        private readonly IPwnedPasswordSearch _pwnedPasswordSearch;
         private IdentityType _idType = IdentityType.UserPrincipalName; // Default identity type
 
         // LoggerMessage delegates for performance optimization
@@ -228,10 +231,12 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="options">The options configuration for password change operations, injected through IOptions.</param>
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
-            IOptions<PasswordChangeOptions> options)
+            IOptions<PasswordChangeOptions> options,
+            IPwnedPasswordSearch pwnedPasswordSearch)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = (options?.Value) ?? throw new ArgumentNullException(nameof(options));
+            _pwnedPasswordSearch = pwnedPasswordSearch ?? throw new ArgumentNullException(nameof(pwnedPasswordSearch));
             SetIdType(); // Determine IdentityType from options
         }
 
@@ -247,31 +252,6 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="username">The username.</param>
         /// <param name="currentPassword">The current password.</param>
         /// <param name="newPassword">The new password.</param>
-        /// <returns>
-        /// An <see cref="ApiErrorItem"/> describing the error if the password change operation failed in the synchronous wrapper,
-        /// otherwise null if the asynchronous operation completed successfully (success of the underlying password change is indicated by a null return, errors during the change itself within the async method are also handled and returned as ApiErrorItems by the async method).
-        /// In case of an exception in the wrapper itself, an <see cref="ApiErrorItem"/> with <see cref="ApiErrorCode.Generic"/> is returned.
-        /// </returns>
-        public ApiErrorItem? PerformPasswordChange(string username, string currentPassword, string newPassword)
-        {
-            // Call the asynchronous implementation and BLOCK to get the result.
-            try
-            {
-                return PerformPasswordChangeAsync(username, currentPassword, newPassword).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                // Log using LogPasswordChangeUnexpectedError - as it represents an unexpected failure in the synchronous wrapper context
-                LogPasswordChangeUnexpectedError(
-                    _logger,
-                    "Synchronous wrapper failed during password change operation.", // More specific message for wrapper context
-                    $"Exception details: {ex.Message}. Inner exception: {ex.InnerException?.Message}", // Include both exception messages for better context
-                    ex);
-
-                // Return ApiErrorItem with ApiErrorCode.PasswordChangeApiError to indicate a general password change API failure in the synchronous context
-                return new ApiErrorItem(ApiErrorCode.Generic, "Password change operation failed."); // More general message for the API error
-            }
-        }
 
 
         /// <inheritdoc />
@@ -396,34 +376,34 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             try
             {
-                if (await PwnedPasswordsSearch.PwnedSearch.IsPwnedPasswordAsync(newPassword, _logger)) // Check if password is in pwned password list
+                if (await _pwnedPasswordSearch.IsPwnedPasswordAsync(newPassword, _logger)) // Check if password is in pwned password list
                 {
                     LogPwnedPasswordUsed(_logger, null);
                     return new ApiErrorItem(ApiErrorCode.PwnedPassword); // Return PwnedPassword error
                 }
                 return null; // Password is not a known compromised password
             }
-            catch (PwnedPasswordsSearch.PwnedPasswordsApiException apiException)
+            catch (PwnedPasswordsApiException apiException)
             {
                 // Log the API exception as a warning, as it's an external service issue.
                 LogPwnedPasswordCheckApiError(_logger, apiException.Message, apiException);
                 // Decide how to handle API errors. Returning null means we don't consider API errors as "pwned password" errors for validation purposes.
                 // The password validation might proceed as if the check was inconclusive in terms of pwned status due to API issue.
-                return new ApiErrorItem(ApiErrorCode.Generic, "Error during Pwned Password API check: {apiException.Message}"); // Return PwnedPassword error
+                return new ApiErrorItem(ApiErrorCode.Generic, $"Error during Pwned Password API check: {apiException.Message}"); // Return PwnedPassword error
             }
-            catch (PwnedPasswordsSearch.PwnedPasswordsSearchException searchException)
+            catch (PwnedPasswordsSearchException searchException)
             {
                 // Log unexpected errors during the search process as errors.
                 LogPwnedPasswordCheckUnexpectedError(_logger, searchException.Message, searchException);
                 // Similar to API exceptions, it's not a "pwned password" error in the context of validation, but an internal error.
-                return new ApiErrorItem(ApiErrorCode.Generic, "Unexpected error during Pwned Password search: {searchException.Message}");
+                return new ApiErrorItem(ApiErrorCode.Generic, $"Unexpected error during Pwned Password search: {searchException.Message}");
             }
             catch (Exception unexpectedException)
             {
                 // Catch any other unexpected exceptions (although ideally, only the custom exceptions should be thrown).
                 // Log as a critical error as it's something unexpected in the validation process.
                 LogPwnedPasswordCheckUnexpectedError(_logger, unexpectedException.Message, unexpectedException);
-                return new ApiErrorItem(ApiErrorCode.Generic, "Unexpected error during Pwned Password search: {unexpectedException.Message}");
+                return new ApiErrorItem(ApiErrorCode.Generic, $"Unexpected error during Pwned Password search: {unexpectedException.Message}");
             }
         }
 
@@ -438,15 +418,15 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             try
             {
-                PrincipalSearchResult<Principal> groups; // Collection to hold user's groups
+                System.Collections.Generic.List<Principal> groups; // Collection to hold user's groups
                 try
                 {
-                    groups = userPrincipal.GetGroups(); // Attempt to retrieve groups using GetGroups (faster in some scenarios)
+                    groups = userPrincipal.GetGroups().ToList(); // Attempt to retrieve groups using GetGroups (faster in some scenarios)
                 }
                 catch (Exception exception) // Catch exceptions during group retrieval
                 {
                     LogErrorRetrievingGroups(_logger, exception.Message, exception);
-                    groups = userPrincipal.GetAuthorizationGroups(); // Fallback to GetAuthorizationGroups if GetGroups fails (more reliable for cross-domain groups)
+                    groups = userPrincipal.GetAuthorizationGroups().ToList(); // Fallback to GetAuthorizationGroups if GetGroups fails (more reliable for cross-domain groups)
                 }
 
                 // Check for restricted group membership
@@ -508,9 +488,12 @@ namespace Unosquare.PassCore.PasswordProvider
             }
 
             // Fallback validation using LogonUser (more comprehensive but potentially less performant)
-            if (NativeMethods.LogonUser(upn, string.Empty, currentPassword, NativeMethods.LogonTypes.Network, NativeMethods.LogonProviders.Default, out _))
+            if (NativeMethods.LogonUser(upn, string.Empty, currentPassword, NativeMethods.LogonTypes.Network, NativeMethods.LogonProviders.Default, out var token))
             {
-                return true; // LogonUser succeeded, credentials validated
+                using (new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(token))
+                {
+                    return true; // LogonUser succeeded, credentials validated
+                }
             }
 
             // Check for specific error codes indicating password expiration or must change scenarios

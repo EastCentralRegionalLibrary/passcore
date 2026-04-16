@@ -37,9 +37,10 @@ export const ChangePassword: React.FC = () => {
 
     const paperStyle = {
         borderRadius: '10px',
-        height: '550px',
-        marginTop: '75px',
-        width: '650px',
+        minHeight: '550px',
+        maxWidth: '650px',
+        width: '100%',
+        margin: '75px auto',
         zIndex: 1,
     };
 

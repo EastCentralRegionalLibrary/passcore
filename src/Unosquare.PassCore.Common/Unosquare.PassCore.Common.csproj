@@ -2,7 +2,7 @@
 	<PropertyGroup>
 		<Description>PassCore abstraction classes to implement custom providers.</Description>
 		<Copyright>Copyright (c) 2018-2022 - Unosquare</Copyright>
-		<TargetFramework>net6.0</TargetFramework>
+		<TargetFramework>net8.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<NullableReferenceTypes>true</NullableReferenceTypes>
 		<EnableNETAnalyzers>true</EnableNETAnalyzers>

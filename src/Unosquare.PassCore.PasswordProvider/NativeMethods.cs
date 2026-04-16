@@ -49,4 +49,8 @@ public class NativeMethods
         LogonTypes logonType,
         LogonProviders logonProvider,
         out IntPtr token);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    internal static extern bool CloseHandle(IntPtr hObject);
 }
