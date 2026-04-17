@@ -316,7 +316,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
                 bindHostname = h;
                 break;
             }
-            catch (Exception ex)
+            catch (LdapException ex)
             {
                 _logger.LogWarning($"Failed to connect to host [{h}]", ex);
             }
