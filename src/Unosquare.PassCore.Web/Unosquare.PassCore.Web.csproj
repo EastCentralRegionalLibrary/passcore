@@ -49,75 +49,23 @@
 		<DefineConstants>PASSCORE_LDAP_PROVIDER</DefineConstants>
 	</PropertyGroup>
 
-
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('.\ClientApp\node_modules')">
-		<Exec Command="node --version" ContinueOnError="true">
-			<Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
-		</Exec>
-		<Exec Command="node .\ClientApp\version-script.mjs" ContinueOnError="true" />
-		<Exec Command="npm audit --fix" WorkingDirectory=".\ClientApp" />
-		<Exec Command="npm install" WorkingDirectory=".\ClientApp" />
-		<Error Condition="'' != '0'" Text="Node.js is required to build and run this project. To continue, please install Node.js from https://nodejs.org/, and then restart your command prompt or IDE." />
+	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('ClientApp/node_modules')">
 		<Message Importance="high" Text="Performing first-run npm install..." />
-	</Target>
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
-		<Message Importance="high" Text="Performing run Parcel build..." />
-		<Exec Command="npm run build" WorkingDirectory=".\ClientApp" />
-	</Target>
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('.\ClientApp\node_modules')">
+		<!-- Fail fast if Node.js is not available -->
 		<Exec Command="node --version" ContinueOnError="true">
-			<Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
+			<Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
 		</Exec>
-		<Exec Command="node .\ClientApp\version-script.mjs" ContinueOnError="true" />
-		<Exec Command="npm audit --fix" WorkingDirectory=".\ClientApp" />
-		<Exec Command="npm install" WorkingDirectory=".\ClientApp" />
-		<Error Condition="'' != '0'" Text="Node.js is required to build and run this project. To continue, please install Node.js from https://nodejs.org/, and then restart your command prompt or IDE." />
-		<Message Importance="high" Text="Performing first-run npm install..." />
+		<Error Condition="'$(NodeExitCode)' != '0'" Text="Node.js is required to build and run this project. Please install Node.js from https://nodejs.org/ and restart your shell or IDE." />
+		<!-- Install frontend dependencies: not allowed to continue if install fails -->
+		<Exec Command="npm install" WorkingDirectory="ClientApp" />
+		<!-- Security audit: allowed to fail without breaking the build -->
+		<Exec Command="npm audit --fix" WorkingDirectory="ClientApp" ContinueOnError="true" />
+		<!-- Optional version metadata generation -->
+		<Exec Command="node version-script.mjs" WorkingDirectory="ClientApp" ContinueOnError="true" />
 	</Target>
+	
 	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
-		<Message Importance="high" Text="Performing run Parcel build..." />
-		<Exec Command="npm run build" WorkingDirectory=".\ClientApp" />
-	</Target>
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('.\ClientApp\node_modules')">
-		<Exec Command="node --version" ContinueOnError="true">
-			<Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
-		</Exec>
-		<Exec Command="node .\ClientApp\version-script.mjs" ContinueOnError="true" />
-		<Exec Command="npm audit --fix" WorkingDirectory=".\ClientApp" />
-		<Exec Command="npm install" WorkingDirectory=".\ClientApp" />
-		<Error Condition="'' != '0'" Text="Node.js is required to build and run this project. To continue, please install Node.js from https://nodejs.org/, and then restart your command prompt or IDE." />
-		<Message Importance="high" Text="Performing first-run npm install..." />
-	</Target>
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
-		<Message Importance="high" Text="Performing run Parcel build..." />
-		<Exec Command="npm run build" WorkingDirectory=".\ClientApp" />
-	</Target>
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('.\ClientApp\node_modules')">
-		<Exec Command="node --version" ContinueOnError="true">
-			<Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
-		</Exec>
-		<Exec Command="node .\ClientApp\version-script.mjs" ContinueOnError="true" />
-		<Exec Command="npm audit --fix" WorkingDirectory=".\ClientApp" />
-		<Exec Command="npm install" WorkingDirectory=".\ClientApp" />
-		<Error Condition="'' != '0'" Text="Node.js is required to build and run this project. To continue, please install Node.js from https://nodejs.org/, and then restart your command prompt or IDE." />
-		<Message Importance="high" Text="Performing first-run npm install..." />
-	</Target>
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
-		<Message Importance="high" Text="Performing run Parcel build..." />
-		<Exec Command="npm run build" WorkingDirectory=".\ClientApp" />
-	</Target>
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('.\ClientApp\node_modules')">
-		<Exec Command="node --version" ContinueOnError="true">
-			<Output TaskParameter="ExitCode" PropertyName="ErrorCode" />
-		</Exec>
-		<Exec Command="node .\ClientApp\version-script.mjs" ContinueOnError="true" />
-		<Exec Command="npm audit --fix" WorkingDirectory=".\ClientApp" />
-		<Exec Command="npm install" WorkingDirectory=".\ClientApp" />
-		<Error Condition="'$(ErrorCode)' != '0'" Text="Node.js is required to build and run this project. To continue, please install Node.js from https://nodejs.org/, and then restart your command prompt or IDE." />
-		<Message Importance="high" Text="Performing first-run npm install..." />
-	</Target>
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
-		<Message Importance="high" Text="Performing run Parcel build..." />
-		<Exec Command="npm run build" WorkingDirectory=".\ClientApp" />
+		<Message Importance="high" Text="Running Parcel build..." />
+		<Exec Command="npm run build" WorkingDirectory="ClientApp" />
 	</Target>
 </Project>
