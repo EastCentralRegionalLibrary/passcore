@@ -2,7 +2,6 @@
 	<PropertyGroup>
 		<DefaultItemExcludes>$(DefaultItemExcludes);**\node_modules\**;node_modules\**</DefaultItemExcludes>
 		<Copyright>Copyright (c) 2018-2021 - Unosquare</Copyright>
-		<TargetFramework>net8.0</TargetFramework>
 		<AssemblyName>Unosquare.PassCore.Web</AssemblyName>
 		<PackageId>Unosquare.PassCore.Web</PackageId>
 		<TypeScriptCompileBlocked>true</TypeScriptCompileBlocked>
@@ -38,15 +37,15 @@
 		<ProjectReference Include="..\PwnedPasswordsSearch\PwnedPasswordsSearch.csproj" />
 		<ProjectReference Include="..\Unosquare.PassCore.Common\Unosquare.PassCore.Common.csproj" />
 	</ItemGroup>
-	<ItemGroup Condition="'$(PASSCORE_PROVIDER)' == ''">
-		<!-- Default Password Provider - Win32 -->
+	<!-- Windows-only Win32 provider -->
+	<ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
 		<ProjectReference Include="..\Unosquare.PassCore.PasswordProvider\Unosquare.PassCore.PasswordProvider.csproj" />
 	</ItemGroup>
-	<ItemGroup Condition="'$(PASSCORE_PROVIDER)' == 'LDAP'">
-		<!-- Pure LDAP provider -->
+	<!-- Cross-platform LDAP provider -->
+	<ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
 		<ProjectReference Include="..\Zyborg.PassCore.PasswordProvider.LDAP\Zyborg.PassCore.PasswordProvider.LDAP.csproj" />
 	</ItemGroup>
-	<PropertyGroup Condition="'$(PASSCORE_PROVIDER)' == 'LDAP'">
+	<PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
 		<DefineConstants>PASSCORE_LDAP_PROVIDER</DefineConstants>
 	</PropertyGroup>
 

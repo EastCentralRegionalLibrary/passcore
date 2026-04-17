@@ -1,8 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
+		<TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
 		<Description>PassCore abstraction classes to implement custom providers.</Description>
 		<Copyright>Copyright (c) 2018-2022 - Unosquare</Copyright>
-		<TargetFramework>net8.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<NullableReferenceTypes>true</NullableReferenceTypes>
 		<EnableNETAnalyzers>true</EnableNETAnalyzers>
