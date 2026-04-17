@@ -63,7 +63,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
     ///
     /// Check the above links for more information.
     /// </remarks>
-        public Task<ApiErrorItem?> PerformPasswordChangeAsync(
+    public Task<ApiErrorItem?> PerformPasswordChangeAsync(
         string username,
         string currentPassword,
         string newPassword)

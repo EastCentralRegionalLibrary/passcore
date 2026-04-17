@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace Zyborg.PassCore.PasswordProvider.LDAP;
 
@@ -12,8 +12,7 @@ public class Win32ErrorCode
     /// <a href="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d?redirectedfrom=MSDN">docs.</a>
     /// provides a list of commonly anticipated error codes from a password change request.
     /// </summary>
-    public static readonly IEnumerable<Win32ErrorCode> Codes = new[]
-    {
+    public static readonly IEnumerable<Win32ErrorCode> Codes = [
         new Win32ErrorCode(0x00000005, "ERROR_ACCESS_DENIED",
             "Access is denied."),
         new Win32ErrorCode(0x00000056, "ERROR_INVALID_PASSWORD",
@@ -48,7 +47,7 @@ public class Win32ErrorCode
             "Could not find the domain controller for this domain."),
         new Win32ErrorCode(0x00000775, "ERROR_ACCOUNT_LOCKED_OUT",
             "The referenced account is currently locked out and cannot be logged on to."),
-    };
+    ];
 
     private static readonly Dictionary<int, Win32ErrorCode> ErrorByCode = new();
 
@@ -94,7 +93,7 @@ public class Win32ErrorCode
     /// <summary>
     /// Get Error Code by the code.
     /// </summary>
-    /// <param name="code">The code.</param>
+    /// <param name=code>The code.</param>
     /// <returns>A Win32ErrorCode from the code.</returns>
     public static Win32ErrorCode? ByCode(int code) =>
         ErrorByCode.TryGetValue(code, out var err) ? err : null;
