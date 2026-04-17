@@ -13,7 +13,7 @@ public class ApiResult
     /// <param name="payload">The payload.</param>
     public ApiResult(object? payload = null)
     {
-        Errors = new List<ApiErrorItem>();
+        List<ApiErrorItem> Errors;
         Payload = payload;
     }
 
