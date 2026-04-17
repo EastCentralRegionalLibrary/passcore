@@ -490,7 +490,7 @@ namespace Unosquare.PassCore.PasswordProvider
             // Fallback validation using LogonUser (more comprehensive but potentially less performant)
             if (NativeMethods.LogonUser(upn, string.Empty, currentPassword, NativeMethods.LogonTypes.Network, NativeMethods.LogonProviders.Default, out var token))
             {
-                using (new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(token))
+                using (token)
                 {
                     return true; // LogonUser succeeded, credentials validated
                 }

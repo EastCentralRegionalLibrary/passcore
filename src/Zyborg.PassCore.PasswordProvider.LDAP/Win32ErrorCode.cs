@@ -49,7 +49,7 @@ public class Win32ErrorCode
             "The referenced account is currently locked out and cannot be logged on to."),
     ];
 
-    private static readonly Dictionary<int, Win32ErrorCode> ErrorByCode = new();
+    private static readonly Dictionary<int, Win32ErrorCode> ErrorByCode = [];
 
     static Win32ErrorCode()
     {
