@@ -66,7 +66,7 @@ public class PasswordController : Controller
     public async Task<IActionResult> Post([FromBody] ChangePasswordModel model)
     {
         // Validate the model
-        if (ModelState.IsValid == false)
+        if (!ModelState.IsValid)
         {
             _logger.LogWarning("Invalid model, validation failed");
 
@@ -76,10 +76,10 @@ public class PasswordController : Controller
         // Validate the Captcha
         try
         {
-            if (await ValidateRecaptcha(model.Recaptcha).ConfigureAwait(false) == false)
+            if (!await ValidateRecaptcha(model.Recaptcha).ConfigureAwait(false))
                 throw new InvalidOperationException("Invalid Recaptcha response");
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Invalid Recaptcha");
             return BadRequest(ApiResult.InvalidCaptcha());
@@ -112,7 +112,13 @@ public class PasswordController : Controller
 
             result.Errors.Add(resultPasswordChange);
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to update password");
+
+            result.Errors.Add(new ApiErrorItem(ApiErrorCode.Generic, ex.Message));
+        }
+        catch (InvalidOperationException ex)
         {
             _logger.LogError(ex, "Failed to update password");
 
@@ -132,11 +138,12 @@ public class PasswordController : Controller
             return false;
 
         var client = _httpClientFactory.CreateClient("Recaptcha");
-        var response = await client.PostAsync("siteverify", new FormUrlEncodedContent(new[]
+        using var content = new FormUrlEncodedContent(new[]
         {
             new KeyValuePair<string?, string?>("secret", _options.Recaptcha.PrivateKey),
             new KeyValuePair<string?, string?>("response", recaptchaResponse)
-        }));
+        });
+        using var response = await client.PostAsync("siteverify", content);
 
         response.EnsureSuccessStatusCode();
 
