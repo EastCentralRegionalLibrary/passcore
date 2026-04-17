@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Cancel previous runs on the same branch
+    - name: Cancel previous runs
       if: ${{ github.ref != 'refs/heads/main' }}
       uses: styfle/cancel-workflow-action@0.12.1
       with:
@@ -24,44 +24,45 @@ jobs:
         fetch-depth: 0
         submodules: recursive
 
-    - name: Set git urls to https instead of ssh
-      run: |
-        git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+    - name: Setup .NET 8.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
 
     - name: Setup Node
       uses: actions/setup-node@v4.2.0
       with:
         node-version: 22
 
-    - name: Extract version from tag
+    - name: Extract version and repo info
       if: startsWith(github.ref, 'refs/tags/v')
-      id: extract_version
-      shell: pwsh # Use PowerShell for Windows compatibility
+      id: vars
+      shell: pwsh
       run: |
-        $tagName = "${GITHUB_REF_NAME}"
-        $versionNumber = $tagName.Substring(1) # Remove the leading 'v' using PowerShell
-        Write-Host "Extracted version: $versionNumber"
-        echo "version=$versionNumber" >> "$env:GITHUB_OUTPUT" # Set output variable for Windows
+        $tagName = "${{ github.ref_name }}"
+        $version = $tagName.TrimStart('v')
+        $repoName = "${{ github.repository }}".Split('/')[-1]
+        
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+        echo "repo_name=$repoName" >> $env:GITHUB_OUTPUT
 
     - name: Set package.json version
       if: startsWith(github.ref, 'refs/tags/v')
-      run: npm version ${{ steps.extract_version.outputs.version }} WorkingDirectory=".\ClientApp"
+      working-directory: ./ClientApp
+      run: npm version ${{ steps.vars.outputs.version }}
 
-    - name: Build Windows binaries with MS vc15
+    - name: Build and Publish Windows Binaries
+      shell: pwsh
       run: |
-        $env:path="C:\Program` Files` (x86)\Microsoft` Visual` Studio\2019\Enterprise\SDK\ScopeCppSDK\vc15\VC\bin\;$env:path"
-        dotnet publish --configuration Release --runtime win-x64 --output ".\passcore_output\"
-        ls ${{ github.workspace }}\passcore_output\
+        # restore the line below if we need to fall back to VS2019
+        # $env:path="C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\SDK\ScopeCppSDK\vc15\VC\bin\;$env:path"
+        
+        dotnet publish --configuration Release --runtime win-x64 --self-contained false --output ".\passcore_output\"
+        Get-ChildItem -Path ".\passcore_output\"
 
-    - name: Upload Windows binaries to artifacts
+    - name: Upload Binaries
       uses: actions/upload-artifact@v4.6.0
       with:
-        name: passcore
+        name: passcore-${{ steps.vars.outputs.version || 'latest' }}
         path: ${{ github.workspace }}\passcore_output\
-
-    - name: Get tag name
-      if: startsWith(github.ref, 'refs/tags/')
-      id: tag-name
-      run: |
-        echo "::set-output name=TAG_NAME::$(echo ${{ github.ref }} | cut -d'/' -f 3)"
-        echo "::set-output name=REPO_NAME::$(echo ${{ github.repository }} | cut -d'/' -f 2)"
