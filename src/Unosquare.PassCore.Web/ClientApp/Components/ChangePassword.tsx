@@ -40,7 +40,7 @@ export const ChangePassword: React.FC = () => {
         minHeight: '550px',
         maxWidth: '650px',
         width: '100%',
-        margin: '75px auto',
+        marginTop: '75px',
         zIndex: 1,
     };
 
