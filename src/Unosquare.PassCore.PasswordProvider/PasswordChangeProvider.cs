@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
 using System.DirectoryServices;
-// TODO: [NET8-UPGRADE] Must target net8.0-windows to avoid PlatformNotSupportedException
 using System.DirectoryServices.AccountManagement;
 using System.DirectoryServices.ActiveDirectory;
 using System.Linq;
@@ -240,18 +239,6 @@ namespace Unosquare.PassCore.PasswordProvider
             SetIdType(); // Determine IdentityType from options
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// Performs the password change using the credentials provided.
-        /// <remarks>
-        /// This method is a synchronous wrapper around the asynchronous <see cref="PerformPasswordChangeAsync"/> method.
-        /// It blocks the calling thread while waiting for the asynchronous operation to complete.
-        /// Any exceptions thrown by the asynchronous operation are caught, logged, and returned as an <see cref="ApiErrorItem"/>.
-        /// </remarks>
-        /// </summary>
-        /// <param name="username">The username.</param>
-        /// <param name="currentPassword">The current password.</param>
-        /// <param name="newPassword">The new password.</param>
 
 
         /// <inheritdoc />
@@ -376,7 +363,7 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             try
             {
-                if (await _pwnedPasswordSearch.IsPwnedPasswordAsync(newPassword, _logger)) // Check if password is in pwned password list
+                if (await _pwnedPasswordSearch.IsPwnedPasswordAsync(newPassword)) // Check if password is in pwned password list
                 {
                     LogPwnedPasswordUsed(_logger, null);
                     return new ApiErrorItem(ApiErrorCode.PwnedPassword); // Return PwnedPassword error

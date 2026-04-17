@@ -5,6 +5,6 @@ namespace PwnedPasswordsSearch
 {
     public interface IPwnedPasswordSearch
     {
-        Task<bool> IsPwnedPasswordAsync(string plaintext, ILogger? logger = null);
+        Task<bool> IsPwnedPasswordAsync(string plaintext);
     }
 }

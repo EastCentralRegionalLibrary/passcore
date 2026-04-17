@@ -6,8 +6,6 @@ using Microsoft.Extensions.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
-using System.Net.Http;
-using Microsoft.Extensions.Http;
 
 using Microsoft.Extensions.Logging;
 
@@ -27,10 +25,12 @@ namespace PwnedPasswordsSearch
     public class PwnedSearch : IPwnedPasswordSearch
     {
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly ILogger<PwnedSearch> _logger;
 
-        public PwnedSearch(IHttpClientFactory httpClientFactory)
+        public PwnedSearch(IHttpClientFactory httpClientFactory, ILogger<PwnedSearch> logger)
         {
             _httpClientFactory = httpClientFactory;
+            _logger = logger;
         }
 
         // LoggerMessage delegates for performance optimization
@@ -71,11 +71,10 @@ namespace PwnedPasswordsSearch
         /// The calling code is responsible for handling these exceptions.
         /// </summary>
         /// <param name="plaintext">Password to check.</param>
-        /// <param name="logger">Optional logger for logging events.</param>
         /// <returns>True if the password is pwned (found in the API), false otherwise.</returns>
         /// <exception cref="PwnedPasswordsApiException">Thrown when the API request fails (e.g., network error, API down).</exception>
         /// <exception cref="PwnedPasswordsSearchException">Thrown for unexpected errors during the password check process.</exception>
-        public async Task<bool> IsPwnedPasswordAsync(string plaintext, ILogger? logger = null)
+        public async Task<bool> IsPwnedPasswordAsync(string plaintext)
         {
             try
             {
@@ -93,7 +92,7 @@ namespace PwnedPasswordsSearch
                 string hashPrefix = hashResult[..5];
                 string hashSuffixToCheck = hashResult[5..];
 
-                LogPwnedPasswordCheckRequest(logger, hashPrefix, null);
+                LogPwnedPasswordCheckRequest(_logger, hashPrefix, null);
 
                 var client = _httpClientFactory.CreateClient("PwnedPasswords");
                 HttpResponseMessage response = null; // Declare response outside using for error context
@@ -111,23 +110,23 @@ namespace PwnedPasswordsSearch
                         string[] parts = line.Split(':');
                         if (parts.Length == 2 && parts[0] == hashSuffixToCheck)
                         {
-                            LogPwnedPasswordFound(logger, hashSuffixToCheck, null);
+                            LogPwnedPasswordFound(_logger, hashSuffixToCheck, null);
                             return true; // Password is PWNED!
                         }
                     }
-                    LogPwnedPasswordNotFound(logger, hashPrefix, null);
+                    LogPwnedPasswordNotFound(_logger, hashPrefix, null);
                     return false; // Password not pwned
                 }
                 catch (HttpRequestException ex) when (response != null)
                 {
                     // Capture more context about the API error including status code if available
                     string errorMessage = $"API request failed with status code: {response.StatusCode}. Error message: {ex.Message}";
-                    LogPwnedPasswordApiError(logger, errorMessage, ex);
+                    LogPwnedPasswordApiError(_logger, errorMessage, ex);
                     throw new PwnedPasswordsApiException(errorMessage, ex);
                 }
                 catch (HttpRequestException ex)
                 {
-                    LogPwnedPasswordApiError(logger, ex.Message, ex);
+                    LogPwnedPasswordApiError(_logger, ex.Message, ex);
                     throw new PwnedPasswordsApiException("Error calling Pwned Passwords API.", ex);
                 }
             }
@@ -137,7 +136,7 @@ namespace PwnedPasswordsSearch
             }
             catch (Exception ex)
             {
-                LogPwnedPasswordUnexpectedError(logger, ex.Message, ex);
+                LogPwnedPasswordUnexpectedError(_logger, ex.Message, ex);
                 throw new PwnedPasswordsSearchException("Unexpected error during pwned password check.", ex);
             }
         }
