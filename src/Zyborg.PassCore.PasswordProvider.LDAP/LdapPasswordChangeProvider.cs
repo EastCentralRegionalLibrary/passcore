@@ -130,11 +130,9 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
 
             return Task.FromResult<ApiErrorItem?>(item);
         }
-        catch (Exception ex)
+        catch (ApiErrorException ex)
         {
-            var item = ex is ApiErrorException apiError
-                ? apiError.ToApiErrorItem()
-                : new ApiErrorItem(ApiErrorCode.InvalidCredentials, $"Failed to update password: {ex.Message}");
+            var item = ex.ToApiErrorItem();
 
             _logger.LogWarning(item.Message, ex);
 
