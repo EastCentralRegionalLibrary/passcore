@@ -58,7 +58,7 @@ jobs:
         # restore the line below if we need to fall back to VS2019
         # $env:path="C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\SDK\ScopeCppSDK\vc15\VC\bin\;$env:path"
         
-        dotnet publish --configuration Release --runtime win-x64 --self-contained false --output ".\passcore_output\"
+        dotnet publish --configuration Release --runtime win-x64 --framework net8.0-windows --self-contained false --output ".\passcore_output\"
         Get-ChildItem -Path ".\passcore_output\"
 
     - name: Upload Binaries
