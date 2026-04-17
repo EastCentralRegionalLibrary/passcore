@@ -1,13 +1,13 @@
 using System.Threading.Tasks;
 using PwnedPasswordsSearch;
-﻿namespace Unosquare.PassCore.Web.Helpers;
+namespace Unosquare.PassCore.Web.Helpers;
 
 internal class DebugPasswordChangeProvider : IPasswordChangeProvider
 {
     private readonly IPwnedPasswordSearch _pwnedPasswordSearch;
     public DebugPasswordChangeProvider(IPwnedPasswordSearch pwnedPasswordSearch) => _pwnedPasswordSearch = pwnedPasswordSearch;
 
-        public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword)
+    public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword)
     {
         var currentUsername = username.IndexOf("@", StringComparison.Ordinal) > 0
             ? username[..username.IndexOf("@", StringComparison.Ordinal)]
