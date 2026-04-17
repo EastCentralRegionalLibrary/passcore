@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+		<!-- Inherit from Directory.Build.props -->
 		<Description>PassCore abstraction classes to implement custom providers.</Description>
 		<Copyright>Copyright (c) 2018-2022 - Unosquare</Copyright>
 		<Nullable>enable</Nullable>
