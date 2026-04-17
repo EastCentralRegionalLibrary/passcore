@@ -145,7 +145,14 @@ public class PasswordController : Controller
         });
         using var response = await client.PostAsync("siteverify", content);
 
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            response.EnsureSuccessStatusCode();
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException("Recaptcha API request failed.", ex);
+        }
 
         var validationResponse = await JsonSerializer.DeserializeAsync<Dictionary<string, object>>(await response.Content.ReadAsStreamAsync());
 

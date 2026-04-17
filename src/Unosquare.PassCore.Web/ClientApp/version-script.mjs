@@ -6,6 +6,6 @@ const versionFileContent = `// Generated version file
 export const appVersion = '${version}';
 `;
 
-fs.writeFileSync('ClientApp\\version.ts', versionFileContent);
+fs.writeFileSync('version.ts', versionFileContent);
 
 console.log(`Version file generated at version.ts with version: ${version}`);
