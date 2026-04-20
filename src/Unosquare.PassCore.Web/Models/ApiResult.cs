@@ -19,7 +19,7 @@ public class ApiResult
     /// <summary>
     /// Gets or sets the errors.
     /// </summary>
-    public List<ApiErrorItem> Errors { get; } = new();
+    public List<ApiErrorItem> Errors { get; } = [];
 
     /// <summary>
     /// Gets or sets the payload.
