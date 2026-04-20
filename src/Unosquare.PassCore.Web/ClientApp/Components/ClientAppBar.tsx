@@ -1,5 +1,6 @@
 import AppBar from '@mui/material/AppBar/AppBar';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip/Tooltip';
 import Typography from '@mui/material/Typography/Typography';
 import HelpIcon from '@mui/icons-material/Help';
@@ -25,20 +26,27 @@ export const ClientAppBar: React.FC = () => {
                 alignItems="center"
                 height="64px"
                 width="100%"
-                padding="0 1.5%" // Add padding to the sides
+                padding="0 24px"
             >
                 <Typography
                     variant="h6"
                     color="secondary"
-                    style={{
-                        width: '70%',
-                    }}
+                    sx={{ flexGrow: 1 }}
                 >
                     {changePasswordTitle}
                 </Typography>
-                <Tooltip title={helpText} placement="left">
-                    <HelpIcon color="secondary" />
-                </Tooltip>
+
+                {helpText ? (
+                    <Tooltip title={helpText} placement="left" arrow>
+                        <IconButton color="secondary" size="large">
+                            <HelpIcon />
+                        </IconButton>
+                    </Tooltip>
+                ) : (
+                    <IconButton color="secondary" size="large" disabled>
+                        <HelpIcon style={{ opacity: 0.5 }} />
+                    </IconButton>
+                )}
             </Box>
         </AppBar>
     );
