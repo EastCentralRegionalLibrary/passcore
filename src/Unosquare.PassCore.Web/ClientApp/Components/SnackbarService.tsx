@@ -1,5 +1,4 @@
-import { SimpleObservable } from 'uno-js';
-import { SnackbarMessageType } from '../types/Components';
+import { SimpleObservable, SnackbarMessageType } from '../types/Components';
 
 export interface Snackbar {
     message: { messageText: string; messageType: SnackbarMessageType };
