@@ -58,7 +58,7 @@ jobs:
     - name: Build and Publish Windows Binaries
       shell: pwsh
       run: |
-        dotnet publish --configuration Release --runtime win-x64 --framework net8.0-windows --self-contained false --output ".\passcore_output"
+        dotnet publish .\src\Unosquare.PassCore.Web\Unosquare.PassCore.Web.csproj --configuration Release --runtime win-x64 --framework net8.0-windows --self-contained false --output ".\passcore_output"
         Get-ChildItem -Path ".\passcore_output"
 
     - name: Upload Binaries
