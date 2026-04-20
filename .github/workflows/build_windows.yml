@@ -8,9 +8,9 @@ on:
 
 jobs:
   build:
-  permissions:
-    contents: read      # Needed to check out code
-    actions: write      # Needed for cancel-workflow-action to stop old runs
+    permissions:
+      contents: read      # Needed to check out code
+      actions: write      # Needed for cancel-workflow-action to stop old runs
     name: Windows Binaries on Windows Latest
     runs-on: windows-latest
 
