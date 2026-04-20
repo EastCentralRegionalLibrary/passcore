@@ -14,17 +14,14 @@ export const ClientAppBar: React.FC = () => {
     return (
         <AppBar
             position="fixed"
-            style={{
-                backgroundColor: '#304FF3',
-                height: '64px',
-            }}
             elevation={0}
+            sx={{ height: 64 }}
         >
             <Box
                 display="flex"
                 justifyContent="space-between"
                 alignItems="center"
-                height="64px"
+                sx={{ height: 64 }}
                 width="100%"
                 padding="0 24px"
             >
@@ -44,7 +41,7 @@ export const ClientAppBar: React.FC = () => {
                     </Tooltip>
                 ) : (
                     <IconButton color="secondary" size="large" disabled>
-                        <HelpIcon style={{ opacity: 0.5 }} />
+                        <HelpIcon sx={{ opacity: 0.5 }} />
                     </IconButton>
                 )}
             </Box>

@@ -35,20 +35,6 @@ export const ChangePassword: React.FC = () => {
         12: alerts.errorPwnedPassword,
     };
 
-    const paperStyle = {
-        borderRadius: '10px',
-        minHeight: '550px',
-        maxWidth: '650px',
-        width: '100%',
-        marginTop: '75px',
-        zIndex: 1,
-    };
-
-    const buttonStyle = {
-        margin: recaptcha?.siteKey ? '25px 0 0 180px' : '100px 0 0 180px',
-        width: '240px',
-    };
-
     const handleSubmit = () => {
         if (!isSubmitting) {
             setIsSubmitting(true);
@@ -88,7 +74,10 @@ export const ChangePassword: React.FC = () => {
 
     return (
         <>
-            <Paper sx={paperStyle} elevation={6}>
+            <Paper
+                elevation={6}
+                sx={{ borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}
+            >
                 <ChangePasswordForm
                     submitData={submit}
                     toSubmitData={toSubmitData}
@@ -102,8 +91,12 @@ export const ChangePassword: React.FC = () => {
                     type="button"
                     variant="contained"
                     color="primary"
-                    disabled={disabled || isSubmitting} // disable if form is not validated or submitting
-                    sx={buttonStyle}
+                    disabled={disabled || isSubmitting}
+                    sx={{
+                        mt: recaptcha?.siteKey ? '25px' : '100px',
+                        ml: '180px',
+                        width: 240,
+                    }}
                     onClick={handleSubmit}
                 >
                     {changePasswordButtonLabel}
