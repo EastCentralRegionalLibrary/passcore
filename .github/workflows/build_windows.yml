@@ -14,25 +14,25 @@ jobs:
     steps:
     - name: Cancel previous runs
       if: ${{ github.ref != 'refs/heads/main' }}
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: styfle/cancel-workflow-action@0.13.1
       with:
         access_token: ${{ github.token }}
 
     - name: Checkout Code
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
         submodules: recursive
 
     - name: Setup .NET 8.0 SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '8.0.x'
 
     - name: Setup Node
-      uses: actions/setup-node@v4.2.0
+      uses: actions/setup-node@v6
       with:
-        node-version: 22
+        node-version: 22 # Plan move to 24 if dependencies support it
 
     - name: Extract version and repo info
       if: startsWith(github.ref, 'refs/tags/v')
@@ -55,14 +55,11 @@ jobs:
     - name: Build and Publish Windows Binaries
       shell: pwsh
       run: |
-        # restore the line below if we need to fall back to VS2019
-        # $env:path="C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\SDK\ScopeCppSDK\vc15\VC\bin\;$env:path"
-        
-        dotnet publish --configuration Release --runtime win-x64 --framework net8.0-windows --self-contained false --output ".\passcore_output\"
-        Get-ChildItem -Path ".\passcore_output\"
+        dotnet publish --configuration Release --runtime win-x64 --framework net8.0-windows --self-contained false --output ".\passcore_output"
+        Get-ChildItem -Path ".\passcore_output"
 
     - name: Upload Binaries
-      uses: actions/upload-artifact@v4.6.0
+      uses: actions/upload-artifact@v7
       with:
         name: passcore-${{ steps.vars.outputs.version || 'latest' }}
-        path: ${{ github.workspace }}\passcore_output\
+        path: .\passcore_output
