@@ -1,4 +1,4 @@
-import FormGroup from '@mui/material/FormGroup';
+import Stack from '@mui/material/Stack';
 import * as React from 'react';
 import TextField from '@mui/material/TextField';
 import { GlobalContext } from '../Provider/GlobalContext';
@@ -176,22 +176,14 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         }));
     };
 
-    const formGroupStyle = {
-        width: '80%',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'stretch',
-        paddingTop: '16px',
-        margin: '0 auto',
-    };
-
     return (
-        <FormGroup row={false} sx={formGroupStyle}>
+        <Stack
+            spacing={2}
+            sx={{ width: '80%', mx: 'auto', pt: 2 }}
+        >
             <TextField
                 autoFocus
                 slotProps={{ htmlInput: { tabIndex: 1 } }}
-                sx={{ flex: 1, margin: 'auto' }}
                 id="username"
                 label={usernameLabel}
                 variant="standard"
@@ -205,7 +197,6 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
             />
             <TextField
                 slotProps={{ htmlInput: { tabIndex: 2 } }}
-                sx={{ flex: 1, margin: 'auto' }}
                 label={currentPasswordLabel}
                 variant="standard"
                 id="currentPassword"
@@ -224,7 +215,6 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                 <>
                     <TextField
                         slotProps={{ htmlInput: { tabIndex: 3 } }}
-                        sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordLabel}
                         variant="standard"
                         id="newPassword"
@@ -243,7 +233,6 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
                     </Typography>
                     <TextField
                         slotProps={{ htmlInput: { tabIndex: 4 } }}
-                        sx={{ flex: 1, margin: 'auto' }}
                         label={newPasswordVerifyLabel}
                         variant="standard"
                         id="newPasswordVerify"
@@ -261,6 +250,6 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
             {recaptcha?.siteKey && recaptcha.siteKey !== '' && (
                 <ReCaptcha setToken={setReCaptchaToken} shouldReset={false} />
             )}
-        </FormGroup>
+        </Stack>
     );
 };

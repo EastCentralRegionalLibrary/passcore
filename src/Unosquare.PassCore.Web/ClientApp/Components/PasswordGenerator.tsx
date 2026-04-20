@@ -1,3 +1,4 @@
+import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton/IconButton';
 import InputAdornment from '@mui/material/InputAdornment/InputAdornment';
 import TextField from '@mui/material/TextField/TextField';
@@ -51,9 +52,9 @@ export const PasswordGenerator: React.FC<IPasswordGenProps> = ({
     }, [sendMessage, setValue]);
 
     return isLoading ? (
-        <div style={{ paddingTop: '30px' }}>
+        <Box sx={{ paddingTop: '30px' }}>
             <LoadingIcon />
-        </div>
+        </Box>
     ) : (
         <TextField
             id="generatedPassword"
@@ -61,32 +62,34 @@ export const PasswordGenerator: React.FC<IPasswordGenProps> = ({
             label="New Password"
             value={value}
             type={visibility ? 'text' : 'password'}
-            style={{
-                height: '20px',
-                margin: '30px 0 30px 0',
+            sx={{
+                height: 20,
+                my: '30px',
             }}
-            InputProps={{
-                endAdornment: (
-                    <InputAdornment position="end">
-                        <IconButton
-                            aria-label="Toggle password visibility"
-                            onMouseDown={onMouseDownVisibility}
-                            onMouseUp={onMouseUpVisibility}
-                            tabIndex={-1}
-                            size="large"
-                        >
-                            {visibility ? <Visibility /> : <VisibilityOff />}
-                        </IconButton>
-                        <IconButton
-                            aria-label="Copy password to clipboard"
-                            onClick={copyPassword}
-                            tabIndex={-1}
-                            size="large"
-                        >
-                            <FileCopy />
-                        </IconButton>
-                    </InputAdornment>
-                ),
+            slotProps={{
+                input: {
+                    endAdornment: (
+                        <InputAdornment position="end">
+                            <IconButton
+                                aria-label="Toggle password visibility"
+                                onMouseDown={onMouseDownVisibility}
+                                onMouseUp={onMouseUpVisibility}
+                                tabIndex={-1}
+                                size="large"
+                            >
+                                {visibility ? <Visibility /> : <VisibilityOff />}
+                            </IconButton>
+                            <IconButton
+                                aria-label="Copy password to clipboard"
+                                onClick={copyPassword}
+                                tabIndex={-1}
+                                size="large"
+                            >
+                                <FileCopy />
+                            </IconButton>
+                        </InputAdornment>
+                    ),
+                },
             }}
         />
     );

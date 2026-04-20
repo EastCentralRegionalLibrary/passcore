@@ -8,22 +8,19 @@ import osiLogo from 'url:../assets/images/osi.png';
 import passcoreLogo from 'url:../assets/images/passcore-logo.png';
 
 export const Footer: React.FC = () => (
-    <Box
-        marginTop="40px"
-        width="650px"
-    >
+    <Box marginTop="40px">
         <Box
             display="flex"
             justifyContent="space-between"
             alignItems="center"
         >
             <Box>
-                <img src={passcoreLogo.default || passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
+                <img src={passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
             </Box>
             <Box>
-                <img src={osiLogo.default || osiLogo} style={{ margin: '0 10px 0 40px', maxHeight: '30px' }} alt="OSI Logo" />
-                <img src={mitLogo.default || mitLogo} style={{ marginRight: '10px', maxHeight: '30px' }} alt="MIT Logo" />
-                <img src={uslogo.default || uslogo} style={{ maxHeight: '30px' }} alt="US Logo" />
+                <img src={osiLogo} style={{ margin: '0 10px 0 40px', maxHeight: '30px' }} alt="OSI Logo" />
+                <img src={mitLogo} style={{ marginRight: '10px', maxHeight: '30px' }} alt="MIT Logo" />
+                <img src={uslogo} style={{ maxHeight: '30px' }} alt="US Logo" />
             </Box>
         </Box>
         <Box

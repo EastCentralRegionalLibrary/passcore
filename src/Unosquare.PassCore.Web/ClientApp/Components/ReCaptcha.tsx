@@ -1,3 +1,4 @@
+import Box from '@mui/material/Box';
 import * as React from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 import GoogleReCaptcha from './GoogleReCaptcha';
@@ -28,12 +29,7 @@ export const ReCaptcha: React.FC<IRecaptchaProps> = ({ setToken, shouldReset }: 
     const verifyCallback = (recaptchaToken: any) => setToken(recaptchaToken);
 
     return (
-        <div
-            style={{
-                marginLeft: 'calc(100% - 440px)',
-                marginTop: '25px',
-            }}
-        >
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: '25px' }}>
             <GoogleReCaptcha
                 ref={(el: any) => {
                     captchaRef = el;
@@ -44,6 +40,6 @@ export const ReCaptcha: React.FC<IRecaptchaProps> = ({ setToken, shouldReset }: 
                 onloadCallback={onLoadRecaptcha}
                 onSuccess={verifyCallback}
             />
-        </div>
+        </Box>
     );
 };

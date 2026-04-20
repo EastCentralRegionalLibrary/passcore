@@ -1,8 +1,8 @@
 import CircularProgress from '@mui/material/CircularProgress';
-import styled from '@mui/styles/styled';
+import { styled } from '@mui/material/styles';
 
-export const LoadingIcon = styled(CircularProgress)(() => ({
-    display: 'block !important',
-    margin: 'auto !important',
-    marginBottom: '15px !important',
-}));
+export const LoadingIcon = styled(CircularProgress)({
+    display: 'block',
+    margin: 'auto',
+    marginBottom: '15px',
+});
