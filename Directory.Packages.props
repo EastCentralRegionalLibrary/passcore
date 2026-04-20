@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+
+    <PackageVersion Include="System.DirectoryServices" Version="8.0.0" />
+    <PackageVersion Include="System.DirectoryServices.AccountManagement" Version="8.0.0" />
+
+    <PackageVersion Include="SimpleBase" Version="3.0.2" />
+    <PackageVersion Include="zxcvbn-core" Version="7.0.92" />
+    <PackageVersion Include="Microsoft.TypeScript.MSBuild" Version="4.6.4" />
+    <PackageVersion Include="Novell.Directory.Ldap.NETStandard" Version="3.6.0" />
+  </ItemGroup>
+</Project>
