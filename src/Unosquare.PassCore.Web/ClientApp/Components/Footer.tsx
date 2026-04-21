@@ -1,18 +1,20 @@
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography/Typography';
-import * as React from 'react';
+import Typography from '@mui/material/Typography';
 import { appVersion } from '../version';
 import mitLogo from 'url:../assets/images/License_icon-mit.svg.png';
 import uslogo from 'url:../assets/images/logo.png';
 import osiLogo from 'url:../assets/images/osi.png';
 import passcoreLogo from 'url:../assets/images/passcore-logo.png';
 
-export const Footer: React.FC = () => (
-    <Box marginTop="40px">
+export function Footer() {
+    return (
+    <Box sx={{ mt: '40px' }}>
         <Box
-            display="flex"
-            justifyContent="space-between"
-            alignItems="center"
+            sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+            }}
         >
             <Box>
                 <img src={passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
@@ -24,18 +26,21 @@ export const Footer: React.FC = () => (
             </Box>
         </Box>
         <Box
-            display="flex"
-            flexDirection="column"
-            alignItems="center"
-            justifyContent="space-evenly"
-            marginTop={2}
+            sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'space-evenly',
+                mt: 2,
+            }}
         >
-            <Typography align="center" variant="caption">
+            <Typography variant="caption" sx={{ textAlign: 'center' }}>
                 Powered by PassCore {appVersion} - Open Source Initiative and MIT Licensed
             </Typography>
-            <Typography align="center" variant="caption">
+            <Typography variant="caption" sx={{ textAlign: 'center' }}>
                 Copyright © 2016-{new Date().getFullYear()} Unosquare
             </Typography>
         </Box>
     </Box>
-);
+    );
+}

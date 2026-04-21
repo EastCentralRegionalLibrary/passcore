@@ -1,14 +1,14 @@
-import AppBar from '@mui/material/AppBar/AppBar';
+import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
-import Tooltip from '@mui/material/Tooltip/Tooltip';
-import Typography from '@mui/material/Typography/Typography';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
 import HelpIcon from '@mui/icons-material/Help';
-import * as React from 'react';
+import { use } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
-export const ClientAppBar: React.FC = () => {
-    const { changePasswordForm, changePasswordTitle } = React.useContext(GlobalContext);
+export function ClientAppBar() {
+    const { changePasswordForm, changePasswordTitle } = use(GlobalContext);
     const { helpText } = changePasswordForm;
 
     return (
@@ -18,12 +18,14 @@ export const ClientAppBar: React.FC = () => {
             sx={{ height: 64 }}
         >
             <Box
-                display="flex"
-                justifyContent="space-between"
-                alignItems="center"
-                sx={{ height: 64 }}
-                width="100%"
-                padding="0 24px"
+                sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    height: 64,
+                    width: '100%',
+                    px: 3,
+                }}
             >
                 <Typography
                     variant="h6"

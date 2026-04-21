@@ -1,5 +1,5 @@
 import Stack from '@mui/material/Stack';
-import * as React from 'react';
+import { useState, use, useEffect, FocusEvent, ChangeEvent } from 'react';
 import TextField from '@mui/material/TextField';
 import { GlobalContext } from '../Provider/GlobalContext';
 import { IChangePasswordFormInitialModel, IChangePasswordFormProps } from '../types/Components';
@@ -19,7 +19,7 @@ const defaultState: IChangePasswordFormInitialModel = {
     username: new URLSearchParams(window.location.search).get('userName') || '',
 };
 
-export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
+export function ChangePasswordForm({
     submitData,
     toSubmitData,
     onValidated,
@@ -27,12 +27,12 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
     changeResetState,
     setReCaptchaToken,
     ReCaptchaToken,
-}) => {
-    const [fields, setFields] = React.useState<IChangePasswordFormInitialModel>(defaultState);
-    const [errors, setErrors] = React.useState<{ [key: string]: string | undefined }>({});
-    const context = React.useContext(GlobalContext);
+}: IChangePasswordFormProps) {
+    const [fields, setFields] = useState<IChangePasswordFormInitialModel>(defaultState);
+    const [errors, setErrors] = useState<{ [key: string]: string | undefined }>({});
+    const context = use(GlobalContext);
     const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
-    const [touched, setTouched] = React.useState(() =>
+    const [touched, setTouched] = useState(() =>
         Object.keys(defaultState).reduce(
             (acc, key) => ({ ...acc, [key]: false }),
             {} as Record<keyof IChangePasswordFormInitialModel, boolean>,
@@ -76,7 +76,7 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         );
     };
 
-    const handleBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
         const { name } = event.target;
         setTouched((prevTouched) => ({
             ...prevTouched,
@@ -84,7 +84,7 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         }));
     };
 
-    const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
         const { name, value } = event.target;
         setFields((prevFields) => ({
             ...prevFields,
@@ -144,7 +144,7 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         return validationErrors;
     };
 
-    React.useEffect(() => {
+    useEffect(() => {
         validateAllFields().then((validationErrors) => {
             if (!Object.keys(validationErrors).length && submitData) {
                 toSubmitData(fields);
@@ -152,14 +152,14 @@ export const ChangePasswordForm: React.FC<IChangePasswordFormProps> = ({
         });
     }, [submitData, fields, toSubmitData]);
 
-    React.useEffect(() => {
+    useEffect(() => {
         onValidated(
             Object.keys(errors).some((key) => errors[key]) ||
                 (recaptcha?.siteKey && recaptcha.siteKey !== '' && ReCaptchaToken === ''),
         );
     }, [errors, onValidated, recaptcha?.siteKey, ReCaptchaToken]);
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (shouldReset) {
             setFields({ ...defaultState });
             setErrors({});

@@ -1,21 +1,21 @@
-import * as React from 'react';
+import { useState, type ReactNode } from 'react';
 import { GlobalContext } from './GlobalContext';
 import { IGlobalContext } from '../types/Providers';
 
 interface IGlobalContextProviderProps {
-    children: React.ReactNode;
+    children: ReactNode;
     settings: IGlobalContext;
 }
 
-export const GlobalContextProvider: React.FC<IGlobalContextProviderProps> = ({
+export function GlobalContextProvider({
     children,
     settings,
-}: IGlobalContextProviderProps) => {
-    const [getProviderValue] = React.useState<IGlobalContext>({ ...settings });
+}: IGlobalContextProviderProps) {
+    const [getProviderValue] = useState<IGlobalContext>({ ...settings });
 
     return (
         <GlobalContext.Provider value={getProviderValue}>
             {children}
         </GlobalContext.Provider>
     );
-};
+}

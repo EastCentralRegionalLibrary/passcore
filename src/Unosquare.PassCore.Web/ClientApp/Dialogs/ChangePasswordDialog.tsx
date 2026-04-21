@@ -1,10 +1,10 @@
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button/Button';
-import Dialog from '@mui/material/Dialog/Dialog';
-import DialogContent from '@mui/material/DialogContent/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle/DialogTitle';
-import Typography from '@mui/material/Typography/Typography';
-import * as React from 'react';
+import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import Typography from '@mui/material/Typography';
+import { use } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
 interface IChangePasswordDialogProps {
@@ -12,13 +12,20 @@ interface IChangePasswordDialogProps {
     onClose: () => void;
 }
 
-export const ChangePasswordDialog: React.FC<IChangePasswordDialogProps> = ({
+export function ChangePasswordDialog({
     open,
     onClose,
-}: IChangePasswordDialogProps) => {
-    const { successAlertBody, successAlertTitle } = React.useContext(GlobalContext).alerts;
+}: IChangePasswordDialogProps) {
+    const { successAlertBody, successAlertTitle } = use(GlobalContext).alerts;
     return (
-        <Dialog open={open} disableEscapeKeyDown>
+        <Dialog
+            open={open}
+            onClose={(_event, reason) => {
+                if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') {
+                    onClose();
+                }
+            }}
+        >
             <DialogTitle>{successAlertTitle}</DialogTitle>
             <DialogContent>
                 <Typography variant="subtitle1">{successAlertBody}</Typography>

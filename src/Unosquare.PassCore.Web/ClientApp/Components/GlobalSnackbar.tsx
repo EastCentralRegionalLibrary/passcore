@@ -1,6 +1,6 @@
 import Snackbar, { SnackbarOrigin } from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
-import * as React from 'react';
+import { useState, useEffect } from 'react';
 import { SnackbarMessageType } from '../types/Components';
 
 export interface GlobalSnackbarProps {
@@ -16,14 +16,14 @@ const severityMap: Record<SnackbarMessageType, 'success' | 'error' | 'warning' |
     info: 'info',
 };
 
-export const GlobalSnackbar: React.FC<GlobalSnackbarProps> = ({
+export function GlobalSnackbar({
     message,
     milliSeconds = 2500,
     mobile = false,
-}) => {
-    const [open, setOpen] = React.useState(false);
+}: GlobalSnackbarProps) {
+    const [open, setOpen] = useState(false);
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (message?.messageText) {
             setOpen(true);
             const timer = setTimeout(() => setOpen(false), milliSeconds);

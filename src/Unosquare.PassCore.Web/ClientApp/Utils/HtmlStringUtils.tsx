@@ -1,5 +1,5 @@
 // HtmlStringUtils.tsx
-import * as React from 'react';
+import type { ReactNode } from 'react';
 
 /**
  * Parses a limited HTML string, extracting plain text and links.
@@ -11,14 +11,14 @@ import * as React from 'react';
  *   unintended or omitted elements (i.e., garbage in, garbage out).
  *
  * @param {string} htmlString - The HTML string to parse.
- * @returns {React.ReactNode[]} - An array of React elements representing the parsed content.
+ * @returns {ReactNode[]} - An array of React elements representing the parsed content.
  */
-export function parsePlainTextAndLinks(htmlString: string): React.ReactNode[] {
+export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
     // Split the HTML string on anchor tags.
     // The regex captures two groups: the attributes and the inner text of the <a> tag.
     const parts = htmlString.split(/<a\s+([^>]+)>(.*?)<\/a>/).filter(Boolean);
 
-    return parts.reduce<React.ReactNode[]>((elements, part, index) => {
+    return parts.reduce<ReactNode[]>((elements, part, index) => {
         // Expected parts array indices:
         // index % 3 === 0: Plain text segments.
         // index % 3 === 1: Attributes string for the <a> element.
@@ -32,7 +32,7 @@ export function parsePlainTextAndLinks(htmlString: string): React.ReactNode[] {
             const attributes = part.match(/(\w+)=(['"])(.*?)\2\s*/g) || [];
             const attributeMap: { [key: string]: string } = {};
 
-            attributes.forEach((attr) => {
+            attributes.forEach((attr: string) => {
                 const match = attr.match(/(\w+)=(['"])(.*?)\2/);
                 if (match) {
                     const [, key, , value] = match;

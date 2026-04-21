@@ -1,7 +1,7 @@
-import * as React from 'react';
+import { createContext } from 'react';
 import { IGlobalContext, ISnackbarContext } from '../types/Providers';
 
-export const GlobalContext = React.createContext<IGlobalContext>({
+export const GlobalContext = createContext<IGlobalContext>({
     alerts: null,
     applicationTitle: '',
     changePasswordForm: null,
@@ -14,6 +14,6 @@ export const GlobalContext = React.createContext<IGlobalContext>({
     usePasswordGeneration: false,
 });
 
-export const SnackbarContext = React.createContext<ISnackbarContext>({
+export const SnackbarContext = createContext<ISnackbarContext>({
     sendMessage: null,
 });

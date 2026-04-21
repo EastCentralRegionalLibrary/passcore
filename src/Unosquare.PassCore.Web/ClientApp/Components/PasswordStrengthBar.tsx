@@ -1,6 +1,5 @@
 import LinearProgress from '@mui/material/LinearProgress';
-import * as React from 'react';
-import * as zxcvbn from 'zxcvbn';
+import zxcvbn from 'zxcvbn';
 import { strengthColors } from '../theme';
 
 const measureStrength = (password: string): number =>
@@ -20,7 +19,7 @@ interface IStrengthBarProps {
     newPassword: string;
 }
 
-export const PasswordStrengthBar: React.FC<IStrengthBarProps> = ({ newPassword }) => {
+export function PasswordStrengthBar({ newPassword }: IStrengthBarProps) {
     const strength = measureStrength(newPassword);
     const barColor = getBarColor(strength);
 

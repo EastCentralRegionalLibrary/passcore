@@ -4,7 +4,7 @@
         "noImplicitAny": true,
         "module": "esnext",
         "target": "es5",
-        "jsx": "react",
+        "jsx": "react-jsx",
         "lib": ["esnext", "dom"],
         "moduleResolution": "node",
         "strictNullChecks": false,
@@ -12,7 +12,9 @@
         "forceConsistentCasingInFileNames": true,
         "noEmit": true,
         "noUnusedLocals": true,
-        "typeRoots": ["./node_modules/@types"]
+        "typeRoots": ["./node_modules/@types"],
+        "skipLibCheck": true,
+        "esModuleInterop": true
     },
     "include": ["./**/*"],
     "exclude": ["node_modules", "build", "scripts", "acceptance-tests", "webpack"],

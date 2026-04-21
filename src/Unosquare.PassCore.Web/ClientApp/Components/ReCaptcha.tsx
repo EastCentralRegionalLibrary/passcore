@@ -1,5 +1,5 @@
 import Box from '@mui/material/Box';
-import * as React from 'react';
+import { use, useEffect } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 import GoogleReCaptcha from './GoogleReCaptcha';
 
@@ -8,13 +8,13 @@ interface IRecaptchaProps {
     shouldReset: boolean;
 }
 
-export const ReCaptcha: React.FC<IRecaptchaProps> = ({ setToken, shouldReset }: IRecaptchaProps) => {
+export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
     // tslint:disable-next-line
     let captchaRef: any;
 
-    const { siteKey } = React.useContext(GlobalContext).recaptcha;
+    const { siteKey } = use(GlobalContext).recaptcha;
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (captchaRef) {
             captchaRef.reset();
         }

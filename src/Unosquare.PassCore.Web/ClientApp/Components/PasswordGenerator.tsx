@@ -1,24 +1,24 @@
 import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton/IconButton';
-import InputAdornment from '@mui/material/InputAdornment/InputAdornment';
-import TextField from '@mui/material/TextField/TextField';
+import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
+import TextField from '@mui/material/TextField';
 import FileCopy from '@mui/icons-material/FileCopy';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
-import * as React from 'react';
+import { use, useState, useEffect } from 'react';
 import { LoadingIcon } from './LoadingIcon';
 import { SnackbarContext } from '../Provider/GlobalContext';
 import { IPasswordGenProps } from '../types/Components';
 import { fetchRequest } from '../Utils/FetchRequest';
 import { PasswordGenResponse } from '../types/Providers'; // Imported shared API type
 
-export const PasswordGenerator: React.FC<IPasswordGenProps> = ({
+export function PasswordGenerator({
     value,
     setValue,
-}: IPasswordGenProps) => {
-    const { sendMessage } = React.useContext(SnackbarContext);
-    const [visibility, setVisibility] = React.useState(false);
-    const [isLoading, setLoading] = React.useState(true);
+}: IPasswordGenProps) {
+    const { sendMessage } = use(SnackbarContext);
+    const [visibility, setVisibility] = useState(false);
+    const [isLoading, setLoading] = useState(true);
 
     const onMouseDownVisibility = () => setVisibility(true);
     const onMouseUpVisibility = () => setVisibility(false);
@@ -28,7 +28,7 @@ export const PasswordGenerator: React.FC<IPasswordGenProps> = ({
         sendMessage('Password copied');
     };
 
-    React.useEffect(() => {
+    useEffect(() => {
         const retrievePassword = async () => {
             try {
                 // Cast response as PasswordGenResponse which expects a payload of type string.
