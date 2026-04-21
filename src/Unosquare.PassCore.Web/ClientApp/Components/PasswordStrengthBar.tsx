@@ -27,36 +27,37 @@ const MIN_VISIBLE_PERCENT = 5;
 
 export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
     const theme = useTheme();
-    const hasPassword = newPassword.length > 0;
 
-    const result = useMemo(() => (hasPassword ? zxcvbn(newPassword) : null), [hasPassword, newPassword]);
+    const strength = useMemo(() => {
+    if (!newPassword) {
+        return {
+        kind: 'empty' as const,
+        strengthPercent: 0,
+        barColor: theme.palette.grey[500],
+        label: 'Enter password',
+        guessesLog10: null,
+        };
+    }
 
-    const score = hasPassword ? result.score : 0;
-    const strengthPercent = hasPassword ? Math.max(MIN_VISIBLE_PERCENT, (score / 4) * 100) : 0;
+    const result = zxcvbn(newPassword);
+    const score = result.score;
 
-    const computedColor = useMemo(() => {
-        switch (score) {
-            case 0:
-                return theme.palette.error.main;
-            case 1:
-            case 2:
-                return theme.palette.warning.main;
-            case 3:
-            case 4:
-                return theme.palette.success.main;
-            default:
-                return theme.palette.grey[500];
-        }
-    }, [score, theme.palette]);
+    return {
+        kind: 'evaluated' as const,
+        strengthPercent: Math.max(MIN_VISIBLE_PERCENT, (score / 4) * 100),
+        barColor: score >= 3
+        ? theme.palette.success.main
+        : score >= 1
+        ? theme.palette.warning.main
+        : theme.palette.error.main,
+        label: STRENGTH_LABELS[score],
+        guessesLog10: result.guessesLog10,
+    };
+    }, [newPassword, theme]);
 
-    const barColor = hasPassword ? computedColor : theme.palette.grey[500];
 
-    const label = hasPassword ? STRENGTH_LABELS[score] : 'Enter password';
-
-    const guessesLog10 = hasPassword ? result.guessesLog10 : 0;
-
-    const tooltipText = hasPassword
-        ? `Estimated attack cost: about 10^${guessesLog10.toFixed(1)} guesses.\n\n` +
+    const tooltipText = strength.kind === 'evaluated'
+        ? `Estimated attack cost: about 10^${strength.guessesLog10.toFixed(1)} guesses.\n\n` +
           `This estimate assumes a fast offline attack using known patterns, ` +
           `dictionary words, and common substitutions. Higher values mean a ` +
           `stronger password.`
@@ -82,31 +83,31 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
                         variant="caption"
                         fontWeight={600}
                         sx={{
-                            color: barColor,
+                            color: strength.barColor,
                             cursor: 'help',
                         }}
                         tabIndex={0}
                     >
-                        {label}
+                        {strength.label}
                     </Typography>
                 </Tooltip>
             </Box>
 
             <LinearProgress
                 variant="determinate"
-                value={strengthPercent}
+                value={strength.strengthPercent}
                 aria-label="Password strength"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round(strengthPercent)}
-                aria-valuetext={label}
+                aria-valuenow={Math.round(strength.strengthPercent)}
+                aria-valuetext={strength.label}
                 sx={{
                     height: 8,
                     borderRadius: 4,
                     backgroundColor: theme.palette.mode === 'light' ? theme.palette.grey[200] : theme.palette.grey[800],
                     '& .MuiLinearProgress-bar': {
                         borderRadius: 4,
-                        backgroundColor: barColor,
+                        backgroundColor: strength.barColor,
                         transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
                     },
                 }}
