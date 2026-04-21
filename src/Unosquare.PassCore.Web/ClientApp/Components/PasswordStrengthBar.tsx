@@ -53,7 +53,7 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
 
     const label = hasPassword ? STRENGTH_LABELS[score] : 'Enter password';
 
-    const guessesLog10 = result.guessesLog10;
+    const guessesLog10 = hasPassword ? result.guessesLog10 : 0;
 
     const tooltipText = hasPassword
         ? `Estimated attack cost: about 10^${guessesLog10.toFixed(1)} guesses.\n\n` +
