@@ -1,6 +1,6 @@
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
-import * as React from 'react';
+import { useState, use } from 'react';
 import { ChangePasswordDialog } from '../Dialogs/ChangePasswordDialog';
 import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { fetchRequest } from '../Utils/FetchRequest';
@@ -8,17 +8,17 @@ import { ChangePasswordForm } from './ChangePasswordForm';
 import { IChangePasswordFormInitialModel } from '../types/Components';
 import { ApiError } from '../types/Providers';
 
-export const ChangePassword: React.FC = () => {
-    const [disabled, setDisabled] = React.useState(true);
-    const [submit, setSubmit] = React.useState(false);
-    const [dialogIsOpen, setDialog] = React.useState(false);
-    const [token, setToken] = React.useState('');
-    const globalContext = React.useContext(GlobalContext);
+export function ChangePassword() {
+    const [disabled, setDisabled] = useState(true);
+    const [submit, setSubmit] = useState(false);
+    const [dialogIsOpen, setDialog] = useState(false);
+    const [token, setToken] = useState('');
+    const globalContext = use(GlobalContext);
     const { alerts, changePasswordForm, recaptcha } = globalContext;
     const { changePasswordButtonLabel } = changePasswordForm;
-    const { sendMessage } = React.useContext(SnackbarContext);
-    const [shouldReset, setReset] = React.useState(false);
-    const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const { sendMessage } = use(SnackbarContext);
+    const [shouldReset, setReset] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const errorMessages: Record<number, string> = {
         1: alerts.errorFieldRequired,

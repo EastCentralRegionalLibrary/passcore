@@ -1,15 +1,15 @@
-import * as React from 'react';
+import { useState, type ReactNode } from 'react';
 import { SnackbarContainer } from '../Components/SnackbarContainer';
 import { snackbarService } from '../Components/SnackbarService';
 import { SnackbarContext } from './GlobalContext';
 import { SnackbarMessageType } from '../types/Components';
 
 interface ISnackbarProviderProps {
-    children: React.ReactNode;
+    children: ReactNode;
 }
 
-export const SnackbarContextProvider: React.FC<ISnackbarProviderProps> = ({ children }) => {
-    const [providerValue] = React.useState({
+export function SnackbarContextProvider({ children }: ISnackbarProviderProps) {
+    const [providerValue] = useState({
         sendMessage: async (messageText: string, messageType: SnackbarMessageType = 'success') => {
             return snackbarService.showSnackbar(messageText, messageType);
         },
@@ -21,4 +21,4 @@ export const SnackbarContextProvider: React.FC<ISnackbarProviderProps> = ({ chil
             <SnackbarContainer />
         </SnackbarContext.Provider>
     );
-};
+}

@@ -20,6 +20,7 @@ module.exports = {
         "prettier/prettier": "error",
         "@typescript-eslint/strict-boolean-expressions": "off",
         "@typescript-eslint/ban-ts-comment": "off",
+        "react/react-in-jsx-scope": "off",
     },
     settings: {
         react: {

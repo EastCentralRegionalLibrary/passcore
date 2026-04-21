@@ -1,7 +1,6 @@
 import './vendor';
 
 import { ThemeProvider } from '@mui/material/styles';
-import * as React from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 import { Main } from './Main';
 import { passcoreTheme } from './theme';
