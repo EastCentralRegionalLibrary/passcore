@@ -1,11 +1,18 @@
 # ---- build stage ----
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
+# Ensures that if any part of a pipe fails, the build fails
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Install Node (required by MSBuild targets)
+# hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && npm --version \
     && node --version \
     && rm -rf /var/lib/apt/lists/*
