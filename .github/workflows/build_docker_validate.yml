@@ -38,11 +38,12 @@ jobs:
       # Dynamic Smoke Test (Wait for 200 OK)
       - name: Run container smoke test
         run: |
-          docker run -d -p 8080:80 --name passcore_test passcore:ci-test
+          docker run -d -p 8080:8080 --name passcore_test passcore:ci-test
 
           echo "Waiting for Passcore endpoint..."
           timeout 30s bash -c 'until curl -f http://localhost:8080; do sleep 2; done' || (docker logs passcore_test && exit 1)
 
+          docker stop passcore_test
           echo "Endpoint responded successfully!"
 
       - name: Cleanup test container
