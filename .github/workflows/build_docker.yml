@@ -1,10 +1,14 @@
-name: Docker Build
+name: Docker Build and Publish
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*.*.*" # Trigger workflow on tags like v1.0.0, v2.0.1, etc.
+      - "v*.*.*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -12,28 +16,48 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write # Required for signing and attestations
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Required for multi-platform builds (e.g. arm64)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/passcore:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/passcore:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Build for multiple architectures at once
+          platforms: linux/amd64,linux/arm64
+          # Modern caching strategy
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Generate security and build metadata
+          provenance: true
+          sbom: true
