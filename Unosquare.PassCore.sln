@@ -7,7 +7,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{0A003964-77C
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{3EA980E1-D295-4E61-B2EE-29CFE1EDB2F1}"
 	ProjectSection(SolutionItems) = preProject
-		.github\workflows\build.yml = .github\workflows\build.yml
+		.github\workflows\build_docker.yml = .github\workflows\build_docker.yml
 		Dockerfile = Dockerfile
 		src\Unosquare.PassCore.Web\ClientApp\package.json = src\Unosquare.PassCore.Web\ClientApp\package.json
 		preview.png = preview.png
