@@ -49,17 +49,24 @@
 		<DefineConstants>PASSCORE_LDAP_PROVIDER</DefineConstants>
 	</PropertyGroup>
 
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="!Exists('ClientApp/node_modules')">
-		<Message Importance="high" Text="Performing first-run npm install..." />
+	<Target Name="NpmInstall" BeforeTargets="Build">
+		<Message Importance="high" Text="Performing first-run npm clean install..." />
 		<!-- Fail fast if Node.js is not available -->
 		<Exec Command="node --version" ContinueOnError="true">
 			<Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
 		</Exec>
 		<Error Condition="'$(NodeExitCode)' != '0'" Text="Node.js is required to build and run this project. Please install Node.js from https://nodejs.org/ and restart your shell or IDE." />
+		<Exec Command="npm --version" ContinueOnError="true">
+			<Output TaskParameter="ExitCode" PropertyName="NpmVersionExitCode" />
+		</Exec>
+		<Error Condition="'$(NpmVersionExitCode)' != '0'" Text="npm is required but was not found. Ensure Node.js is installed correctly." />
 		<!-- Install frontend dependencies: not allowed to continue if install fails -->
-		<Exec Command="npm install" WorkingDirectory="ClientApp" />
+		<Exec Command="npm ci" WorkingDirectory="ClientApp">
+			<Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />
+		</Exec>
+		<Error Condition="'$(NpmExitCode)' != '0'" Text="Installation failed! npm ci encountered an error (exit code $(NpmExitCode))." />
 		<!-- Security audit: allowed to fail without breaking the build -->
-		<Exec Command="npm audit --fix" WorkingDirectory="ClientApp" ContinueOnError="true" />
+		<Exec Command="npm audit" WorkingDirectory="ClientApp" ContinueOnError="true" />
 		<!-- Optional version metadata generation -->
 		<Exec Command="node version-script.mjs" WorkingDirectory="ClientApp" ContinueOnError="true" />
 	</Target>
