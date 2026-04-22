@@ -1,6 +1,16 @@
 {
     "name": "passcore",
     "version": "1.0.0",
+    "supportedArchitectures": {
+        "os": [
+            "linux",
+            "darwin",
+            "win32"
+        ],
+        "cpu": [
+            "x64"
+        ]
+    },
     "description": "PassCore is a self-service password change utility for Active Directory.",
     "source": "index.html",
     "scripts": {
