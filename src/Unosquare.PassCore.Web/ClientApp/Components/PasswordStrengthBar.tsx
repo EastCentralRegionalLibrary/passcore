@@ -22,46 +22,83 @@ interface PasswordStrengthBarProps {
     newPassword: string;
 }
 
+type EmptyStrength = {
+    kind: 'empty';
+    strengthPercent: 0;
+    barColor: string;
+    label: string;
+    guessesLog10: null;
+    warning: null;
+    suggestions: null;
+};
+
+type EvaluatedStrength = {
+    kind: 'evaluated';
+    strengthPercent: number;
+    barColor: string;
+    label: string;
+    guessesLog10: number;
+    warning: string | null;
+    suggestions: string[] | null;
+};
+
+type PasswordStrength = EmptyStrength | EvaluatedStrength;
+
 const STRENGTH_LABELS = ['Weak', 'Fair', 'Good', 'Strong', 'Very Strong'] as const;
 const MIN_VISIBLE_PERCENT = 5;
 
 export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
     const theme = useTheme();
 
-    const strength = useMemo(() => {
-    if (!newPassword) {
+    const strength = useMemo<PasswordStrength>(() => {
+        if (!newPassword) {
+            return {
+                kind: 'empty' as const,
+                strengthPercent: 0,
+                barColor: theme.palette.grey[500],
+                label: 'Enter password',
+                guessesLog10: null,
+                warning: null,
+                suggestions: null,
+            };
+        }
+
+        const result = zxcvbn(newPassword);
+        const score = result.score;
+
+        const barColor =
+            score <= 1
+                ? theme.palette.error.main
+                : score <= 2
+                  ? theme.palette.warning.main
+                  : score <= 4
+                    ? theme.palette.success.main
+                    : theme.palette.grey[500];
+
         return {
-        kind: 'empty' as const,
-        strengthPercent: 0,
-        barColor: theme.palette.grey[500],
-        label: 'Enter password',
-        guessesLog10: null,
+            kind: 'evaluated' as const,
+            strengthPercent: Math.max(MIN_VISIBLE_PERCENT, (score / 4) * 100),
+            barColor: barColor,
+            label: STRENGTH_LABELS[score],
+            guessesLog10: result.guessesLog10,
+            warning: result.feedback.warning || null,
+            suggestions: result.feedback.suggestions.length ? result.feedback.suggestions : null,
         };
-    }
+    }, [newPassword, theme.palette]);
 
-    const result = zxcvbn(newPassword);
-    const score = result.score;
-
-    return {
-        kind: 'evaluated' as const,
-        strengthPercent: Math.max(MIN_VISIBLE_PERCENT, (score / 4) * 100),
-        barColor: score >= 3
-        ? theme.palette.success.main
-        : score >= 1
-        ? theme.palette.warning.main
-        : theme.palette.error.main,
-        label: STRENGTH_LABELS[score],
-        guessesLog10: result.guessesLog10,
-    };
-    }, [newPassword, theme]);
-
-
-    const tooltipText = strength.kind === 'evaluated'
-        ? `Estimated attack cost: about 10^${strength.guessesLog10.toFixed(1)} guesses.\n\n` +
-          `This estimate assumes a fast offline attack using known patterns, ` +
-          `dictionary words, and common substitutions. Higher values mean a ` +
-          `stronger password.`
-        : 'Enter a password to see an estimated attack difficulty.';
+    const tooltipText =
+        strength.kind === 'evaluated'
+            ? [
+                  strength.warning,
+                  strength.suggestions?.join(' '),
+                  `Estimated attack cost: about 10^${strength.guessesLog10.toFixed(1)} guesses.`,
+                  'This estimate assumes a fast offline attack using known patterns, ' +
+                      'dictionary words, and common substitutions. Higher values mean a ' +
+                      'stronger password.',
+              ]
+                  .filter(Boolean)
+                  .join('\n\n')
+            : 'Enter a password.';
 
     return (
         <Box sx={{ width: '100%', mt: 1.5 }}>
