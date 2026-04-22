@@ -89,6 +89,7 @@ export function ChangePassword() {
                     sx={{
                         display: 'flex',
                         justifyContent: 'center',
+                        alignItems: 'center',
                         mt: recaptcha?.siteKey ? '25px' : '100px',
                     }}
                 >
