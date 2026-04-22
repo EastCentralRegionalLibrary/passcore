@@ -22,6 +22,7 @@ COPY . .
 
 RUN dotnet publish src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
     -c Release \
+    -f net8.0 \
     -o /app \
     /p:PASSCORE_PROVIDER=LDAP
 
