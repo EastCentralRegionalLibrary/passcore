@@ -4,43 +4,47 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  docker-build:
+  validate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Catch syntax errors and best-practice violations early
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
 
-      - name: Build Docker image (no push)
-        uses: docker/build-push-action@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Build and LOAD to the local daemon
+      - name: Build and load image
+        uses: docker/build-push-action@v7
         with:
           context: .
-          push: false
-          tags: |
-            passcore:ci-test
-            ghcr.io/${{ github.repository_owner }}/passcore:ci-test
+          load: true
+          tags: passcore:ci-test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Dynamic Smoke Test (Wait for 200 OK)
       - name: Run container smoke test
         run: |
           docker run -d -p 8080:80 --name passcore_test passcore:ci-test
-          sleep 20
-          docker ps
-          docker logs passcore_test --tail 50
 
-      - name: Smoke test HTTP endpoint
-        run: |
-          curl -f http://localhost:8080 || (docker logs passcore_test && exit 1)
+          echo "Waiting for Passcore endpoint..."
+          timeout 30s bash -c 'until curl -f http://localhost:8080; do sleep 2; done' || (docker logs passcore_test && exit 1)
+
+          echo "Endpoint responded successfully!"
 
       - name: Cleanup test container
         if: always()
-        run: |
-          docker rm -f passcore_test || true
+        run: docker rm -f passcore_test || true
