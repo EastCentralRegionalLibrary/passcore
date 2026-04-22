@@ -7,6 +7,7 @@ import { fetchRequest } from '../Utils/FetchRequest';
 import { ChangePasswordForm } from './ChangePasswordForm';
 import { IChangePasswordFormInitialModel } from '../types/Components';
 import { ApiError } from '../types/Providers';
+import Box from '@mui/material/Box';
 
 export function ChangePassword() {
     const [disabled, setDisabled] = useState(true);
@@ -74,10 +75,7 @@ export function ChangePassword() {
 
     return (
         <>
-            <Paper
-                elevation={6}
-                sx={{ borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}
-            >
+            <Paper elevation={6} sx={{ borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}>
                 <ChangePasswordForm
                     submitData={submit}
                     toSubmitData={toSubmitData}
@@ -87,22 +85,26 @@ export function ChangePassword() {
                     setReCaptchaToken={setToken}
                     ReCaptchaToken={token}
                 />
-                <Button
-                    type="button"
-                    variant="contained"
-                    color="primary"
-                    disabled={disabled || isSubmitting}
+                <Box
                     sx={{
+                        display: 'flex',
+                        justifyContent: 'center',
                         mt: recaptcha?.siteKey ? '25px' : '100px',
-                        ml: '180px',
-                        width: 240,
                     }}
-                    onClick={handleSubmit}
                 >
-                    {changePasswordButtonLabel}
-                </Button>
+                    <Button
+                        type="button"
+                        variant="contained"
+                        color="primary"
+                        disabled={disabled || isSubmitting}
+                        sx={{ width: 240 }}
+                        onClick={handleSubmit}
+                    >
+                        {changePasswordButtonLabel}
+                    </Button>
+                </Box>
             </Paper>
             <ChangePasswordDialog open={dialogIsOpen} onClose={onCloseDialog} />
         </>
     );
-};
+}
