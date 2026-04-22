@@ -11,6 +11,8 @@ RUN apt-get update \
     curl \
     ca-certificates \
     gnupg \
+    build-essential \
+    python3 \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm --version \
