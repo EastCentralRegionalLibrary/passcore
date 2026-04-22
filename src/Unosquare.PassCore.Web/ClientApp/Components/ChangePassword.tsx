@@ -75,7 +75,7 @@ export function ChangePassword() {
 
     return (
         <>
-            <Paper elevation={6} sx={{ borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}>
+            <Paper elevation={6} sx={{ display: 'flex', flexDirection: 'column', borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}>
                 <ChangePasswordForm
                     submitData={submit}
                     toSubmitData={toSubmitData}
@@ -88,9 +88,9 @@ export function ChangePassword() {
                 <Box
                     sx={{
                         display: 'flex',
+                        flexGrow: 1,
                         justifyContent: 'center',
                         alignItems: 'center',
-                        mt: recaptcha?.siteKey ? '25px' : '100px',
                     }}
                 >
                     <Button
