@@ -20,7 +20,7 @@ RUN apt-get update \
 WORKDIR /src
 COPY . .
 
-RUN dotnet publish Unosquare.PassCore.Web.csproj \
+RUN dotnet publish src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
     -c Release \
     -o /app \
     /p:PASSCORE_PROVIDER=LDAP
