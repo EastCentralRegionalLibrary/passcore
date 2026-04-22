@@ -102,53 +102,35 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
 
     return (
         <Box sx={{ width: '100%', mt: 1.5 }}>
-            <Box display="flex" justifyContent="space-between" mb={0.5}>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                    Password strength
-                </Typography>
-
-                <Tooltip
-                    title={
-                        <Typography variant="caption" component="div" sx={{ whiteSpace: 'pre-line' }}>
-                            {tooltipText}
-                        </Typography>
-                    }
-                    arrow
-                    placement="top"
-                >
-                    <Typography
-                        variant="caption"
-                        fontWeight={600}
-                        sx={{
-                            color: strength.barColor,
-                            cursor: 'help',
-                        }}
-                        tabIndex={0}
-                    >
-                        {strength.label}
+            <Tooltip
+                title={
+                    <Typography variant="caption" component="div" sx={{ whiteSpace: 'pre-line' }}>
+                        {tooltipText}
                     </Typography>
-                </Tooltip>
-            </Box>
-
-            <LinearProgress
-                variant="determinate"
-                value={strength.strengthPercent}
-                aria-label="Password strength"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(strength.strengthPercent)}
-                aria-valuetext={strength.label}
-                sx={{
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: theme.palette.mode === 'light' ? theme.palette.grey[200] : theme.palette.grey[800],
-                    '& .MuiLinearProgress-bar': {
+                }
+                arrow
+                placement="top"
+            >
+                <LinearProgress
+                    variant="determinate"
+                    value={strength.strengthPercent}
+                    aria-label="Password strength"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(strength.strengthPercent)}
+                    aria-valuetext={strength.label}
+                    sx={{
+                        height: 8,
                         borderRadius: 4,
-                        backgroundColor: strength.barColor,
-                        transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                    },
-                }}
-            />
+                        backgroundColor: theme.palette.mode === 'light' ? theme.palette.grey[200] : theme.palette.grey[800],
+                        '& .MuiLinearProgress-bar': {
+                            borderRadius: 4,
+                            backgroundColor: strength.barColor,
+                            transition: 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                        },
+                    }}
+                />
+            </Tooltip>
         </Box>
     );
 }
