@@ -1,0 +1,67 @@
+openapi: 3.0.3
+info:
+  title: PassCore API - Debug Provider Examples
+  version: 1.0.0
+  description: Sample requests and responses when using the Debug Password Change Provider.
+paths:
+  /api/password:
+    post:
+      summary: Change user password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+                newPasswordVerify:
+                  type: string
+                recaptcha:
+                  type: string
+      responses:
+        '200':
+          description: Successful password change
+          content:
+            application/json:
+              example:
+                errors: []
+                hasErrors: false
+        '400':
+          description: Validation error or password change failure
+          content:
+            application/json:
+              examples:
+                InvalidCredentials:
+                  summary: Invalid current password
+                  value:
+                    errors:
+                      - errorCode: InvalidCredentials
+                        message: You need to provide the correct current password.
+                    hasErrors: true
+                UserNotFound:
+                  summary: User does not exist
+                  value:
+                    errors:
+                      - errorCode: UserNotFound
+                        message: We could not find your user account.
+                    hasErrors: true
+                PwnedPassword:
+                  summary: Password is pwned
+                  value:
+                    errors:
+                      - errorCode: PwnedPassword
+                        message: The password you are trying to use is publicly known and can be used in dictionary attacks.
+                    hasErrors: true
+                ForcedGenericError:
+                  summary: Debug forced error
+                  value:
+                    errors:
+                      - errorCode: Generic
+                        message: Forced error Generic for debug
+                    hasErrors: true

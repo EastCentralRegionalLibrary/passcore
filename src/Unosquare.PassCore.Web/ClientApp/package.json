@@ -20,7 +20,8 @@
         "build:tsc": "tsc",
         "prettier": "prettier --check ./**/*.ts*",
         "prettier:fix": "prettier --write ./**/*.ts*",
-        "start": "parcel index.html --dist-dir ../wwwroot --open --port 4040"
+        "start": "parcel index.html --dist-dir ../wwwroot --open --port 4040",
+        "test:e2e": "playwright test"
     },
     "repository": {
         "type": "git",

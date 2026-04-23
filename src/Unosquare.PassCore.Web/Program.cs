@@ -1,12 +1,13 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Unosquare.PassCore.Web.Models;
 using Unosquare.PassCore.Common;
 using PwnedPasswordsSearch;
 using System.Net.Http.Headers;
 #if DEBUG
-using Unosquare.PassCore.Web.Helpers;
+using Unosquare.PassCore.PasswordProvider.Debug;
 #elif PASSCORE_LDAP_PROVIDER
 using Zyborg.PassCore.PasswordProvider.LDAP;
 using Microsoft.Extensions.Logging;
@@ -34,7 +35,13 @@ builder.Services.AddHttpClient("PwnedPasswords", client =>
 builder.Services.AddSingleton<IPwnedPasswordSearch, PwnedSearch>();
 
 #if DEBUG
+if (builder.Environment.IsProduction())
+{
+    throw new InvalidOperationException("The debug password change provider cannot be used in Production.");
+}
+
 builder.Services.Configure<IAppSettings>(builder.Configuration.GetSection("AppSettings"));
+builder.Services.Configure<DebugProviderOptions>(builder.Configuration.GetSection(nameof(DebugProviderOptions)));
 builder.Services.AddSingleton<IPasswordChangeProvider, DebugPasswordChangeProvider>();
 #elif PASSCORE_LDAP_PROVIDER
 builder.Services.Configure<LdapPasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));

@@ -36,6 +36,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\PwnedPasswordsSearch\PwnedPasswordsSearch.csproj" />
 		<ProjectReference Include="..\Unosquare.PassCore.Common\Unosquare.PassCore.Common.csproj" />
+		<ProjectReference Include="..\Unosquare.PassCore.PasswordProvider.Debug\Unosquare.PassCore.PasswordProvider.Debug.csproj" />
 	</ItemGroup>
 	<!-- Windows-only Win32 provider -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">

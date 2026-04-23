@@ -250,8 +250,9 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="username">The username of the account to change the password for.</param>
         /// <param name="currentPassword">The user's current password, required for password change validation.</param>
         /// <param name="newPassword">The new password to set for the user.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>An <see cref="ApiErrorItem"/> if the password change fails, otherwise null for success.</returns>
-        public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword)
+        public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword, System.Threading.CancellationToken cancellationToken = default)
         {
             ApiErrorItem? errorItem = null; // Initialize error item to null (success case)
 

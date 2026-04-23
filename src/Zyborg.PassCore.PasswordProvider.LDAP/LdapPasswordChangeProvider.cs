@@ -66,7 +66,8 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
     public Task<ApiErrorItem?> PerformPasswordChangeAsync(
         string username,
         string currentPassword,
-        string newPassword)
+        string newPassword,
+        System.Threading.CancellationToken cancellationToken = default)
     {
         try
         {
