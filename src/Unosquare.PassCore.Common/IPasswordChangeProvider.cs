@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Unosquare.PassCore.Common;
@@ -14,8 +15,9 @@ public interface IPasswordChangeProvider
     /// <param name="username">The username.</param>
     /// <param name="currentPassword">The current password.</param>
     /// <param name="newPassword">The new password.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The API error item or null if the change password operation was successful.</returns>
-    Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword);
+    Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Compute the distance between two strings.

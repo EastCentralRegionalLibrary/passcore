@@ -16,5 +16,11 @@
     <PackageVersion Include="zxcvbn-core" Version="7.0.92" />
     <PackageVersion Include="Microsoft.TypeScript.MSBuild" Version="4.6.4" />
     <PackageVersion Include="Novell.Directory.Ldap.NETStandard" Version="3.6.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageVersion Include="xunit" Version="2.7.0" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.7" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.1" />
+    <PackageVersion Include="Moq" Version="4.20.70" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.1" />
   </ItemGroup>
 </Project>
