@@ -6,12 +6,12 @@ test.describe('Password Change Flow', () => {
   });
 
   test('should change password successfully with valid credentials', async ({ page }) => {
-    await page.fill('input[name="username"]', 'someuser');
+    await page.fill('input[name="username"]', 'someuser@test.com');
     await page.fill('input[name="currentPassword"]', 'OldPassword123!');
     await page.fill('input[name="newPassword"]', 'NewPassword123!');
     await page.fill('input[name="newPasswordVerify"]', 'NewPassword123!');
 
-    await page.click('button[type="submit"]');
+    await page.click('button:has-text("Change Password")');
 
     // Wait for success message
     await expect(page.locator('text=You have changed your password successfully')).toBeVisible();
@@ -19,12 +19,12 @@ test.describe('Password Change Flow', () => {
 
   test('should show error for invalid current password', async ({ page }) => {
     // In our debug provider, the 'invalidCredentials' username triggers this error
-    await page.fill('input[name="username"]', 'invalidCredentials');
+    await page.fill('input[name="username"]', 'invalidCredentials@test.com');
     await page.fill('input[name="currentPassword"]', 'wrong');
     await page.fill('input[name="newPassword"]', 'NewPassword123!');
     await page.fill('input[name="newPasswordVerify"]', 'NewPassword123!');
 
-    await page.click('button[type="submit"]');
+    await page.click('button:has-text("Change Password")');
 
     await expect(page.locator('text=You need to provide the correct current password')).toBeVisible();
   });
