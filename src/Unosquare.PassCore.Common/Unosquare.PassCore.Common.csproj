@@ -13,4 +13,8 @@
 		<PackageProjectUrl>https://github.com/unosquare/passcore</PackageProjectUrl>
 		<PackageLicenseUrl>https://raw.githubusercontent.com/unosquare/passcore/master/LICENSE</PackageLicenseUrl>
 	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="zxcvbn-core" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+	</ItemGroup>
 </Project>

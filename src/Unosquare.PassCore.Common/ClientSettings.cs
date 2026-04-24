@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Unosquare.PassCore.Web.Models;
+namespace Unosquare.PassCore.Common;
 
 /// <summary>
 /// Represents all of the strongly-typed application settings loaded from a JSON file.

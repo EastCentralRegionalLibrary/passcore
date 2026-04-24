@@ -1,4 +1,4 @@
-namespace Unosquare.PassCore.Web.Models;
+namespace Unosquare.PassCore.Common;
 
 public class ChangePasswordForm
 {
