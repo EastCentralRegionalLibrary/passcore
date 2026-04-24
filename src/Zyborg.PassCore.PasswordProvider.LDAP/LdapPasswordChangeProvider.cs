@@ -1,15 +1,18 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Novell.Directory.Ldap;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Exceptions;
 using LdapRemoteCertificateValidationCallback =
     Novell.Directory.Ldap.RemoteCertificateValidationCallback;
 
@@ -19,10 +22,9 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// Represents a LDAP password change provider using Novell LDAP Connection.
 /// </summary>
 /// <seealso cref="IPasswordChangeProvider" />
-public class LdapPasswordChangeProvider : IPasswordChangeProvider
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase
 {
     private readonly LdapPasswordChangeOptions _options;
-    private readonly ILogger _logger;
 
     // First find user DN by username (SAM Account Name)
     private readonly LdapSearchConstraints _searchConstraints = new(
@@ -44,38 +46,28 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
     /// </summary>
     /// <param name="logger">The logger.</param>
     /// <param name="options">The _options.</param>
+    /// <param name="policies">The password policies.</param>
     public LdapPasswordChangeProvider(
-        ILogger logger,
-        IOptions<LdapPasswordChangeOptions> options)
+        ILogger<LdapPasswordChangeProvider> logger,
+        IOptions<LdapPasswordChangeOptions> options,
+        IEnumerable<IPasswordPolicy> policies)
+        : base(logger, policies)
     {
-        _logger = logger;
+        ArgumentNullException.ThrowIfNull(options);
         _options = options.Value;
         Init();
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// Based on:
-    ///    * https://www.cs.bham.ac.uk/~smp/resources/ad-passwds/
-    ///    * https://support.microsoft.com/en-us/help/269190/how-to-change-a-windows-active-directory-and-lds-user-password-through
-    ///    * https://ltb-project.org/documentation/self-service-password/latest/config_ldap#active_directory
-    ///    * https://technet.microsoft.com/en-us/library/ff848710.aspx?f=255&amp;MSPPError=-2147217396
-    ///
-    /// Check the above links for more information.
-    /// </remarks>
-    public Task<ApiErrorItem?> PerformPasswordChangeAsync(
-        string username,
-        string currentPassword,
-        string newPassword,
-        System.Threading.CancellationToken cancellationToken = default)
+    protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
         try
         {
-            var cleanUsername = CleaningUsername(username);
+            var cleanUsername = CleaningUsername(context.Username);
 
-            var searchFilter = _options.LdapSearchFilter.Replace("{Username}", cleanUsername);
-
-            _logger.LogWarning("LDAP query: {0}", searchFilter);
+            var searchFilter = _options.LdapSearchFilter.Replace("{Username}", cleanUsername, StringComparison.Ordinal);
 
             using var ldap = BindToLdap();
             var search = ldap.Search(
@@ -91,31 +83,28 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
             // but fortunately hasMore seems to block until final result
             if (!search.HasMore())
             {
-                _logger.LogWarning("Unable to find username: [{0}]", cleanUsername);
+                if (_options.HideUserNotFound)
+                    throw new InvalidCredentialsException();
 
-                return Task.FromResult<ApiErrorItem?>(new ApiErrorItem(
-                    _options.HideUserNotFound ? ApiErrorCode.InvalidCredentials : ApiErrorCode.UserNotFound,
-                    _options.HideUserNotFound ? "Invalid credentials" : "Username could not be located"));
+                throw new UserNotFoundException("Username could not be located");
             }
 
             if (search.Count > 1)
             {
-                _logger.LogWarning("Found multiple with same username: [{0}] - Count {1}", cleanUsername, search.Count);
-
                 // Hopefully this should not ever happen if AD is preserving SAM Account Name
                 // uniqueness constraint, but just in case, handling this corner case
-                return Task.FromResult<ApiErrorItem?>(new ApiErrorItem(ApiErrorCode.UserNotFound, "Multiple matching user entries resolved"));
+                throw new UserNotFoundException("Multiple matching user entries resolved");
             }
 
             var userDN = search.Next().Dn;
 
             if (_options.LdapChangePasswordWithDelAdd)
             {
-                ChangePasswordDelAdd(currentPassword, newPassword, ldap, userDN);
+                ChangePasswordDelAdd(context.CurrentPassword, context.NewPassword, ldap, userDN);
             }
             else
             {
-                ChangePasswordReplace(newPassword, ldap, userDN);
+                ChangePasswordReplace(context.NewPassword, ldap, userDN);
             }
 
             if (_options.LdapStartTls)
@@ -125,26 +114,17 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
         }
         catch (LdapException ex)
         {
-            var item = ParseLdapException(ex);
-
-            _logger.LogWarning(item.Message, ex);
-
-            return Task.FromResult<ApiErrorItem?>(item);
+            throw TranslateLdapException(ex);
         }
         catch (ApiErrorException ex)
         {
-            var item = ex.ToApiErrorItem();
-
-            _logger.LogWarning(item.Message, ex);
-
-            return Task.FromResult<ApiErrorItem?>(item);
+            throw new PasswordPolicyViolationException(ex.Message, ex.ErrorCode);
         }
 
-        // Everything seems to have worked:
-        return Task.FromResult<ApiErrorItem?>(null);
+        return Task.CompletedTask;
     }
 
-    private static void ChangePasswordReplace(string newPassword, ILdapConnection ldap, string userDN)
+    private static void ChangePasswordReplace(string newPassword, LdapConnection ldap, string userDN)
     {
         // If you don't have the rights to Add and/or Delete the Attribute, you might have the right to change the password-attribute.
         // In this case uncomment the next 2 lines and comment the region 'Change Password by Delete/Add'
@@ -153,7 +133,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
         ldap.Modify(userDN, new[] { ldapReplace }); // Change with Replace
     }
 
-    private static void ChangePasswordDelAdd(string currentPassword, string newPassword, ILdapConnection ldap, string userDN)
+    private static void ChangePasswordDelAdd(string currentPassword, string newPassword, LdapConnection ldap, string userDN)
     {
         var oldPassBytes = Encoding.Unicode.GetBytes($@"""{currentPassword}""");
         var newPassBytes = Encoding.Unicode.GetBytes($@"""{newPassword}""");
@@ -166,7 +146,7 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
         ldap.Modify(userDN, new[] { ldapDel, ldapAdd }); // Change with Delete/Add
     }
 
-    private static ApiErrorItem ParseLdapException(LdapException ex)
+    private static Exception TranslateLdapException(LdapException ex)
     {
         // If the LDAP server returned an error, it will be formatted
         // similar to this:
@@ -175,30 +155,32 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
         // The leading number before the ':' is the Win32 API Error Code in HEX
         if (ex.LdapErrorMessage == null)
         {
-            return new ApiErrorItem(ApiErrorCode.LdapProblem, "Unexpected null exception");
+            return new DirectoryUnavailableException("Unexpected null exception", ex);
         }
 
-        var m = Regex.Match(ex.LdapErrorMessage, "([0-9a-fA-F]+):");
+        var m = Regex.Match(ex.LdapErrorMessage, "([0-9a-fA-F]+):", RegexOptions.None, TimeSpan.FromMilliseconds(100));
 
         if (!m.Success)
         {
-            return new ApiErrorItem(ApiErrorCode.LdapProblem, $"Unexpected error: {ex.LdapErrorMessage}");
+            return new DirectoryUnavailableException($"Unexpected error: {ex.LdapErrorMessage}", ex);
         }
 
         var errCodeString = m.Groups[1].Value;
         var errCode = int.Parse(errCodeString, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
         var err = Win32ErrorCode.ByCode(errCode);
 
-        return err == null
-            ? new ApiErrorItem(ApiErrorCode.LdapProblem, $"Unexpected Win32 API error; error code: {errCodeString}")
-            : new ApiErrorItem(ApiErrorCode.InvalidCredentials,
-                $"Resolved Win32 API Error: code={err.Code} name={err.CodeName} desc={err.Description}");
+        if (err == null)
+        {
+            return new DirectoryUnavailableException($"Unexpected Win32 API error; error code: {errCodeString}", ex);
+        }
+
+        return new InvalidCredentialsException($"Resolved Win32 API Error: code={err.Code} name={err.CodeName} desc={err.Description}");
     }
 
     private string CleaningUsername(string username)
     {
         var cleanUsername = username;
-        var index = cleanUsername.IndexOf("@", StringComparison.Ordinal);
+        var index = cleanUsername.IndexOf('@', StringComparison.Ordinal);
         if (index >= 0)
             cleanUsername = cleanUsername[..index];
 
@@ -224,18 +206,16 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
 
         while (escapeIndex >= 0)
         {
-            buff.Append(cleanUsername.Substring(copyFrom, escapeIndex));
+            buff.Append(cleanUsername.AsSpan(copyFrom, escapeIndex - copyFrom));
             buff.Append($"\\{cleanUsername[escapeIndex]:X}");
             copyFrom = escapeIndex + 1;
             escapeIndex = cleanUsername.IndexOfAny(escape, copyFrom);
         }
 
         if (copyFrom < maxLen)
-            buff.Append(cleanUsername.Substring(copyFrom));
-        cleanUsername = buff.ToString();
-        _logger.LogWarning("Had to clean username: [{0}] => [{1}]", username, cleanUsername);
+            buff.Append(cleanUsername.AsSpan(copyFrom));
 
-        return cleanUsername;
+        return buff.ToString();
     }
 
     private void Init()
@@ -275,30 +255,14 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
                 nameof(_options.LdapSearchFilter));
         }
 
-        if (!_options.LdapSearchFilter.Contains("{Username}"))
+        if (!_options.LdapSearchFilter.Contains("{Username}", StringComparison.Ordinal))
         {
             throw new ArgumentException(
                 $"The {nameof(_options.LdapSearchFilter)} should include {{Username}} value in the template string",
                 nameof(_options.LdapSearchFilter));
         }
-
-        // All other configuration is optional, but some may warrant attention
-        if (!_options.HideUserNotFound)
-            _logger.LogWarning($"Option [{nameof(_options.HideUserNotFound)}] is DISABLED; the presence or absence of usernames can be harvested");
-
-        if (_options.LdapIgnoreTlsErrors)
-            _logger.LogWarning($"Option [{nameof(_options.LdapIgnoreTlsErrors)}] is ENABLED; invalid certificates will be allowed");
-        else if (_options.LdapIgnoreTlsValidation)
-            _logger.LogWarning($"Option [{nameof(_options.LdapIgnoreTlsValidation)}] is ENABLED; untrusted certificate roots will be allowed");
-
-        if (_options.LdapPort == LdapConnection.DefaultSslPort && !_options.LdapSecureSocketLayer)
-            _logger.LogWarning($"Option [{nameof(_options.LdapSecureSocketLayer)}] is DISABLED in combination with standard SSL port [{_options.LdapPort}]");
-
-        if (_options.LdapPort != LdapConnection.DefaultSslPort && !_options.LdapStartTls)
-            _logger.LogWarning($"Option [{nameof(_options.LdapStartTls)}] is DISABLED in combination with non-standard TLS port [{_options.LdapPort}]");
     }
 
-    [Obsolete]
     private LdapConnection BindToLdap()
     {
         var ldap = new LdapConnection();
@@ -317,9 +281,9 @@ public class LdapPasswordChangeProvider : IPasswordChangeProvider
                 bindHostname = h;
                 break;
             }
-            catch (LdapException ex)
+            catch (LdapException)
             {
-                _logger.LogWarning($"Failed to connect to host [{h}]", ex);
+                // Silence connect errors here as they are retried or handled at the end
             }
         }
 

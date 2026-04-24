@@ -1,4 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+	<ItemGroup>
+	  <ProjectReference Include="..\PwnedPasswordsSearch\PwnedPasswordsSearch.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+	  <PackageReference Include="zxcvbn-core" />
+	</ItemGroup>
 	<PropertyGroup>
 		<!-- Inherit from Directory.Build.props -->
 		<Description>PassCore abstraction classes to implement custom providers.</Description>

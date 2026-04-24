@@ -2,10 +2,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.Web.Models;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Policies;
 using PwnedPasswordsSearch;
 using System.Net.Http.Headers;
+using System;
+
 #if DEBUG
 using Unosquare.PassCore.PasswordProvider.Debug;
 #elif PASSCORE_LDAP_PROVIDER
@@ -33,6 +37,13 @@ builder.Services.AddHttpClient("PwnedPasswords", client =>
 });
 
 builder.Services.AddSingleton<IPwnedPasswordSearch, PwnedSearch>();
+
+// Register Policies
+builder.Services.AddSingleton<IPasswordPolicy, PwnedPasswordPolicy>();
+builder.Services.AddSingleton<IPasswordPolicy, LengthPasswordPolicy>();
+builder.Services.AddSingleton<IPasswordPolicy, ComplexityPasswordPolicy>();
+builder.Services.AddSingleton<IPasswordPolicy, DistancePasswordPolicy>();
+builder.Services.AddSingleton<IPasswordPolicy, GroupMembershipPolicy>();
 
 #if DEBUG
 if (builder.Environment.IsProduction())
