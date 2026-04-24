@@ -11,7 +11,7 @@ using Unosquare.PassCore.PasswordProvider.Debug;
 #elif PASSCORE_LDAP_PROVIDER
 using Zyborg.PassCore.PasswordProvider.LDAP;
 using Microsoft.Extensions.Logging;
-#else
+#elif PASSCORE_AD_PROVIDER
 using Unosquare.PassCore.PasswordProvider;
 #endif
 

@@ -47,10 +47,10 @@ jobs:
       - name: Build Backend (Debug)
         run: |
           dotnet build \
-            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj -c Debug -f net8.0 --no-restore
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --config Debug --framework net8.0 --property:PASSCORE_PROVIDER=DEBUG --no-restore
 
       - name: Run Backend Tests
-        run: dotnet test --no-build --verbosity normal --framework net8.0
+        run: dotnet test --no-build --verbosity normal --framework net8.0 --property:PASSCORE_PROVIDER=DEBUG
 
       # -------------------------
       # Frontend setup
@@ -73,6 +73,7 @@ jobs:
             --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
             --configuration Debug \
             --framework net8.0 \
+            --property:PASSCORE_PROVIDER=DEBUG \
             --no-build &
 
           echo $! > backend.pid
