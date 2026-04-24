@@ -42,7 +42,7 @@ jobs:
       # Backend build + tests
       # -------------------------
       - name: Restore .NET dependencies
-        run: dotnet restore
+        run: dotnet restore --property:PASSCORE_PROVIDER=DEBUG
 
       - name: Build Backend (Debug)
         run: |
