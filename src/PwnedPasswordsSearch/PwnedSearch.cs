@@ -95,7 +95,7 @@ namespace PwnedPasswordsSearch
                 LogPwnedPasswordCheckRequest(_logger, hashPrefix, null);
 
                 var client = _httpClientFactory.CreateClient("PwnedPasswords");
-                HttpResponseMessage response = null; // Declare response outside using for error context
+                HttpResponseMessage? response = null; // Declare response outside using for error context
 
                 try
                 {

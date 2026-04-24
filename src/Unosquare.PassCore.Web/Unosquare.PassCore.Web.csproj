@@ -13,7 +13,6 @@
 		<AnalysisMode>AllEnabledByDefault</AnalysisMode>
 		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 		<Nullable>enable</Nullable>
-		<NullableReferenceTypes>true</NullableReferenceTypes>
 	</PropertyGroup>
 
 <PropertyGroup>
