@@ -82,6 +82,7 @@ jobs:
         shell: bash
         run: |
           dotnet run \
+            --no-launch-profile \
             --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
             --configuration Debug \
             --framework net8.0 \
