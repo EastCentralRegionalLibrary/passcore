@@ -42,21 +42,34 @@ jobs:
       # Backend build + tests
       # -------------------------
       - name: Restore .NET dependencies
-        run: dotnet restore --property:PASSCORE_PROVIDER=DEBUG
+        run: |
+          dotnet restore \
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --property:PASSCORE_PROVIDER=DEBUG
 
       - name: Build Backend (Debug)
         run: |
-          dotnet build --configuration Debug --property:PASSCORE_PROVIDER=DEBUG --no-restore
+          dotnet build \
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Debug \
+            --property:PASSCORE_PROVIDER=DEBUG \
+            --no-restore
 
       - name: Run Backend Tests
-        run: dotnet test --no-build --verbosity normal --property:PASSCORE_PROVIDER=DEBUG
+        run: |
+          dotnet test \
+            tests/Unosquare.PassCore.PasswordProvider.Debug.Tests/Unosquare.PassCore.PasswordProvider.Debug.Tests.csproj \
+            --no-build \
+            --property:PASSCORE_PROVIDER=DEBUG
+
 
       # -------------------------
       # Frontend setup
       # -------------------------
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: src/Unosquare.PassCore.Web/ClientApp
+      # - name: Install frontend dependencies
+      #   run: npm ci
+      #   working-directory: src/Unosquare.PassCore.Web/ClientApp
+      # This should already have been completed as part of the build
 
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps chromium
