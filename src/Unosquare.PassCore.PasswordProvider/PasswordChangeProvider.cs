@@ -8,8 +8,10 @@ using System.DirectoryServices.AccountManagement;
 using System.DirectoryServices.ActiveDirectory;
 using System.Linq;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Exceptions;
 using System.Threading.Tasks;
-using PwnedPasswordsSearch;
+using System.Threading;
+using System.Collections.Generic;
 
 namespace Unosquare.PassCore.PasswordProvider
 {
@@ -23,204 +25,11 @@ namespace Unosquare.PassCore.PasswordProvider
     /// <seealso cref="IPasswordChangeProvider" />
     /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
     [SupportedOSPlatform("windows")]
-    public class PasswordChangeProvider : IPasswordChangeProvider
+    public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester
     {
         // Readonly fields
         private readonly PasswordChangeOptions _options;
-        private readonly ILogger<PasswordChangeProvider> _logger;
-        private readonly IPwnedPasswordSearch _pwnedPasswordSearch;
         private IdentityType _idType = IdentityType.UserPrincipalName; // Default identity type
-
-        // LoggerMessage delegates for performance optimization
-        private static readonly Action<ILogger, string, Exception?> LogPerformingPasswordChange =
-            LoggerMessage.Define<string>(
-                LogLevel.Information,
-                new EventId(100, "PerformingPasswordChange"),
-                "Performing password change for user '{Username}'.");
-
-        private static readonly Action<ILogger, string, Exception?> LogInvalidCurrentPassword =
-            LoggerMessage.Define<string>(
-                LogLevel.Warning,
-                new EventId(101, "InvalidCurrentPassword"),
-                "Invalid current password provided for user '{Username}'.");
-
-        private static readonly Action<ILogger, string, Exception?> LogPasswordSuccessfullyUpdated =
-            LoggerMessage.Define<string>(
-                LogLevel.Debug,
-                new EventId(102, "PasswordSuccessfullyUpdated"),
-                "Password successfully updated for user '{Username}'.");
-
-        private static readonly Action<ILogger, string, string, Exception?> LogPasswordChangeComplexityError =
-            LoggerMessage.Define<string, string>(
-                LogLevel.Warning,
-                new EventId(103, "PasswordComplexityError"),
-                "Password change failed due to complexity policies: {ErrorMessage}. {ErrorDetails}");
-
-        private static readonly Action<ILogger, string, string, Exception?> LogPasswordChangeApiError =
-            LoggerMessage.Define<string, string>(
-                LogLevel.Warning,
-                new EventId(104, "PasswordChangeApiError"),
-                "Password change failed due to API error: {ErrorMessage}. {ErrorDetails}");
-
-        private static readonly Action<ILogger, string, string, Exception?> LogPasswordChangeUnexpectedError =
-            LoggerMessage.Define<string, string>(
-                LogLevel.Error,
-                new EventId(105, "PasswordChangeUnexpectedError"),
-                "Password change failed due to an unexpected error: {ErrorMessage}. {ErrorDetails}");
-
-        private static readonly Action<ILogger, string, Exception?> LogUserPrincipalNotFound =
-            LoggerMessage.Define<string>(
-                LogLevel.Warning,
-                new EventId(106, "UserPrincipalNotFound"),
-                "User principal '{Username}' not found.");
-
-        private static readonly Action<ILogger, Exception?> LogPasswordLengthTooShort =
-            LoggerMessage.Define(
-                LogLevel.Error,
-                new EventId(107, "PasswordLengthTooShort"),
-                "New password length is shorter than the Active Directory minimum password length.");
-
-        private static readonly Action<ILogger, Exception?> LogPwnedPasswordUsed =
-            LoggerMessage.Define(
-                LogLevel.Error,
-                new EventId(108, "PwnedPasswordUsed"),
-                "New password is a known compromised password and is not allowed.");
-
-        private static readonly Action<ILogger, Exception?> LogPasswordChangeNotPermittedFlag =
-            LoggerMessage.Define(
-                LogLevel.Warning,
-                new EventId(109, "PasswordChangeNotPermittedFlag"),
-                "User is not permitted to change their password.");
-
-        private static readonly Action<ILogger, int, Exception?> LogValidateCredentialsWin32Error =
-            LoggerMessage.Define<int>(
-                LogLevel.Debug,
-                new EventId(110, "ValidateCredentialsWin32Error"),
-                "ValidateUserCredentials GetLastWin32Error {ErrorCode}");
-
-        private static readonly Action<ILogger, Exception?> LogPwdLastSetMissing =
-            LoggerMessage.Define(
-                LogLevel.Warning,
-                new EventId(111, "PwdLastSetMissing"),
-                "The 'pwdLastSet' property is missing on the user principal.");
-
-        private static readonly Action<ILogger, Exception?> LogPwdLastSetUpdated =
-            LoggerMessage.Define(
-                LogLevel.Information,
-                new EventId(112, "PwdLastSetUpdated"),
-                "The 'pwdLastSet' attribute was successfully updated.");
-
-        private static readonly Action<ILogger, string, Exception?> LogPwdLastSetUpdateFailed =
-            LoggerMessage.Define<string>(
-                LogLevel.Error,
-                new EventId(113, "PwdLastSetUpdateFailed"),
-                "Failed to update 'pwdLastSet' attribute: {ErrorMessage}");
-
-        private static readonly Action<ILogger, string, Exception?> LogChangePasswordAutomaticContextFailed =
-            LoggerMessage.Define<string>(
-                LogLevel.Warning,
-                new EventId(114, "ChangePasswordAutomaticContextFailed"),
-                "ChangePassword failed with AutomaticContext enabled. Password update aborted. {ErrorDetails}");
-
-        private static readonly Action<ILogger, Exception?> LogPasswordUpdatedSetPasswordFallback =
-            LoggerMessage.Define(
-                LogLevel.Debug,
-                new EventId(115, "PasswordUpdatedSetPasswordFallback"),
-                "Password updated using SetPassword method after ChangePassword failure.");
-
-        private static readonly Action<ILogger, string, Exception?> LogSetPasswordFailed =
-            LoggerMessage.Define<string>(
-                LogLevel.Error,
-                new EventId(116, "SetPasswordFailed"),
-                "SetPassword failed after ChangePassword failure. Password update failed. {ErrorDetails}");
-
-        private static readonly Action<ILogger, IdentityType, Exception?> LogIdentityTypeSet =
-            LoggerMessage.Define<IdentityType>(
-                LogLevel.Debug,
-                new EventId(117, "IdentityTypeSet"),
-                "Identity type set to '{IdentityType}'.");
-
-        private static readonly Action<ILogger, Exception?> LogAutomaticDomainContext =
-            LoggerMessage.Define(
-                LogLevel.Debug,
-                new EventId(118, "AutomaticDomainContext"),
-                "Using automatic domain context.");
-
-        private static readonly Action<ILogger, string, Exception?> LogDomainContext =
-            LoggerMessage.Define<string>(
-                LogLevel.Debug,
-                new EventId(119, "DomainContext"),
-                "Using domain context: '{Domain}'.");
-
-        private static readonly Action<ILogger, string, Exception?> LogCreatingDirectoryEntry =
-            LoggerMessage.Define<string>(
-                LogLevel.Debug,
-                new EventId(120, "CreatingDirectoryEntry"),
-                "Creating DirectoryEntry for domain: '{Domain}'.");
-
-        private static readonly Action<ILogger, string, Exception?> LogErrorRetrievingGroups =
-            LoggerMessage.Define<string>(
-                LogLevel.Error,
-                new EventId(887, "GroupRetrievalError"),
-                "Error retrieving user groups using GetGroups. Falling back to GetAuthorizationGroups. {ErrorMessage}");
-
-        private static readonly Action<ILogger, string, Exception?> LogErrorGroupValidation =
-            LoggerMessage.Define<string>(
-                LogLevel.Error,
-                new EventId(888, "GroupValidationError"),
-                "Error during group membership validation: {ErrorMessage}");
-
-        // Add new LoggerMessage delegates for AcquireDomainPasswordLength
-        private static readonly Action<ILogger, Exception?> LogPasswordLengthRetrievalError =
-            LoggerMessage.Define(
-                LogLevel.Error,
-                new EventId(121, "PasswordLengthRetrievalError"),
-                "Error retrieving domain password length policy from Active Directory. Defaulting to 6.");
-
-        private static readonly Action<ILogger, Exception?> LogPasswordLengthRetrievalWarning =
-            LoggerMessage.Define(
-                LogLevel.Warning,
-                new EventId(122, "PasswordLengthRetrievalWarning"),
-                "Could not retrieve 'minPwdLength' from Active Directory or property value was not an integer. Defaulting to 6.");
-
-        // Add new LoggerMessage delegates for AcquirePrincipalContext
-        private static readonly Action<ILogger, Exception?> LogPrincipalContextCreationFailedError =
-            LoggerMessage.Define(
-                LogLevel.Error,
-                new EventId(123, "PrincipalContextCreationFailedError"),
-                "Error creating PrincipalContext with provided LDAP settings.");
-
-        private static readonly Action<ILogger, Exception?> LogLdapHostnamesNotConfiguredWarning =
-            LoggerMessage.Define(
-                LogLevel.Warning,
-                new EventId(124, "LdapHostnamesNotConfiguredWarning"),
-                "LDAP Hostnames are not configured when UseAutomaticContext is false. PrincipalContext cannot be created.");
-
-        // Add new LoggerMessage delegates for GetDirectoryEntry
-        private static readonly Action<ILogger, Exception?> LogLdapHostnamesEmptyWarning =
-            LoggerMessage.Define(
-                LogLevel.Warning,
-                new EventId(125, "LdapHostnamesEmptyWarning"),
-                "LDAP Hostnames are not configured. Cannot create DirectoryEntry.");
-
-        private static readonly Action<ILogger, Exception?> LogDirectoryEntryCreationFailedError =
-            LoggerMessage.Define(
-                LogLevel.Error,
-                new EventId(126, "DirectoryEntryCreationFailedError"),
-                "Error creating DirectoryEntry with provided LDAP settings.");
-
-        // LoggerMessage delegates for PwnedPasswordCheckAsync
-        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckApiError =
-            LoggerMessage.Define<string>(
-                LogLevel.Warning,
-                new EventId(205, "PwnedPasswordCheckApiError"),
-                "Error during Pwned Password API check: {ErrorMessage}");
-
-        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckUnexpectedError =
-            LoggerMessage.Define<string>(LogLevel.Error,
-            new EventId(206, "PwnedPasswordCheckUnexpectedError"),
-            "Unexpected error during Pwned Password check: {ErrorMessage}");
-
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PasswordChangeProvider"/> class.
@@ -228,233 +37,81 @@ namespace Unosquare.PassCore.PasswordProvider
         /// </summary>
         /// <param name="logger">The logger interface for logging events within this provider.</param>
         /// <param name="options">The options configuration for password change operations, injected through IOptions.</param>
+        /// <param name="policies">The password policies.</param>
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
-            IPwnedPasswordSearch pwnedPasswordSearch)
+            IEnumerable<IPasswordPolicy> policies)
+            : base(logger, policies)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _options = (options?.Value) ?? throw new ArgumentNullException(nameof(options));
-            _pwnedPasswordSearch = pwnedPasswordSearch ?? throw new ArgumentNullException(nameof(pwnedPasswordSearch));
+            ArgumentNullException.ThrowIfNull(logger);
+            ArgumentNullException.ThrowIfNull(options);
+            _options = options.Value;
             SetIdType(); // Determine IdentityType from options
         }
 
-
-
         /// <inheritdoc />
-        /// <summary>
-        /// Executes the password change operation for a given user.
-        /// This is the main entry point for changing a user's password. It performs several validations
-        /// before attempting to update the password in Active Directory.
-        /// </summary>
-        /// <param name="username">The username of the account to change the password for.</param>
-        /// <param name="currentPassword">The user's current password, required for password change validation.</param>
-        /// <param name="newPassword">The new password to set for the user.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if the password change fails, otherwise null for success.</returns>
-        public async Task<ApiErrorItem?> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword, System.Threading.CancellationToken cancellationToken = default)
+        protected override async Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
-            ApiErrorItem? errorItem = null; // Initialize error item to null (success case)
+            ArgumentNullException.ThrowIfNull(context);
 
-            try
-            {
-                if (username is null)
-                    throw new ArgumentNullException(nameof(username));
-                if (currentPassword is null)
-                    throw new ArgumentNullException(nameof(currentPassword));
-                if (newPassword is null)
-                    throw new ArgumentNullException(nameof(newPassword));
+            var fixedUsername = FixUsernameWithDomain(context.Username);
 
-                var fixedUsername = FixUsernameWithDomain(username); // Ensure username is correctly formatted with domain if needed
-                LogPerformingPasswordChange(_logger, fixedUsername, null);
+            using var principalContext = AcquirePrincipalContext(); // Acquire PrincipalContext for AD operations, using 'using' for automatic disposal
+            var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername); // Find the UserPrincipal object
 
-                using var principalContext = AcquirePrincipalContext(); // Acquire PrincipalContext for AD operations, using 'using' for automatic disposal
-                var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername); // Find the UserPrincipal object
-
-                errorItem = ValidateUserPrincipal(userPrincipal, fixedUsername); // Validate if user principal is found
-                if (errorItem != null) return errorItem; // Return immediately if validation fails
-
-                errorItem = ValidateNewPasswordComplexity(newPassword); // Validate new password against complexity rules
-                if (errorItem != null) return errorItem; // Return immediately if validation fails
-
-                errorItem = await ValidatePwnedPassword(newPassword); // Check if the new password is in a list of pwned passwords
-                if (errorItem != null) return errorItem; // Return immediately if validation fails
-
-                errorItem = ValidateGroupsMembership(userPrincipal); // Validate user's group membership against allowed/restricted groups
-                if (errorItem != null) return errorItem; // Return immediately if validation fails
-
-                errorItem = ValidatePasswordChangePermissions(userPrincipal); // Validate if user has permission to change password
-                if (errorItem != null) return errorItem; // Return immediately if validation fails
-
-                if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
-                {
-                    errorItem = SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
-                    if (errorItem != null) return errorItem; // Return immediately if setting LastPassword fails
-                }
-
-                if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, currentPassword, principalContext)) // Validate provided current password
-                {
-                    LogInvalidCurrentPassword(_logger, fixedUsername, null);
-                    return new ApiErrorItem(ApiErrorCode.InvalidCredentials); // Return error if current password is invalid
-                }
-
-                UpdatePassword(currentPassword, newPassword, userPrincipal); // Attempt to update the password
-
-                userPrincipal.Save(); // Save changes to Active Directory
-                LogPasswordSuccessfullyUpdated(_logger, fixedUsername, null);
-            }
-            catch (PasswordException passwordEx) // Catch exceptions related to password complexity policies
-            {
-                errorItem = new ApiErrorItem(ApiErrorCode.ComplexPassword, passwordEx.Message);
-                LogPasswordChangeComplexityError(_logger, errorItem.Message ?? "Unknown error", passwordEx.Message, passwordEx);
-            }
-            catch (ApiErrorException apiErrorEx) // Catch custom API error exceptions
-            {
-                errorItem = apiErrorEx.ToApiErrorItem();
-                LogPasswordChangeApiError(_logger, errorItem.Message ?? "Unknown error", apiErrorEx.Message, apiErrorEx);
-            }
-            catch (Exception ex) // Catch any other unexpected exceptions
-            {
-                errorItem = new ApiErrorItem(ApiErrorCode.Generic, ex.InnerException?.Message ?? ex.Message);
-                LogPasswordChangeUnexpectedError(_logger, errorItem.Message ?? "Unknown error", ex.InnerException?.Message ?? ex.Message, ex);
-            }
-
-            return errorItem; // Return the error item, which will be null on success
-        }
-
-        /// <summary>
-        /// Validates that the UserPrincipal object is not null.
-        /// </summary>
-        /// <param name="userPrincipal">The UserPrincipal object to validate.</param>
-        /// <param name="fixedUsername">The username (used for logging purposes).</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if the UserPrincipal is null (user not found), otherwise null.</returns>
-        private ApiErrorItem? ValidateUserPrincipal(UserPrincipal? userPrincipal, string fixedUsername)
-        {
             if (userPrincipal == null) // Check if UserPrincipal is null
             {
-                LogUserPrincipalNotFound(_logger, fixedUsername, null);
-                return new ApiErrorItem(ApiErrorCode.UserNotFound); // Return UserNotFound error
+                throw new UserNotFoundException();
             }
-            return null; // UserPrincipal is valid
-        }
 
-        /// <summary>
-        /// Validates the new password against the minimum password length policy of the domain.
-        /// </summary>
-        /// <param name="newPassword">The new password to validate.</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if the new password is too short, otherwise null.</returns>
-        private ApiErrorItem? ValidateNewPasswordComplexity(string newPassword)
-        {
-            var minPasswordLength = AcquireDomainPasswordLength(); // Get minimum password length from domain policy
-            if (newPassword.Length < minPasswordLength) // Check if new password length is less than the minimum
-            {
-                LogPasswordLengthTooShort(_logger, null);
-                return new ApiErrorItem(ApiErrorCode.ComplexPassword); // Return ComplexPassword error
-            }
-            return null; // Password complexity is valid (length check passed)
-        }
-
-        /// <summary>
-        /// Validates the new password against a list of known compromised passwords.
-        /// Uses the PwnedPasswordsSearch library to check if the password has been compromised.
-        /// </summary>
-        /// <param name="newPassword">The new password to validate.</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if the new password is a known compromised password, otherwise null.</returns>
-        private async Task<ApiErrorItem?> ValidatePwnedPassword(string newPassword)
-        {
-            try
-            {
-                if (await _pwnedPasswordSearch.IsPwnedPasswordAsync(newPassword)) // Check if password is in pwned password list
-                {
-                    LogPwnedPasswordUsed(_logger, null);
-                    return new ApiErrorItem(ApiErrorCode.PwnedPassword); // Return PwnedPassword error
-                }
-                return null; // Password is not a known compromised password
-            }
-            catch (PwnedPasswordsApiException apiException)
-            {
-                // Log the API exception as a warning, as it's an external service issue.
-                LogPwnedPasswordCheckApiError(_logger, apiException.Message, apiException);
-                // Decide how to handle API errors. Returning null means we don't consider API errors as "pwned password" errors for validation purposes.
-                // The password validation might proceed as if the check was inconclusive in terms of pwned status due to API issue.
-                return new ApiErrorItem(ApiErrorCode.Generic, $"Error during Pwned Password API check: {apiException.Message}"); // Return PwnedPassword error
-            }
-            catch (PwnedPasswordsSearchException searchException)
-            {
-                // Log unexpected errors during the search process as errors.
-                LogPwnedPasswordCheckUnexpectedError(_logger, searchException.Message, searchException);
-                // Similar to API exceptions, it's not a "pwned password" error in the context of validation, but an internal error.
-                return new ApiErrorItem(ApiErrorCode.Generic, $"Unexpected error during Pwned Password search: {searchException.Message}");
-            }
-            catch (Exception unexpectedException)
-            {
-                // Catch any other unexpected exceptions (although ideally, only the custom exceptions should be thrown).
-                // Log as a critical error as it's something unexpected in the validation process.
-                LogPwnedPasswordCheckUnexpectedError(_logger, unexpectedException.Message, unexpectedException);
-                return new ApiErrorItem(ApiErrorCode.Generic, $"Unexpected error during Pwned Password search: {unexpectedException.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Validates the user's group membership against configured allowed and restricted Active Directory groups.
-        /// Password change is permitted only if the user is a member of an allowed group (if allowed groups are configured)
-        /// and not a member of any restricted group (if restricted groups are configured).
-        /// </summary>
-        /// <param name="userPrincipal">The UserPrincipal object of the user.</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if group membership validation fails, otherwise null.</returns>
-        private ApiErrorItem? ValidateGroupsMembership(UserPrincipal userPrincipal)
-        {
-            try
-            {
-                System.Collections.Generic.List<Principal> groups; // Collection to hold user's groups
-                try
-                {
-                    groups = userPrincipal.GetGroups().ToList(); // Attempt to retrieve groups using GetGroups (faster in some scenarios)
-                }
-                catch (Exception exception) // Catch exceptions during group retrieval
-                {
-                    LogErrorRetrievingGroups(_logger, exception.Message, exception);
-                    groups = userPrincipal.GetAuthorizationGroups().ToList(); // Fallback to GetAuthorizationGroups if GetGroups fails (more reliable for cross-domain groups)
-                }
-
-                // Check for restricted group membership
-                if (_options.RestrictedAdGroups != null && _options.RestrictedAdGroups.Any() && groups.Any(group => _options.RestrictedAdGroups.Contains(group.Name)))
-                {
-                    return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted, "User is a member of a restricted group and password change is not permitted."); // Return error if in restricted group
-                }
-
-                // Check for allowed group membership (only if allowed groups are configured)
-                // If AllowedAdGroups is null or empty, allow password change for all users not in restricted groups
-                if (_options.AllowedAdGroups != null && _options.AllowedAdGroups.Any())
-                {
-                    if (!groups.Any(group => _options.AllowedAdGroups.Contains(group.Name))) // Check if user is a member of at least one allowed group
-                    {
-                        return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted, "User is not a member of any allowed group and password change is not permitted."); // Return error if not in any allowed group
-                    }
-                }
-
-                return null; // User is authorized based on group membership
-            }
-            catch (Exception exception) // Catch any exceptions during group validation
-            {
-                LogErrorGroupValidation(_logger, exception.Message, exception);
-                return new ApiErrorItem(ApiErrorCode.Generic, "Error during group membership validation."); // Return error item to indicate validation failure
-            }
-        }
-
-        /// <summary>
-        /// Validates if the user is permitted to change their password based on the 'UserCannotChangePassword' flag in Active Directory.
-        /// </summary>
-        /// <param name="userPrincipal">The UserPrincipal object of the user.</param>
-        /// <returns>An <see cref="ApiErrorItem"/> if the user is not permitted to change their password, otherwise null.</returns>
-        private ApiErrorItem? ValidatePasswordChangePermissions(UserPrincipal userPrincipal)
-        {
             if (userPrincipal.UserCannotChangePassword) // Check if the UserCannotChangePassword flag is set
             {
-                LogPasswordChangeNotPermittedFlag(_logger, null);
-                return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted); // Return ChangeNotPermitted error
+                throw new PasswordPolicyViolationException("User cannot change password", ApiErrorCode.ChangeNotPermitted);
             }
-            return null; // User is permitted to change password
+
+            if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
+            {
+                SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
+            }
+
+            if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext)) // Validate provided current password
+            {
+                throw new InvalidCredentialsException();
+            }
+
+            UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal); // Attempt to update the password
+
+            userPrincipal.Save(); // Save changes to Active Directory
+        }
+
+        /// <inheritdoc />
+        public Task<int> GetMinimumLengthAsync()
+        {
+            return Task.FromResult(AcquireDomainPasswordLength());
+        }
+
+        /// <inheritdoc />
+        public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+        {
+            using var principalContext = AcquirePrincipalContext();
+            var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username));
+            if (userPrincipal == null) return Task.FromResult(false);
+
+            try
+            {
+                var groups = userPrincipal.GetGroups();
+                if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                    return Task.FromResult(true);
+            }
+            catch
+            {
+                var groups = userPrincipal.GetAuthorizationGroups();
+                if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                    return Task.FromResult(true);
+            }
+
+            return Task.FromResult(false);
         }
 
         /// <summary>
@@ -486,7 +143,6 @@ namespace Unosquare.PassCore.PasswordProvider
 
             // Check for specific error codes indicating password expiration or must change scenarios
             var errorCode = System.Runtime.InteropServices.Marshal.GetLastWin32Error(); // Get the last Win32 error code
-            LogValidateCredentialsWin32Error(_logger, errorCode, null);
 
             // Return true if error code indicates password must change or is expired (treat these as valid for password change process)
             return errorCode is NativeMethods.ErrorPasswordMustChange or NativeMethods.ErrorPasswordExpired;
@@ -512,28 +168,24 @@ namespace Unosquare.PassCore.PasswordProvider
         /// This is used when the 'UpdateLastPassword' option is enabled and the LastPasswordSet is null.
         /// </summary>
         /// <param name="userPrincipal">The UserPrincipal object for which to set the 'pwdLastSet' attribute.</param>
-        private ApiErrorItem? SetLastPassword(Principal userPrincipal)
+        private void SetLastPassword(Principal userPrincipal)
         {
             var directoryEntry = (DirectoryEntry)userPrincipal.GetUnderlyingObject(); // Get the underlying DirectoryEntry object
             var pwdLastSetProperty = directoryEntry.Properties["pwdLastSet"]; // Get the 'pwdLastSet' property
 
             if (pwdLastSetProperty == null) // Check if 'pwdLastSet' property exists
             {
-                LogPwdLastSetMissing(_logger, null);
-                return new ApiErrorItem(ApiErrorCode.Generic, "The 'pwdLastSet' property is missing on the user principal."); // Return error item to indicate failure
+                throw new PasswordPolicyViolationException("The 'pwdLastSet' property is missing on the user principal.", ApiErrorCode.Generic);
             }
 
             try
             {
                 pwdLastSetProperty.Value = -1; // Set 'pwdLastSet' to -1 to force password change at next logon
                 directoryEntry.CommitChanges(); // Commit changes to Active Directory
-                LogPwdLastSetUpdated(_logger, null);
-                return null; // Indicate success
             }
-            catch (Exception ex) // Catch exceptions during attribute update
+            catch (Exception) // Catch exceptions during attribute update
             {
-                LogPwdLastSetUpdateFailed(_logger, ex.Message, ex);
-                return new ApiErrorItem(ApiErrorCode.ChangeNotPermitted, "Failed to update 'pwdLastSet' attribute."); // Return error item to indicate failure
+                throw new PasswordPolicyViolationException("Failed to update 'pwdLastSet' attribute.", ApiErrorCode.ChangeNotPermitted);
             }
         }
 
@@ -553,22 +205,19 @@ namespace Unosquare.PassCore.PasswordProvider
             {
                 userPrincipal.ChangePassword(currentPassword, newPassword); // Attempt to change password using ChangePassword method (preferred method)
             }
-            catch (Exception changePasswordException) // Catch exceptions during ChangePassword operation
+            catch (Exception) // Catch exceptions during ChangePassword operation
             {
                 if (_options.UseAutomaticContext) // If AutomaticContext is enabled, ChangePassword failure is critical
                 {
-                    LogChangePasswordAutomaticContextFailed(_logger, changePasswordException.Message, changePasswordException);
                     throw; // Re-throw the original exception - Password update is aborted in AutomaticContext mode if ChangePassword fails
                 }
 
                 try // Attempt to use SetPassword as a fallback if ChangePassword fails and AutomaticContext is disabled
                 {
                     userPrincipal.SetPassword(newPassword); // Fallback to SetPassword method if ChangePassword fails
-                    LogPasswordUpdatedSetPasswordFallback(_logger, changePasswordException);
                 }
-                catch (Exception setPasswordException) // Catch exceptions during SetPassword operation
+                catch (Exception) // Catch exceptions during SetPassword operation
                 {
-                    LogSetPasswordFailed(_logger, setPasswordException.Message, setPasswordException);
                     throw; // Re-throw the SetPassword exception as password update ultimately failed
                 }
             }
@@ -590,7 +239,6 @@ namespace Unosquare.PassCore.PasswordProvider
                 "securityidentifier" or "securityid" or "secid" or "security identifier" or "sid" => IdentityType.Sid,
                 _ => IdentityType.UserPrincipalName // Default to UserPrincipalName if no match or invalid input
             };
-            LogIdentityTypeSet(_logger, _idType, null);
         }
 
         /// <summary>
@@ -605,20 +253,16 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             if (_options.UseAutomaticContext) // Check if automatic context is enabled
             {
-                LogAutomaticDomainContext(_logger, null); // Using existing delegate
                 return new PrincipalContext(ContextType.Domain); // Create PrincipalContext using automatic domain context
             }
             else
             {
                 if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty when not using automatic context
                 {
-                    // Using logging delegate for warning about missing LDAP Hostnames
-                    LogLdapHostnamesNotConfiguredWarning(_logger, null);
                     throw new InvalidOperationException("LDAP Hostnames are not configured."); // Throw exception to signal configuration error
                 }
 
                 var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string from hostname and port
-                LogDomainContext(_logger, domain, null); // Using existing delegate
                 try
                 {
                     return new PrincipalContext( // Create PrincipalContext with LDAP credentials
@@ -629,8 +273,6 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 catch (Exception ex)
                 {
-                    // Using logging delegate for error during PrincipalContext creation
-                    LogPrincipalContextCreationFailedError(_logger, ex);
                     throw new InvalidOperationException("Failed to create PrincipalContext.", ex); // Re-throw exception to signal failure
                 }
             }
@@ -657,15 +299,11 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 else
                 {
-                    // Using logging delegate for warning about missing/invalid property
-                    LogPasswordLengthRetrievalWarning(_logger, null);
                     return 6; // Default minimum password length
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Using logging delegate for error during retrieval
-                LogPasswordLengthRetrievalError(_logger, ex);
                 return 6; // Default minimum password length in case of exception
             }
             finally
@@ -685,13 +323,10 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty
             {
-                // Use logging delegate for warning about missing LDAP Hostnames
-                LogLdapHostnamesEmptyWarning(_logger, null);
                 return null; // Return null to indicate failure to create DirectoryEntry
             }
 
             var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string
-            LogCreatingDirectoryEntry(_logger, domain, null); // Already using delegate
             try
             {
                 return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
@@ -699,10 +334,8 @@ namespace Unosquare.PassCore.PasswordProvider
                     _options.LdapUsername,
                     _options.LdapPassword);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Use logging delegate for error during DirectoryEntry creation
-                LogDirectoryEntryCreationFailedError(_logger, ex);
                 return null; // Return null if DirectoryEntry creation fails
             }
         }

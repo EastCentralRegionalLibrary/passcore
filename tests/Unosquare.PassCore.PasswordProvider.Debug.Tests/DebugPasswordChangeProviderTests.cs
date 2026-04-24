@@ -30,7 +30,7 @@ public class DebugPasswordChangeProviderTests
     {
         var optionsMock = new Mock<IOptions<DebugProviderOptions>>();
         optionsMock.Setup(o => o.Value).Returns(_options);
-        return new DebugPasswordChangeProvider(_pwnedSearch, optionsMock.Object, _loggerMock.Object);
+        return new DebugPasswordChangeProvider(optionsMock.Object, _loggerMock.Object, Array.Empty<IPasswordPolicy>());
     }
 
     [Fact]
@@ -73,37 +73,6 @@ public class DebugPasswordChangeProviderTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, result.ErrorCode);
-    }
-
-    [Fact]
-    public async Task PerformPasswordChangeAsync_PwnedPassword_Enabled()
-    {
-        // Arrange
-        _options.EnablePwnedCheck = true;
-        _pwnedSearch.AddPwnedPassword("pwned123");
-        var provider = CreateProvider();
-
-        // Act
-        var result = await provider.PerformPasswordChangeAsync("user", "old", "pwned123");
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(ApiErrorCode.PwnedPassword, result.ErrorCode);
-    }
-
-    [Fact]
-    public async Task PerformPasswordChangeAsync_PwnedPassword_Disabled()
-    {
-        // Arrange
-        _options.EnablePwnedCheck = false;
-        _pwnedSearch.AddPwnedPassword("pwned123");
-        var provider = CreateProvider();
-
-        // Act
-        var result = await provider.PerformPasswordChangeAsync("user", "old", "pwned123");
-
-        // Assert
-        Assert.Null(result);
     }
 
     [Fact]

@@ -1,9 +1,11 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PwnedPasswordsSearch;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Exceptions;
 
 namespace Unosquare.PassCore.PasswordProvider.Debug;
 
@@ -11,43 +13,36 @@ namespace Unosquare.PassCore.PasswordProvider.Debug;
 /// <summary>
 /// Represents a debug password change provider that can be configured for testing and development.
 /// </summary>
-public class DebugPasswordChangeProvider : IPasswordChangeProvider
+public class DebugPasswordChangeProvider : PasswordChangeProviderBase
 {
-    private readonly IPwnedPasswordSearch _pwnedPasswordSearch;
     private readonly DebugProviderOptions _options;
-    private readonly ILogger<DebugPasswordChangeProvider> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DebugPasswordChangeProvider"/> class.
     /// </summary>
-    /// <param name="pwnedPasswordSearch">The pwned password search service.</param>
     /// <param name="options">The debug provider options.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="policies">The password policies.</param>
     public DebugPasswordChangeProvider(
-        IPwnedPasswordSearch pwnedPasswordSearch,
         IOptions<DebugProviderOptions> options,
-        ILogger<DebugPasswordChangeProvider> logger)
+        ILogger<DebugPasswordChangeProvider> logger,
+        IEnumerable<IPasswordPolicy> policies)
+        : base(logger, policies)
     {
-        _pwnedPasswordSearch = pwnedPasswordSearch;
         _options = options.Value;
-        _logger = logger;
     }
 
     /// <inheritdoc />
-    public async Task<ApiErrorItem?> PerformPasswordChangeAsync(
-        string username,
-        string currentPassword,
-        string newPassword,
-        CancellationToken cancellationToken = default)
+    protected override async Task ChangePasswordCore(
+        PasswordChangeContext context,
+        CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Debug password change requested for user: {Username}", username);
-
         if (_options.SimulateLatencyMs > 0)
         {
-            _logger.LogDebug("Simulating latency of {Latency}ms", _options.SimulateLatencyMs);
             await Task.Delay(_options.SimulateLatencyMs, cancellationToken);
         }
 
+        var username = context.Username;
         var currentUsername = username.Contains('@', System.StringComparison.Ordinal)
             ? username[..username.IndexOf('@', System.StringComparison.Ordinal)]
             : username;
@@ -55,35 +50,35 @@ public class DebugPasswordChangeProvider : IPasswordChangeProvider
         // Check for explicitly configured forced errors first
         if (_options.ForcedErrors != null && _options.ForcedErrors.TryGetValue(currentUsername, out var errorCode))
         {
-            _logger.LogWarning("Forced error {ErrorCode} for username: {Username}", errorCode, currentUsername);
-            return new ApiErrorItem(errorCode, $"Forced error {errorCode} for debug");
-        }
-
-        // Check for pwned password if enabled
-        if (_options.EnablePwnedCheck)
-        {
-            if (await _pwnedPasswordSearch.IsPwnedPasswordAsync(newPassword))
-            {
-                _logger.LogWarning("Pwned password detected for user: {Username}", username);
-                return new ApiErrorItem(ApiErrorCode.PwnedPassword);
-            }
+            throw new PasswordPolicyViolationException($"Forced error {errorCode} for debug", errorCode);
         }
 
         // Fallback to legacy hardcoded logic for convenience, or the DefaultErrorCode if set
-        return currentUsername switch
+        var apiErrorCode = currentUsername switch
         {
-            "error" => new ApiErrorItem(ApiErrorCode.Generic, "Error"),
-            "changeNotPermitted" => new ApiErrorItem(ApiErrorCode.ChangeNotPermitted),
-            "fieldMismatch" => new ApiErrorItem(ApiErrorCode.FieldMismatch),
-            "fieldRequired" => new ApiErrorItem(ApiErrorCode.FieldRequired),
-            "invalidCaptcha" => new ApiErrorItem(ApiErrorCode.InvalidCaptcha),
-            "invalidCredentials" => new ApiErrorItem(ApiErrorCode.InvalidCredentials),
-            "invalidDomain" => new ApiErrorItem(ApiErrorCode.InvalidDomain),
-            "userNotFound" => new ApiErrorItem(ApiErrorCode.UserNotFound),
-            "ldapProblem" => new ApiErrorItem(ApiErrorCode.LdapProblem),
-            "pwnedPassword" => new ApiErrorItem(ApiErrorCode.PwnedPassword),
-            _ => _options.DefaultErrorCode.HasValue ? new ApiErrorItem(_options.DefaultErrorCode.Value) : null
+            "error" => ApiErrorCode.Generic,
+            "changeNotPermitted" => ApiErrorCode.ChangeNotPermitted,
+            "fieldMismatch" => ApiErrorCode.FieldMismatch,
+            "fieldRequired" => ApiErrorCode.FieldRequired,
+            "invalidCaptcha" => ApiErrorCode.InvalidCaptcha,
+            "invalidCredentials" => ApiErrorCode.InvalidCredentials,
+            "invalidDomain" => ApiErrorCode.InvalidDomain,
+            "userNotFound" => ApiErrorCode.UserNotFound,
+            "ldapProblem" => ApiErrorCode.LdapProblem,
+            "pwnedPassword" => ApiErrorCode.PwnedPassword,
+            _ => _options.DefaultErrorCode
         };
+
+        if (apiErrorCode.HasValue)
+        {
+            throw apiErrorCode.Value switch
+            {
+                ApiErrorCode.InvalidCredentials => new InvalidCredentialsException(),
+                ApiErrorCode.UserNotFound => new UserNotFoundException(),
+                ApiErrorCode.LdapProblem => new DirectoryUnavailableException("LDAP problem", new System.Exception("Debug LDAP problem")),
+                _ => new PasswordPolicyViolationException($"Debug error {apiErrorCode.Value}", apiErrorCode.Value)
+            };
+        }
     }
 }
 #endif

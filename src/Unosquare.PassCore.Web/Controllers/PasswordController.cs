@@ -1,11 +1,16 @@
-﻿using Unosquare.PassCore.Web.Helpers;
+using Unosquare.PassCore.Web.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.Web.Models;
 using System.Text.Json;
 using System.Net.Http;
 using Zxcvbn;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace Unosquare.PassCore.Web.Controllers;
 
@@ -26,6 +31,7 @@ public class PasswordController : Controller
     /// <param name="logger">The logger.</param>
     /// <param name="optionsAccessor">The options accessor.</param>
     /// <param name="passwordChangeProvider">The password change provider.</param>
+    /// <param name="httpClientFactory">The HTTP client factory.</param>
     public PasswordController(
         ILogger<PasswordController> logger,
         IOptions<ClientSettings> optionsAccessor,
@@ -89,28 +95,14 @@ public class PasswordController : Controller
 
         try
         {
-            if (_options.MinimumDistance > 0 &&
-                _passwordChangeProvider.MeasureNewPasswordDistance(model.CurrentPassword, model.NewPassword) < _options.MinimumDistance)
-            {
-                result.Errors.Add(new ApiErrorItem(ApiErrorCode.MinimumDistance));
-                return BadRequest(result);
-            }
+            var context = new PasswordChangeContext(model.Username, model.CurrentPassword, model.NewPassword, _options);
+            var resultPasswordChange = await _passwordChangeProvider.ChangePasswordAsync(context);
 
-            if (_options.MinimumScore > 0 && Core.EvaluatePassword(model.NewPassword).Score < _options.MinimumScore)
-            {
-                result.Errors.Add(new ApiErrorItem(ApiErrorCode.MinimumScore));
-                return BadRequest(result);
-            }
-
-            var resultPasswordChange = await _passwordChangeProvider.PerformPasswordChangeAsync(
-                model.Username,
-                model.CurrentPassword,
-                model.NewPassword);
-
-            if (resultPasswordChange == null)
+            if (resultPasswordChange.IsSuccess)
                 return Json(result);
 
-            result.Errors.Add(resultPasswordChange);
+            if (resultPasswordChange.Error != null)
+                result.Errors.Add(resultPasswordChange.Error);
         }
         catch (HttpRequestException ex)
         {

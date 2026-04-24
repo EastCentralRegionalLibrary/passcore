@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
+using System.Collections.Generic;
 
-namespace Unosquare.PassCore.Web.Models;
+namespace Unosquare.PassCore.Common.Models;
 
 /// <summary>
 /// Represents all of the strongly-typed application settings loaded from a JSON file.
@@ -20,6 +21,15 @@ public class ClientSettings
     public string? ApplicationTitle { get; set; }
     public string? ChangePasswordTitle { get; set; }
     public ValidationRegex? ValidationRegex { get; set; }
+
+    // Extended settings for policies
+    public PasswordProviderOptions? PasswordProviderOptions { get; set; }
+}
+
+public class PasswordProviderOptions
+{
+    public List<string>? RestrictedAdGroups { get; set; }
+    public List<string>? AllowedAdGroups { get; set; }
 }
 
 public class Recaptcha
