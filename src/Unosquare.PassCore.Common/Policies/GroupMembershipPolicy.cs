@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using Unosquare.PassCore.Common.Exceptions;
 
@@ -13,12 +14,16 @@ public class GroupMembershipPolicy : IPasswordPolicy
         var restrictedGroups = context.ClientSettings.PasswordProviderOptions?.RestrictedAdGroups;
         if (restrictedGroups != null && restrictedGroups.Count != 0)
         {
-            foreach (var group in restrictedGroups)
-            {
-                if (await tester.IsMemberOfGroupAsync(context.Username, group))
+            var restrictedMembershipResults = await Task.WhenAll(
+                restrictedGroups.Select(async group => new
                 {
-                    throw new PasswordPolicyViolationException("User is a member of a restricted group and password change is not permitted.", ApiErrorCode.ChangeNotPermitted);
-                }
+                    Group = group,
+                    IsMember = await tester.IsMemberOfGroupAsync(context.Username, group)
+                }));
+
+            if (restrictedMembershipResults.Where(x => x.IsMember).Any())
+            {
+                throw new PasswordPolicyViolationException("User is a member of a restricted group and password change is not permitted.", ApiErrorCode.ChangeNotPermitted);
             }
         }
 
