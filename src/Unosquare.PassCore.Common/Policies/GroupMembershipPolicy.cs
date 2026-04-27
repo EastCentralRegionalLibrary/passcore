@@ -30,15 +30,14 @@ public class GroupMembershipPolicy : IPasswordPolicy
         var allowedGroups = context.ClientSettings.PasswordProviderOptions?.AllowedAdGroups;
         if (allowedGroups != null && allowedGroups.Count != 0)
         {
-            var isMemberOfAnyAllowed = false;
-            foreach (var group in allowedGroups)
-            {
-                if (await tester.IsMemberOfGroupAsync(context.Username, group))
+            var allowedMembershipResults = await Task.WhenAll(
+                allowedGroups.Select(async group => new
                 {
-                    isMemberOfAnyAllowed = true;
-                    break;
-                }
-            }
+                    Group = group,
+                    IsMember = await tester.IsMemberOfGroupAsync(context.Username, group)
+                }));
+
+            var isMemberOfAnyAllowed = allowedMembershipResults.Where(x => x.IsMember).Any();
 
             if (!isMemberOfAnyAllowed)
             {
