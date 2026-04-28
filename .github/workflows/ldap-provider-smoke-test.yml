@@ -77,6 +77,73 @@ jobs:
           curl -fsS http://localhost:5000/api/password | jq -e '.validationRegex'
           echo "Passcore is up and responding!"
 
+      - name: LDAP Success and Authorization Tests
+        run: |
+          echo "Test 1: Valid user + valid password + allowed group"
+          # alloweduser is in AllowedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # MokAPI might return error during password change if not fully supported, but it should NOT be an auth/policy error
+          # We check if there are any errors. If MokAPI fails the actual change, we expect a generic or LdapProblem error,
+          # but NOT ChangeNotPermitted or InvalidCredentials.
+          # For this test, we accept success (empty errors) OR a non-auth error.
+          ERROR_CODE=$(echo $RESPONSE | jq -r '.errors[0].errorCode // empty')
+          if [[ "$ERROR_CODE" == "ChangeNotPermitted" || "$ERROR_CODE" == "InvalidCredentials" || "$ERROR_CODE" == "UserNotFound" ]]; then
+            echo "Unexpected error code: $ERROR_CODE"
+            exit 1
+          fi
+
+          echo "Test 2: Invalid current password"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "wrongpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials")'
+
+          echo "Test 3: Unknown user"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # With HideUserNotFound=true (default), it returns InvalidCredentials
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials")'
+
+          echo "Test 4: User in restricted group"
+          # restricteduser is in RestrictedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "restricteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "ChangeNotPermitted")'
+
+          echo "Test 5: User not in allowed groups"
+          # unlisteduser is not in AllowedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "unlisteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "ChangeNotPermitted")'
+
+      - name: LDAP Environment Failure Test
+        run: |
+          echo "Stopping MokAPI..."
+          docker stop mokapi
+
+          echo "Attempting password change during LDAP outage..."
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # Expect LdapProblem or InvalidCredentials (if it fails to connect during bind)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials" or .errorCode == "LdapProblem")'
+
+          echo "Restarting MokAPI..."
+          docker start mokapi
+          # Wait a bit for MokAPI to be ready again
+          sleep 5
+
       - name: Check MokAPI logs
         if: always()
         run: docker logs mokapi
