@@ -83,7 +83,12 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
             var entry = search.Next();
             var attrSet = entry.GetAttributeSet();
-            var memberOf = attrSet.ContainsKey("memberOf") ? attrSet["memberOf"] : null;
+
+            // Try to find memberOf attribute in a case-insensitive way
+            var memberOfKey = attrSet.Keys.Cast<string>()
+                .FirstOrDefault(k => k.Equals("memberOf", StringComparison.OrdinalIgnoreCase));
+
+            var memberOf = memberOfKey != null ? attrSet[memberOfKey] : null;
 
             if (memberOf == null)
                 return Task.FromResult(false);

@@ -26,6 +26,7 @@ cn: testuser
 sn: testuser
 userPassword: testpassword
 sAMAccountName: testuser
+memberOf: cn=AllowedGroup,ou=people,dc=example,dc=com
 
 dn: cn=alloweduser,ou=people,dc=example,dc=com
 objectClass: top
