@@ -1,13 +1,11 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System;
-using Unosquare.PassCore.Common;
 
-namespace Unosquare.PassCore.PasswordProvider;
+namespace Unosquare.PassCore.Common.Models;
 
 /// <summary>
-/// Represents the options of this provider.
+/// Represents the options for password change providers.
 /// </summary>
-/// <seealso cref="Unosquare.PassCore.Common.IAppSettings" />
 public class PasswordChangeOptions : IAppSettings
 {
     private string? _defaultDomain;
@@ -18,41 +16,26 @@ public class PasswordChangeOptions : IAppSettings
     /// <summary>
     /// Gets or sets a value indicating whether [use automatic context].
     /// </summary>
-    /// <value>
-    ///   <c>true</c> if [use automatic context]; otherwise, <c>false</c>.
-    /// </value>
     public bool UseAutomaticContext { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the restricted ad groups.
+    /// Gets or sets the restricted AD groups.
     /// </summary>
-    /// <value>
-    /// The restricted ad groups.
-    /// </value>
-    public List<string>? RestrictedAdGroups { get; set; }
+    public List<string>? RestrictedADGroups { get; set; }
 
     /// <summary>
-    /// Gets or sets the allowed ad groups.
+    /// Gets or sets the allowed AD groups.
     /// </summary>
-    /// <value>
-    /// The allowed ad groups.
-    /// </value>
-    public List<string>? AllowedAdGroups { get; set; }
+    public List<string>? AllowedADGroups { get; set; }
 
     /// <summary>
     /// Gets or sets the identifier type for user.
     /// </summary>
-    /// <value>
-    /// The identifier type for user.
-    /// </value>
     public string? IdTypeForUser { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether [update last password].
     /// </summary>
-    /// <value>
-    ///   <c>true</c> if [update last password]; otherwise, <c>false</c>.
-    /// </value>
     public bool UpdateLastPassword { get; set; }
 
     /// <inheritdoc />
@@ -85,4 +68,9 @@ public class PasswordChangeOptions : IAppSettings
         get => _ldapUsername ?? string.Empty;
         set => _ldapUsername = value;
     }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to enable pwned password checks.
+    /// </summary>
+    public bool EnablePwnedCheck { get; set; }
 }

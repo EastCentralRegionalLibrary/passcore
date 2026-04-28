@@ -13,7 +13,7 @@ namespace Unosquare.PassCore.PasswordProvider.Debug;
 /// <summary>
 /// Represents a debug password change provider that can be configured for testing and development.
 /// </summary>
-public class DebugPasswordChangeProvider : PasswordChangeProviderBase
+public class DebugPasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester
 {
     private readonly DebugProviderOptions _options;
 
@@ -30,6 +30,28 @@ public class DebugPasswordChangeProvider : PasswordChangeProviderBase
         : base(logger, policies)
     {
         _options = options.Value;
+    }
+
+    /// <inheritdoc />
+    public Task<int> GetMinimumLengthAsync() => Task.FromResult(8);
+
+    /// <inheritdoc />
+    public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+    {
+        var currentUsername = username.Contains('@', System.StringComparison.Ordinal)
+            ? username[..username.IndexOf('@', System.StringComparison.Ordinal)]
+            : username;
+
+        var result = groupName switch
+        {
+            "RestrictedGroup" => currentUsername == "restrictedUser",
+            "AllowedGroup" => currentUsername != "notAllowedUser",
+            _ => false
+        };
+
+        Logger.LogDebug("DebugProvider: IsMemberOfGroupAsync for user {Username} (extracted: {CurrentUsername}), group {GroupName} returns {Result}", username, currentUsername, groupName, result);
+
+        return Task.FromResult(result);
     }
 
     /// <inheritdoc />

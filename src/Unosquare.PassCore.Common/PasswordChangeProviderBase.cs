@@ -10,12 +10,33 @@ namespace Unosquare.PassCore.Common;
 
 public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
 {
+    private static readonly Action<ILogger, string, Exception?> _logStartingPasswordChange =
+        LoggerMessage.Define<string>(LogLevel.Information, new EventId(1, nameof(ChangePasswordAsync)), "Starting password change for user: {Username}");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logPolicyEvaluating =
+        LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(2, nameof(ChangePasswordAsync)), "Evaluating policy: {PolicyName} for user: {Username}");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logPolicySuccess =
+        LoggerMessage.Define<string, string>(LogLevel.Debug, new EventId(3, nameof(ChangePasswordAsync)), "Policy: {PolicyName} passed for user: {Username}");
+
+    private static readonly Action<ILogger, string, string, string, Exception?> _logPolicyFailure =
+        LoggerMessage.Define<string, string, string>(LogLevel.Warning, new EventId(4, nameof(ChangePasswordAsync)), "Policy: {PolicyName} failed for user: {Username}. Error: {ErrorMessage}");
+
+    private static readonly Action<ILogger, string, Exception?> _logPasswordChangedSuccessfully =
+        LoggerMessage.Define<string>(LogLevel.Information, new EventId(5, nameof(ChangePasswordAsync)), "Password changed successfully for user: {Username}");
+
+    private static readonly Action<ILogger, string, Exception?> _logPasswordChangeCanceled =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(6, nameof(ChangePasswordAsync)), "Password change canceled for user: {Username}");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logPasswordChangeFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(7, nameof(ChangePasswordAsync)), "Password change failed for user: {Username}. Error: {ErrorMessage}");
+
     protected ILogger Logger { get; }
     protected IEnumerable<IPasswordPolicy> Policies { get; }
 
     protected PasswordChangeProviderBase(ILogger logger, IEnumerable<IPasswordPolicy>? policies = null)
     {
-        Logger = logger;
+        Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         Policies = policies ?? Array.Empty<IPasswordPolicy>();
     }
 
@@ -23,8 +44,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var operationId = Guid.NewGuid().ToString();
-        Logger.LogInformation("[{OperationId}] Starting password change for user: {Username}", operationId, context.Username);
+        _logStartingPasswordChange(Logger, context.Username, null);
 
         try
         {
@@ -32,22 +52,39 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
 
             foreach (var policy in Policies)
             {
-                await policy.ValidateAsync(context, this);
+                var policyName = policy.GetType().Name;
+                _logPolicyEvaluating(Logger, policyName, context.Username, null);
+
+                try
+                {
+                    await policy.ValidateAsync(context, this);
+                    _logPolicySuccess(Logger, policyName, context.Username, null);
+                }
+                catch (PasswordPolicyViolationException ex)
+                {
+                    _logPolicyFailure(Logger, policyName, context.Username, ex.Message, null);
+                    throw;
+                }
             }
 
             await ChangePasswordCore(context, cancellationToken);
 
-            Logger.LogInformation("[{OperationId}] Password changed successfully for user: {Username}", operationId, context.Username);
+            _logPasswordChangedSuccessfully(Logger, context.Username, null);
             return PasswordChangeResult.Success();
         }
         catch (OperationCanceledException ex)
         {
-            Logger.LogWarning(ex, "[{OperationId}] Password change canceled for user: {Username}", operationId, context.Username);
+            _logPasswordChangeCanceled(Logger, context.Username, ex);
             throw;
         }
-        catch (PassCoreException ex)
+        catch (PasswordChangeException ex)
         {
-            Logger.LogWarning(ex, "[{OperationId}] Password change failed for user: {Username}", operationId, context.Username);
+            _logPasswordChangeFailed(Logger, context.Username, ex.Message, ex);
+            return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
+        }
+        catch (Exception ex)
+        {
+            _logPasswordChangeFailed(Logger, context.Username, ex.Message, ex);
             return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
         }
     }
@@ -72,33 +109,5 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
     {
         var result = await ChangePasswordAsync(new PasswordChangeContext(username, currentPassword, newPassword, new ClientSettings()), cancellationToken);
         return result.Error;
-    }
-
-    public int MeasureNewPasswordDistance(string currentPassword, string newPassword)
-    {
-        ArgumentNullException.ThrowIfNull(currentPassword);
-        ArgumentNullException.ThrowIfNull(newPassword);
-
-        var n = currentPassword.Length;
-        var m = newPassword.Length;
-
-        if (n == 0) return m;
-        if (m == 0) return n;
-
-        var d = new int[n + 1, m + 1];
-
-        for (int i = 0; i <= n; d[i, 0] = i++) { }
-        for (int j = 0; j <= m; d[0, j] = j++) { }
-
-        for (int i = 1; i <= n; i++)
-        {
-            for (int j = 1; j <= m; j++)
-            {
-                int cost = (newPassword[j - 1] == currentPassword[i - 1]) ? 0 : 1;
-                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
-            }
-        }
-
-        return d[n, m];
     }
 }

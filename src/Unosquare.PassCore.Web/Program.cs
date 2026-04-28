@@ -24,6 +24,8 @@ var builder = WebApplication.CreateBuilder(args);
 // ConfigureServices
 builder.Services.Configure<ClientSettings>(builder.Configuration.GetSection(nameof(ClientSettings)));
 builder.Services.Configure<WebSettings>(builder.Configuration.GetSection(nameof(WebSettings)));
+builder.Services.Configure<PasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<PasswordChangeOptions>>().Value);
 
 builder.Services.AddHttpClient("Recaptcha", client =>
 {
@@ -51,11 +53,11 @@ if (builder.Environment.IsProduction())
     throw new InvalidOperationException("The debug password change provider cannot be used in Production.");
 }
 
-builder.Services.Configure<IAppSettings>(builder.Configuration.GetSection("AppSettings"));
 builder.Services.Configure<DebugProviderOptions>(builder.Configuration.GetSection(nameof(DebugProviderOptions)));
 builder.Services.AddSingleton<IPasswordChangeProvider, DebugPasswordChangeProvider>();
+builder.Services.AddSingleton<IPasswordLengthRequirement>(sp => (IPasswordLengthRequirement)sp.GetRequiredService<IPasswordChangeProvider>());
+builder.Services.AddSingleton<IGroupMembershipTester>(sp => (IGroupMembershipTester)sp.GetRequiredService<IPasswordChangeProvider>());
 #elif PASSCORE_LDAP_PROVIDER
-builder.Services.Configure<LdapPasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));
 builder.Services.AddSingleton<IPasswordChangeProvider, LdapPasswordChangeProvider>();
 builder.Services.AddSingleton<ILoggerFactory, LoggerFactory>();
 builder.Services.AddSingleton(typeof(ILogger), sp =>
@@ -64,8 +66,9 @@ builder.Services.AddSingleton(typeof(ILogger), sp =>
     return loggerFactory.CreateLogger("PassCoreLDAPProvider");
 });
 #else
-builder.Services.Configure<PasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));
 builder.Services.AddSingleton<IPasswordChangeProvider, PasswordChangeProvider>();
+builder.Services.AddSingleton<IPasswordLengthRequirement>(sp => (IPasswordLengthRequirement)sp.GetRequiredService<IPasswordChangeProvider>());
+builder.Services.AddSingleton<IGroupMembershipTester>(sp => (IGroupMembershipTester)sp.GetRequiredService<IPasswordChangeProvider>());
 #endif
 
 builder.Services.AddControllers();

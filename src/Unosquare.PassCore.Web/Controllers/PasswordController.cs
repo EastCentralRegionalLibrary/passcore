@@ -102,7 +102,10 @@ public class PasswordController : Controller
                 return Json(result);
 
             if (resultPasswordChange.Error != null)
+            {
+                _logger.LogWarning("Password change failed for user {Username} with error {ErrorCode}", model.Username, resultPasswordChange.Error.ErrorCode);
                 result.Errors.Add(resultPasswordChange.Error);
+            }
         }
         catch (HttpRequestException ex)
         {
