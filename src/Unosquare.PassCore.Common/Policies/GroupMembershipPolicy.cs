@@ -21,7 +21,7 @@ public class GroupMembershipPolicy : IPasswordPolicy
                     IsMember = await tester.IsMemberOfGroupAsync(context.Username, group)
                 }));
 
-            if (restrictedMembershipResults.Where(x => x.IsMember).Any())
+            if (restrictedMembershipResults.Any(x => x.IsMember))
             {
                 throw new PasswordPolicyViolationException("User is a member of a restricted group and password change is not permitted.", ApiErrorCode.ChangeNotPermitted);
             }
@@ -37,7 +37,7 @@ public class GroupMembershipPolicy : IPasswordPolicy
                     IsMember = await tester.IsMemberOfGroupAsync(context.Username, group)
                 }));
 
-            var isMemberOfAnyAllowed = allowedMembershipResults.Where(x => x.IsMember).Any();
+            var isMemberOfAnyAllowed = allowedMembershipResults.Any(x => x.IsMember);
 
             if (!isMemberOfAnyAllowed)
             {

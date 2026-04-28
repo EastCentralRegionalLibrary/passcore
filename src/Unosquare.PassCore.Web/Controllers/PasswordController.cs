@@ -95,7 +95,7 @@ public class PasswordController : Controller
 
         try
         {
-            var context = new PasswordChangeContext(model.Username, model.CurrentPassword, model.NewPassword, _options);
+            var context = new PasswordChangeContext(model.Username, model.CurrentPassword, model.NewPassword, _options, HttpContext.TraceIdentifier);
             var resultPasswordChange = await _passwordChangeProvider.ChangePasswordAsync(context);
 
             if (resultPasswordChange.IsSuccess)

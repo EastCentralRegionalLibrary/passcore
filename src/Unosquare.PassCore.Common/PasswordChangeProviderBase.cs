@@ -19,12 +19,65 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
         Policies = policies ?? Array.Empty<IPasswordPolicy>();
     }
 
+    private static readonly Action<ILogger, string?, string, Exception?> LogStartingPasswordChange =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Information,
+            new EventId(1, nameof(LogStartingPasswordChange)),
+            "[{CorrelationId}] Starting password change for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogPasswordChangedSuccessfully =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Information,
+            new EventId(2, nameof(LogPasswordChangedSuccessfully)),
+            "[{CorrelationId}] Password changed successfully for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogPasswordChangeCanceled =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Warning,
+            new EventId(3, nameof(LogPasswordChangeCanceled)),
+            "[{CorrelationId}] Password change canceled for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogPasswordChangeFailed =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Warning,
+            new EventId(4, nameof(LogPasswordChangeFailed)),
+            "[{CorrelationId}] Password change failed for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, string, Exception?> LogPolicyEvaluationStart =
+        LoggerMessage.Define<string?, string, string>(
+            LogLevel.Debug,
+            new EventId(5, nameof(LogPolicyEvaluationStart)),
+            "[{CorrelationId}] Starting policy evaluation: {PolicyName} for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, string, Exception?> LogPolicyEvaluationSuccess =
+        LoggerMessage.Define<string?, string, string>(
+            LogLevel.Debug,
+            new EventId(6, nameof(LogPolicyEvaluationSuccess)),
+            "[{CorrelationId}] Policy evaluation success: {PolicyName} for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, string, Exception?> LogPolicyEvaluationFailed =
+        LoggerMessage.Define<string?, string, string>(
+            LogLevel.Warning,
+            new EventId(7, nameof(LogPolicyEvaluationFailed)),
+            "[{CorrelationId}] Policy evaluation failed: {PolicyName} for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogProviderExecutionStart =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Debug,
+            new EventId(8, nameof(LogProviderExecutionStart)),
+            "[{CorrelationId}] Starting provider execution for user: {Username}");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogProviderExecutionSuccess =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Debug,
+            new EventId(9, nameof(LogProviderExecutionSuccess)),
+            "[{CorrelationId}] Provider execution success for user: {Username}");
+
     public virtual async Task<PasswordChangeResult> ChangePasswordAsync(PasswordChangeContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var operationId = Guid.NewGuid().ToString();
-        Logger.LogInformation("[{OperationId}] Starting password change for user: {Username}", operationId, context.Username);
+        LogStartingPasswordChange(Logger, context.CorrelationId, context.Username, null);
 
         try
         {
@@ -32,22 +85,35 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
 
             foreach (var policy in Policies)
             {
-                await policy.ValidateAsync(context, this);
+                var policyName = policy.GetType().Name;
+                LogPolicyEvaluationStart(Logger, context.CorrelationId, policyName, context.Username, null);
+                try
+                {
+                    await policy.ValidateAsync(context, this);
+                    LogPolicyEvaluationSuccess(Logger, context.CorrelationId, policyName, context.Username, null);
+                }
+                catch (Exception ex)
+                {
+                    LogPolicyEvaluationFailed(Logger, context.CorrelationId, policyName, context.Username, ex);
+                    throw;
+                }
             }
 
+            LogProviderExecutionStart(Logger, context.CorrelationId, context.Username, null);
             await ChangePasswordCore(context, cancellationToken);
+            LogProviderExecutionSuccess(Logger, context.CorrelationId, context.Username, null);
 
-            Logger.LogInformation("[{OperationId}] Password changed successfully for user: {Username}", operationId, context.Username);
+            LogPasswordChangedSuccessfully(Logger, context.CorrelationId, context.Username, null);
             return PasswordChangeResult.Success();
         }
         catch (OperationCanceledException ex)
         {
-            Logger.LogWarning(ex, "[{OperationId}] Password change canceled for user: {Username}", operationId, context.Username);
+            LogPasswordChangeCanceled(Logger, context.CorrelationId, context.Username, ex);
             throw;
         }
-        catch (PassCoreException ex)
+        catch (PasswordChangeException ex)
         {
-            Logger.LogWarning(ex, "[{OperationId}] Password change failed for user: {Username}", operationId, context.Username);
+            LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
             return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
         }
     }

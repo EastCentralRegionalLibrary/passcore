@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using PwnedPasswordsSearch;
 using Unosquare.PassCore.Common.Exceptions;
@@ -15,6 +16,13 @@ public class PwnedPasswordPolicy : IPasswordPolicy
 
     public async Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (context.ClientSettings.EnablePwnedPasswordCheck == false)
+        {
+            return;
+        }
+
         // This policy is generally applicable if pwned check is enabled in any way,
         // but here we check the new password against the pwned database.
         try
