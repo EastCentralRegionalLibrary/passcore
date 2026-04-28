@@ -90,7 +90,8 @@ jobs:
           # but NOT ChangeNotPermitted or InvalidCredentials.
           # For this test, we accept success (empty errors) OR a non-auth error.
           ERROR_CODE=$(echo $RESPONSE | jq -r '.errors[0].errorCode // empty')
-          if [[ "$ERROR_CODE" == "ChangeNotPermitted" || "$ERROR_CODE" == "InvalidCredentials" || "$ERROR_CODE" == "UserNotFound" ]]; then
+          # 3: UserNotFound, 4: InvalidCredentials, 6: ChangeNotPermitted
+          if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
             echo "Unexpected error code: $ERROR_CODE"
             exit 1
           fi
@@ -100,15 +101,16 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "testuser", "currentPassword": "wrongpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials")'
+          # 4: InvalidCredentials
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
 
           echo "Test 3: Unknown user"
           RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
             -H "Content-Type: application/json" \
             -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          # With HideUserNotFound=true (default), it returns InvalidCredentials
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials")'
+          # With HideUserNotFound=true (default), it returns InvalidCredentials (4)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
 
           echo "Test 4: User in restricted group"
           # restricteduser is in RestrictedGroup
@@ -116,7 +118,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "restricteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "ChangeNotPermitted")'
+          # 6: ChangeNotPermitted
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
 
           echo "Test 5: User not in allowed groups"
           # unlisteduser is not in AllowedGroup
@@ -124,7 +127,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "unlisteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "ChangeNotPermitted")'
+          # 6: ChangeNotPermitted
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
 
       - name: LDAP Environment Failure Test
         run: |
@@ -136,8 +140,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          # Expect LdapProblem or InvalidCredentials (if it fails to connect during bind)
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == "InvalidCredentials" or .errorCode == "LdapProblem")'
+          # Expect LdapProblem (8) or InvalidCredentials (4)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4 or .errorCode == 8)'
 
           echo "Restarting MokAPI..."
           docker start mokapi
