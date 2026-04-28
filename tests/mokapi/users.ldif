@@ -26,3 +26,35 @@ cn: testuser
 sn: testuser
 userPassword: testpassword
 sAMAccountName: testuser
+
+dn: cn=alloweduser,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: alloweduser
+sn: alloweduser
+userPassword: testpassword
+sAMAccountName: alloweduser
+memberOf: cn=AllowedGroup,ou=people,dc=example,dc=com
+
+dn: cn=restricteduser,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: restricteduser
+sn: restricteduser
+userPassword: testpassword
+sAMAccountName: restricteduser
+memberOf: cn=RestrictedGroup,ou=people,dc=example,dc=com
+
+dn: cn=unlisteduser,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: unlisteduser
+sn: unlisteduser
+userPassword: testpassword
+sAMAccountName: unlisteduser

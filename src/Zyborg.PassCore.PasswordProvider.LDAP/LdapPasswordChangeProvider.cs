@@ -22,7 +22,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// Represents a LDAP password change provider using Novell LDAP Connection.
 /// </summary>
 /// <seealso cref="IPasswordChangeProvider" />
-public class LdapPasswordChangeProvider : PasswordChangeProviderBase
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
 {
     private readonly LdapPasswordChangeOptions _options;
 
@@ -56,6 +56,44 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value;
         Init();
+    }
+
+    /// <inheritdoc />
+    public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+    {
+        ArgumentNullException.ThrowIfNull(username);
+        ArgumentNullException.ThrowIfNull(groupName);
+
+        try
+        {
+            var cleanUsername = CleaningUsername(username);
+            var searchFilter = _options.LdapSearchFilter.Replace("{Username}", cleanUsername, StringComparison.Ordinal);
+
+            using var ldap = BindToLdap();
+            var search = ldap.Search(
+                _options.LdapSearchBase,
+                LdapConnection.ScopeSub,
+                searchFilter,
+                new[] { "memberOf" },
+                false,
+                _searchConstraints);
+
+            if (!search.HasMore())
+                return Task.FromResult(false);
+
+            var entry = search.Next();
+            var memberOf = entry.GetAttribute("memberOf");
+
+            if (memberOf == null)
+                return Task.FromResult(false);
+
+            return Task.FromResult(memberOf.StringValueArray.Any(g =>
+                g.Contains(groupName, StringComparison.OrdinalIgnoreCase)));
+        }
+        catch (LdapException)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     /// <inheritdoc />
