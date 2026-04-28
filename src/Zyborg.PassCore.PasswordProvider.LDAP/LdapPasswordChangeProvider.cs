@@ -74,7 +74,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 _options.LdapSearchBase,
                 LdapConnection.ScopeSub,
                 searchFilter,
-                new[] { "memberOf" },
+                null,
                 false,
                 _searchConstraints);
 
@@ -82,7 +82,8 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 return Task.FromResult(false);
 
             var entry = search.Next();
-            var memberOf = entry.GetAttribute("memberOf");
+            var attrSet = entry.GetAttributeSet();
+            var memberOf = attrSet.ContainsKey("memberOf") ? attrSet["memberOf"] : null;
 
             if (memberOf == null)
                 return Task.FromResult(false);
