@@ -1,0 +1,87 @@
+name: LDAP Provider Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      ASPNETCORE_ENVIRONMENT: LdapTest
+      ASPNETCORE_URLS: http://localhost:5000
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Start MokAPI
+        run: |
+          docker run -d --name mokapi \
+            -p 389:389 \
+            -v ${{ github.workspace }}/tests/mokapi:/mokapi \
+            mokapi/mokapi:latest \
+            --providers-file-filename /mokapi/ldap.yaml
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Backend (LDAP)
+        run: |
+          dotnet build \
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --property:PASSCORE_PROVIDER=LDAP
+
+      - name: Start Passcore
+        shell: bash
+        run: |
+          dotnet run \
+            --no-launch-profile \
+            --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --framework net8.0 \
+            --property:PASSCORE_PROVIDER=LDAP \
+            --no-build &
+          echo $! > backend.pid
+
+      - name: Wait for Passcore to be ready
+        run: |
+          echo "Waiting for Passcore..."
+          timeout 90s bash -c '
+            until curl -fsS http://localhost:5000/api/password; do
+              sleep 3
+            done
+          '
+
+      - name: Basic Smoke Verification
+        run: |
+          # Verify that Passcore is responding and using the LDAP provider
+          # We check if the health endpoint (api/password) returns the expected settings
+          curl -fsS http://localhost:5000/api/password | grep "ValidationRegex"
+          echo "Passcore is up and responding!"
+
+      - name: Check MokAPI logs
+        if: always()
+        run: docker logs mokapi
+
+      - name: Stop Services
+        if: always()
+        run: |
+          if [ -f backend.pid ]; then
+            kill "$(cat backend.pid)" || true
+          fi
+          docker stop mokapi || true

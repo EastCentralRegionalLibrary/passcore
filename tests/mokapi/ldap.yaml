@@ -1,0 +1,4 @@
+ldap: 1.0
+host: :389
+files:
+  - users.ldif

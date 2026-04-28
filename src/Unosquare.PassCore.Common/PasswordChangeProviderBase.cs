@@ -116,6 +116,11 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
             LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
             return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
         }
+        catch (Exception ex)
+        {
+            LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
+            return PasswordChangeResult.Fail(new ApiErrorItem(ApiErrorCode.Generic, ex.Message));
+        }
     }
 
     protected virtual void ValidateContext(PasswordChangeContext context)
