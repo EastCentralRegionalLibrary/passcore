@@ -45,7 +45,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
             Logger.LogWarning(ex, "[{OperationId}] Password change canceled for user: {Username}", operationId, context.Username);
             throw;
         }
-        catch (PassCoreException ex)
+        catch (PasswordChangeException ex)
         {
             Logger.LogWarning(ex, "[{OperationId}] Password change failed for user: {Username}", operationId, context.Username);
             return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
