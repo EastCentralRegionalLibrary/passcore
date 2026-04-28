@@ -74,7 +74,7 @@ jobs:
         run: |
           # Verify that Passcore is responding and using the LDAP provider
           # We check if the health endpoint (api/password) returns the expected settings
-          curl -fsS http://localhost:5000/api/password | grep "ValidationRegex"
+          curl -fsS http://localhost:5000/api/password | jq -e '.validationRegex'
           echo "Passcore is up and responding!"
 
       - name: Check MokAPI logs
