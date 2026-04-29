@@ -108,7 +108,12 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 _searchConstraints);
 
             if (!search.HasMore())
-                return Task.FromResult(false);
+            {
+                if (_options.HideUserNotFound)
+                    throw new InvalidCredentialsException();
+
+                throw new UserNotFoundException("Username could not be located");
+            }
 
             var entry = search.Next();
             LogLdapUserFound(Logger, username, entry.Dn, null);
