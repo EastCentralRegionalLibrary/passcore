@@ -50,7 +50,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     {
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         ValidateOptions(_options);
- 
+
         // First find user DN by username (SAM Account Name)
         _searchConstraints = new(
             0,
