@@ -236,12 +236,14 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
     private LdapConnection Bind(string bindDn, string password)
     {
-        var ldap = new LdapConnection();
-        if (_certValidator != null)
-            ldap.UserDefinedServerCertValidationDelegate += _certValidator;
+        LdapException? lastConnectException = null;
 
         foreach (var host in _options.LdapHostnames)
         {
+            var ldap = new LdapConnection();
+            if (_certValidator != null)
+                ldap.UserDefinedServerCertValidationDelegate += _certValidator;
+
             try
             {
                 ldap.SecureSocketLayer = _options.LdapSecureSocketLayer;
@@ -250,17 +252,27 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
                 if (_options.LdapStartTls)
                     ldap.StartTls();
 
+                // IMPORTANT: bind errors must NOT be treated as host failures
                 ldap.Bind(bindDn, password);
                 return ldap;
             }
-            catch (LdapException)
+            catch (LdapException ex)
             {
-                // try next host
+                // Detect bind vs connect failure
+                if (ldap.Connected)
+                {
+                    // Connected but bind failed → invalid credentials
+                    throw new InvalidCredentialsException("Invalid current password", ex);
+                }
+
+                lastConnectException = ex;
+                // Try the next host
             }
         }
 
         throw new DirectoryUnavailableException(
-            "Failed to connect to any configured LDAP hostname");
+            "Failed to connect to any configured LDAP hostname",
+            lastConnectException);
     }
 
     // ---------------------------------------------------------------------
