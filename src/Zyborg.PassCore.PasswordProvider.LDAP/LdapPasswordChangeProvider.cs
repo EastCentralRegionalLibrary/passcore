@@ -37,6 +37,33 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         null,
         10);
 
+    private static readonly string[] RequiredAttributes =
+    {
+        "distinguishedName",
+        "sAMAccountName",
+        "memberOf",
+        "userPassword",
+        "unicodePwd"
+    };
+
+    private static readonly Action<ILogger, string, Exception?> LogLdapSearchStart =
+        LoggerMessage.Define<string>(
+            LogLevel.Debug,
+            new EventId(101, nameof(LogLdapSearchStart)),
+            "Starting LDAP search with filter: {Filter}");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogLdapUserFound =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Debug,
+            new EventId(102, nameof(LogLdapUserFound)),
+            "LDAP user found: {Username} (DN: {UserDN})");
+
+    private static readonly Action<ILogger, string, string, Exception?> LogLdapAttributeFound =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Debug,
+            new EventId(103, nameof(LogLdapAttributeFound)),
+            "LDAP attribute found: {AttributeName} = {AttributeValue}");
+
     // TODO: is this related to https://github.com/dsbenghe/Novell.Directory.Ldap.NETStandard/issues/101 at all???
     // Had to mark this as nullable.
     private LdapRemoteCertificateValidationCallback? _ldapRemoteCertValidator;
@@ -69,12 +96,14 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             var cleanUsername = CleaningUsername(username);
             var searchFilter = _options.LdapSearchFilter.Replace("{Username}", cleanUsername, StringComparison.Ordinal);
 
+            LogLdapSearchStart(Logger, searchFilter, null);
+
             using var ldap = BindToLdap();
             var search = ldap.Search(
                 _options.LdapSearchBase,
                 LdapConnection.ScopeSub,
                 searchFilter,
-                null,
+                RequiredAttributes,
                 false,
                 _searchConstraints);
 
@@ -82,6 +111,8 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 return Task.FromResult(false);
 
             var entry = search.Next();
+            LogLdapUserFound(Logger, username, entry.Dn, null);
+
             var attrSet = entry.GetAttributeSet();
 
             // Try to find memberOf attribute in a case-insensitive way
@@ -91,13 +122,22 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             var memberOf = memberOfKey != null ? attrSet[memberOfKey] : null;
 
             if (memberOf == null)
+            {
+                Logger.LogDebug("Attribute 'memberOf' not found for user: {Username}", username);
                 return Task.FromResult(false);
+            }
+
+            foreach (var val in memberOf.StringValueArray)
+            {
+                LogLdapAttributeFound(Logger, "memberOf", val, null);
+            }
 
             return Task.FromResult(memberOf.StringValueArray.Any(g =>
                 g.Contains(groupName, StringComparison.OrdinalIgnoreCase)));
         }
-        catch (LdapException)
+        catch (LdapException ex)
         {
+            Logger.LogWarning(ex, "LDAP error during group membership check for user: {Username}", username);
             return Task.FromResult(false);
         }
     }
@@ -118,7 +158,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 _options.LdapSearchBase,
                 LdapConnection.ScopeSub,
                 searchFilter,
-                new[] { "distinguishedName" },
+                RequiredAttributes,
                 false,
                 _searchConstraints);
 
