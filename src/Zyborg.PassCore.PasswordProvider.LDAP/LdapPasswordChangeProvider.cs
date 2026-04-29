@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -51,11 +50,17 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     {
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         ValidateOptions(_options);
-
-        _searchConstraints = new LdapSearchConstraints(
-            deref: LdapSearchConstraints.DerefNever,
-            maxResults: 1,
-            timeLimit: 10);
+ 
+        // First find user DN by username (SAM Account Name)
+        _searchConstraints = new(
+            0,
+            0,
+            LdapSearchConstraints.DerefNever,
+            1000,
+            true,
+            1,
+            null,
+            10);
 
         if (_options.LdapIgnoreTlsErrors || _options.LdapIgnoreTlsValidation)
             _certValidator = ValidateServerCertificate;
@@ -65,14 +70,16 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // Group membership lookup
     // ---------------------------------------------------------------------
 
-    public async Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+    public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
     {
         ArgumentNullException.ThrowIfNull(username);
         ArgumentNullException.ThrowIfNull(groupName);
 
         var user = FindUser(username);
-        return user.Groups.Any(g =>
-            g.Contains(groupName, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(
+                user.Groups.Any(g =>
+                    g.Contains(groupName, StringComparison.OrdinalIgnoreCase)));
+
     }
 
     // ---------------------------------------------------------------------
@@ -93,10 +100,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             // 2. Verify current credentials (portable across LDAP servers)
             VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
 
-            // 3. Group authorization (policy)
-            EnforceGroupPolicy(context.Username);
-
-            // 4. Perform password change using administrative context
+            // 3. Perform password change using administrative context
             ChangePassword(user.DistinguishedName, context);
         }
         catch (PasswordChangeException)
