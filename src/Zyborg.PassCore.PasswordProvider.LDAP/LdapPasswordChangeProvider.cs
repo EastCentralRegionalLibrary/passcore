@@ -34,7 +34,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 {
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
-    private readonly RemoteCertificateValidationCallback? _certValidator;
+    private readonly LdapRemoteCertificateValidationCallback? _certValidator;
 
     private static readonly string[] RequiredAttributes =
     {
