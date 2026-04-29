@@ -182,6 +182,19 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
             var userDN = search.Next().Dn;
 
+            // Verify credentials by attempting an LDAP Bind as the user
+            try
+            {
+                Logger.LogDebug("Verifying current credentials for user DN: {UserDN}", userDN);
+                using var userLdap = BindToLdap(userDN, context.CurrentPassword);
+                Logger.LogDebug("Credentials verified successfully for user DN: {UserDN}", userDN);
+            }
+            catch (LdapException ex)
+            {
+                Logger.LogWarning(ex, "Credential verification failed for user DN: {UserDN}", userDN);
+                throw new InvalidCredentialsException("Invalid current password", ex);
+            }
+
             if (_options.LdapChangePasswordWithDelAdd)
             {
                 ChangePasswordDelAdd(context.CurrentPassword, context.NewPassword, ldap, userDN);
@@ -347,7 +360,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         }
     }
 
-    private LdapConnection BindToLdap()
+    private LdapConnection BindToLdap(string? bindDn = null, string? bindPassword = null)
     {
         var ldap = new LdapConnection();
         if (_ldapRemoteCertValidator != null)
@@ -379,7 +392,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         if (_options.LdapStartTls)
             ldap.StartTls();
 
-        ldap.Bind(_options.LdapUsername, _options.LdapPassword);
+        ldap.Bind(bindDn ?? _options.LdapUsername, bindPassword ?? _options.LdapPassword);
 
         return ldap;
     }
