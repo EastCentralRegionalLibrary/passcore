@@ -26,7 +26,7 @@ cn: testuser
 sn: testuser
 userPassword: testpassword
 sAMAccountName: testuser
-memberOf: cn=AllowedGroup,ou=people,dc=example,dc=com
+memberOf: cn=AllowedGroup,ou=groups,dc=example,dc=com
 
 dn: cn=alloweduser,ou=people,dc=example,dc=com
 objectClass: top
@@ -37,7 +37,7 @@ cn: alloweduser
 sn: alloweduser
 userPassword: testpassword
 sAMAccountName: alloweduser
-memberOf: cn=AllowedGroup,ou=people,dc=example,dc=com
+memberOf: cn=AllowedGroup,ou=groups,dc=example,dc=com
 
 dn: cn=restricteduser,ou=people,dc=example,dc=com
 objectClass: top
@@ -48,7 +48,7 @@ cn: restricteduser
 sn: restricteduser
 userPassword: testpassword
 sAMAccountName: restricteduser
-memberOf: cn=RestrictedGroup,ou=people,dc=example,dc=com
+memberOf: cn=RestrictedGroup,ou=groups,dc=example,dc=com
 
 dn: cn=unlisteduser,ou=people,dc=example,dc=com
 objectClass: top
@@ -59,3 +59,21 @@ cn: unlisteduser
 sn: unlisteduser
 userPassword: testpassword
 sAMAccountName: unlisteduser
+
+dn: ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+dn: cn=AllowedGroup,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: AllowedGroup
+member: cn=testuser,ou=people,dc=example,dc=com
+member: cn=alloweduser,ou=people,dc=example,dc=com
+
+dn: cn=RestrictedGroup,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: RestrictedGroup
+member: cn=restricteduser,ou=people,dc=example,dc=com
