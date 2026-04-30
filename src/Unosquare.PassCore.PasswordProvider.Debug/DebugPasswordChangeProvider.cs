@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using PwnedPasswordsSearch;
 using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Exceptions;
+using Unosquare.PassCore.Common.Models;
 
 namespace Unosquare.PassCore.PasswordProvider.Debug;
 
@@ -16,20 +17,34 @@ namespace Unosquare.PassCore.PasswordProvider.Debug;
 public class DebugPasswordChangeProvider : PasswordChangeProviderBase
 {
     private readonly DebugProviderOptions _options;
+    private readonly ClientSettings _clientSettings;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DebugPasswordChangeProvider"/> class.
     /// </summary>
     /// <param name="options">The debug provider options.</param>
+    /// <param name="clientSettings">The client settings.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="policies">The password policies.</param>
     public DebugPasswordChangeProvider(
         IOptions<DebugProviderOptions> options,
+        IOptions<ClientSettings> clientSettings,
         ILogger<DebugPasswordChangeProvider> logger,
         IEnumerable<IPasswordPolicy> policies)
         : base(logger, policies)
     {
         _options = options.Value;
+        _clientSettings = clientSettings?.Value ?? new ClientSettings();
+    }
+
+    /// <inheritdoc />
+    public override async Task<PasswordChangeResult> PerformPasswordChangeAsync(
+        string username,
+        string currentPassword,
+        string newPassword)
+    {
+        var context = new PasswordChangeContext(username, currentPassword, newPassword, _clientSettings);
+        return await ChangePasswordAsync(context);
     }
 
     /// <inheritdoc />

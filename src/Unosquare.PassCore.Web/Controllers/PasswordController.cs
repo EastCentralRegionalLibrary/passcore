@@ -95,14 +95,13 @@ public class PasswordController : Controller
 
         try
         {
-            var context = new PasswordChangeContext(model.Username, model.CurrentPassword, model.NewPassword, _options, HttpContext.TraceIdentifier);
-            var resultPasswordChange = await _passwordChangeProvider.ChangePasswordAsync(context);
+            var resultPasswordChange = await _passwordChangeProvider.PerformPasswordChangeAsync(model.Username, model.CurrentPassword, model.NewPassword);
 
-            if (resultPasswordChange.IsSuccess)
+            if (resultPasswordChange.IsSuccessful)
                 return Json(result);
 
-            if (resultPasswordChange.Error != null)
-                result.Errors.Add(resultPasswordChange.Error);
+            foreach (var error in resultPasswordChange.Errors)
+                result.Errors.Add(error);
         }
         catch (HttpRequestException ex)
         {

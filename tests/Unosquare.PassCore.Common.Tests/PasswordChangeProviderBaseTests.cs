@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -17,11 +18,18 @@ public class PasswordChangeProviderBaseTests
     {
         public TestProvider(ILogger logger, IEnumerable<IPasswordPolicy> policies = null) : base(logger, policies) { }
 
+        public override Task<PasswordChangeResult> PerformPasswordChangeAsync(string username, string currentPassword, string newPassword)
+        {
+            return ChangePasswordAsync(new PasswordChangeContext(username, currentPassword, newPassword, new ClientSettings()));
+        }
+
         protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
             if (context.Username == "fail") throw new Exception("Operation failed");
             return Task.CompletedTask;
         }
+
+        public Task<PasswordChangeResult> TestChangePasswordAsync(PasswordChangeContext context) => ChangePasswordAsync(context);
     }
 
     [Fact]
@@ -31,10 +39,10 @@ public class PasswordChangeProviderBaseTests
         var provider = new TestProvider(loggerMock.Object);
         var context = new PasswordChangeContext("user", "old", "new", new ClientSettings());
 
-        var result = await provider.ChangePasswordAsync(context);
+        var result = await provider.TestChangePasswordAsync(context);
 
-        Assert.True(result.IsSuccess);
-        Assert.Null(result.Error);
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(result.Errors);
     }
 
     [Fact]
@@ -44,10 +52,10 @@ public class PasswordChangeProviderBaseTests
         var provider = new TestProvider(loggerMock.Object);
         var context = new PasswordChangeContext("", "old", "new", new ClientSettings());
 
-        var result = await provider.ChangePasswordAsync(context);
+        var result = await provider.TestChangePasswordAsync(context);
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(ApiErrorCode.InvalidCredentials, result.Error.ErrorCode);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.InvalidCredentials, result.Errors.First().ErrorCode);
     }
 
     [Fact]
@@ -61,10 +69,10 @@ public class PasswordChangeProviderBaseTests
         var provider = new TestProvider(loggerMock.Object, new[] { policyMock.Object });
         var context = new PasswordChangeContext("user", "old", "new", new ClientSettings());
 
-        var result = await provider.ChangePasswordAsync(context);
+        var result = await provider.TestChangePasswordAsync(context);
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(ApiErrorCode.MinimumScore, result.Error.ErrorCode);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.MinimumScore, result.Errors.First().ErrorCode);
     }
 
     [Fact]
@@ -74,10 +82,10 @@ public class PasswordChangeProviderBaseTests
         var provider = new TestProvider(loggerMock.Object);
         var context = new PasswordChangeContext("fail", "old", "new", new ClientSettings());
 
-        var result = await provider.ChangePasswordAsync(context);
+        var result = await provider.TestChangePasswordAsync(context);
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(ApiErrorCode.Generic, result.Error.ErrorCode);
-        Assert.Equal("Operation failed", result.Error.Message);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.Generic, result.Errors.First().ErrorCode);
+        Assert.Equal("Operation failed", result.Errors.First().Message);
     }
 }

@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Exceptions;
+using Unosquare.PassCore.Common.Models;
 using LdapRemoteCertificateValidationCallback =
     Novell.Directory.Ldap.RemoteCertificateValidationCallback;
 
@@ -32,6 +33,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
 {
     private readonly LdapPasswordChangeOptions _options;
+    private readonly ClientSettings _clientSettings;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
 
@@ -45,10 +47,12 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     public LdapPasswordChangeProvider(
         ILogger<LdapPasswordChangeProvider> logger,
         IOptions<LdapPasswordChangeOptions> options,
+        IOptions<ClientSettings> clientSettings,
         IEnumerable<IPasswordPolicy> policies)
         : base(logger, policies)
     {
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
+        _clientSettings = clientSettings?.Value ?? new ClientSettings();
         ValidateOptions(_options);
 
         // First find user DN by username (SAM Account Name)
@@ -85,6 +89,15 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // ---------------------------------------------------------------------
     // Password change entry point
     // ---------------------------------------------------------------------
+
+    public override async Task<PasswordChangeResult> PerformPasswordChangeAsync(
+        string username,
+        string currentPassword,
+        string newPassword)
+    {
+        var context = new PasswordChangeContext(username, currentPassword, newPassword, _clientSettings);
+        return await ChangePasswordAsync(context);
+    }
 
     protected override Task ChangePasswordCore(
         PasswordChangeContext context,

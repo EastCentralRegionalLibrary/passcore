@@ -1,11 +1,12 @@
 using System;
-using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.PasswordProvider.Debug;
 using Unosquare.PassCore.Testing;
 using Xunit;
@@ -30,7 +31,10 @@ public class DebugPasswordChangeProviderTests
     {
         var optionsMock = new Mock<IOptions<DebugProviderOptions>>();
         optionsMock.Setup(o => o.Value).Returns(_options);
-        return new DebugPasswordChangeProvider(optionsMock.Object, _loggerMock.Object, Array.Empty<IPasswordPolicy>());
+        var clientSettingsMock = new Mock<IOptions<ClientSettings>>();
+        clientSettingsMock.Setup(o => o.Value).Returns(new ClientSettings());
+
+        return new DebugPasswordChangeProvider(optionsMock.Object, clientSettingsMock.Object, _loggerMock.Object, Array.Empty<IPasswordPolicy>());
     }
 
     [Fact]
@@ -43,7 +47,8 @@ public class DebugPasswordChangeProviderTests
         var result = await provider.PerformPasswordChangeAsync("someuser", "old", "new");
 
         // Assert
-        Assert.Null(result);
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(result.Errors);
     }
 
     [Fact]
@@ -56,8 +61,8 @@ public class DebugPasswordChangeProviderTests
         var result = await provider.PerformPasswordChangeAsync("error", "old", "new");
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Equal(ApiErrorCode.Generic, result.ErrorCode);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.Generic, result.Errors.First().ErrorCode);
     }
 
     [Fact]
@@ -71,8 +76,8 @@ public class DebugPasswordChangeProviderTests
         var result = await provider.PerformPasswordChangeAsync("specialuser@domain.com", "old", "new");
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Equal(ApiErrorCode.ChangeNotPermitted, result.ErrorCode);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.ChangeNotPermitted, result.Errors.First().ErrorCode);
     }
 
     [Fact]
@@ -92,22 +97,6 @@ public class DebugPasswordChangeProviderTests
     }
 
     [Fact]
-    public async Task PerformPasswordChangeAsync_HonorCancellationToken()
-    {
-        // Arrange
-        _options.SimulateLatencyMs = 1000;
-        var provider = CreateProvider();
-        using var cts = new CancellationTokenSource();
-
-        // Act
-        var task = provider.PerformPasswordChangeAsync("user", "old", "new", cts.Token);
-        cts.Cancel();
-
-        // Assert
-        await Assert.ThrowsAsync<TaskCanceledException>(() => task);
-    }
-
-    [Fact]
     public async Task PerformPasswordChangeAsync_DefaultErrorCode()
     {
         // Arrange
@@ -118,8 +107,8 @@ public class DebugPasswordChangeProviderTests
         var result = await provider.PerformPasswordChangeAsync("anyuser", "old", "new");
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Equal(ApiErrorCode.InvalidCredentials, result.ErrorCode);
+        Assert.False(result.IsSuccessful);
+        Assert.Equal(ApiErrorCode.InvalidCredentials, result.Errors.First().ErrorCode);
     }
 }
 #endif
