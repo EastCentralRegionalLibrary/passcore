@@ -143,17 +143,21 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         if (!search.HasMore())
         {
             if (_options.HideUserNotFound)
-                throw new InvalidCredentialsException();
+                throw new InvalidCredentialsException("Invalid username or password");
 
             throw new UserNotFoundException("User not found");
         }
 
         var entry = search.Next();
 
-        var groups = entry
-            .GetAttribute("memberOf")?
-            .StringValueArray
-            ?? Array.Empty<string>();
+        var attributeSet = entry.GetAttributeSet();
+
+        var memberOfKey = attributeSet.Keys
+            .FirstOrDefault(k => k.Equals("memberOf", StringComparison.OrdinalIgnoreCase));
+
+        var groups = memberOfKey != null
+            ? attributeSet[memberOfKey].StringValueArray ?? Array.Empty<string>()
+            : Array.Empty<string>();
 
         return new LdapUser(entry.Dn, groups);
     }
