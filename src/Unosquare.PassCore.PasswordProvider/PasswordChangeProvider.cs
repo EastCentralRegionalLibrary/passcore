@@ -9,6 +9,7 @@ using System.DirectoryServices.ActiveDirectory;
 using System.Linq;
 using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Exceptions;
+using Unosquare.PassCore.Common.Models;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Collections.Generic;
@@ -29,6 +30,7 @@ namespace Unosquare.PassCore.PasswordProvider
     {
         // Readonly fields
         private readonly PasswordChangeOptions _options;
+        private readonly ClientSettings _clientSettings;
         private IdentityType _idType = IdentityType.UserPrincipalName; // Default identity type
 
         /// <summary>
@@ -37,17 +39,30 @@ namespace Unosquare.PassCore.PasswordProvider
         /// </summary>
         /// <param name="logger">The logger interface for logging events within this provider.</param>
         /// <param name="options">The options configuration for password change operations, injected through IOptions.</param>
+        /// <param name="clientSettings">The client settings.</param>
         /// <param name="policies">The password policies.</param>
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
+            IOptions<ClientSettings> clientSettings,
             IEnumerable<IPasswordPolicy> policies)
             : base(logger, policies)
         {
             ArgumentNullException.ThrowIfNull(logger);
             ArgumentNullException.ThrowIfNull(options);
             _options = options.Value;
+            _clientSettings = clientSettings?.Value ?? new ClientSettings();
             SetIdType(); // Determine IdentityType from options
+        }
+
+        /// <inheritdoc />
+        public override async Task<PasswordChangeResult> PerformPasswordChangeAsync(
+            string username,
+            string currentPassword,
+            string newPassword)
+        {
+            var context = new PasswordChangeContext(username, currentPassword, newPassword, _clientSettings);
+            return await ChangePasswordAsync(context);
         }
 
         /// <inheritdoc />
