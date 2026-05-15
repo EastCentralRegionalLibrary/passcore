@@ -1,38 +1,37 @@
 import Box from '@mui/material/Box';
-import { use, useEffect } from 'react';
+import { use, useEffect, useRef } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 import GoogleReCaptcha from './GoogleReCaptcha';
 
 interface IRecaptchaProps {
-    setToken: any;
+    setToken: (token: string) => void;
     shouldReset: boolean;
 }
 
 export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
-    // tslint:disable-next-line
-    let captchaRef: any;
+    const captchaRef = useRef<InstanceType<typeof GoogleReCaptcha> | null>(null);
 
-    const { siteKey } = use(GlobalContext).recaptcha;
+    const { siteKey } = use(GlobalContext)!.recaptcha;
 
     useEffect(() => {
-        if (captchaRef) {
-            captchaRef.reset();
+        if (captchaRef.current) {
+            captchaRef.current.reset();
         }
     }, [shouldReset]);
 
     const onLoadRecaptcha = () => {
-        if (captchaRef) {
-            captchaRef.reset();
+        if (captchaRef.current) {
+            captchaRef.current.reset();
         }
     };
 
-    const verifyCallback = (recaptchaToken: any) => setToken(recaptchaToken);
+    const verifyCallback = (recaptchaToken: string) => setToken(recaptchaToken);
 
     return (
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: '25px' }}>
             <GoogleReCaptcha
-                ref={(el: any) => {
-                    captchaRef = el;
+                ref={(el) => {
+                    captchaRef.current = el;
                 }}
                 size="normal"
                 render="explicit"
@@ -42,4 +41,4 @@ export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
             />
         </Box>
     );
-};
+}

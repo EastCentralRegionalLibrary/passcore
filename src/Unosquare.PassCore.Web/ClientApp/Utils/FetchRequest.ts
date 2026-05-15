@@ -13,7 +13,7 @@ import { ApiResponse } from '../types/Providers';
  */
 export async function fetchRequest<T = unknown>(
     url: string,
-    requestMethod: string,
+    requestMethod: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
     requestBody?: unknown
 ): Promise<ApiResponse<T>> {
     // Create headers indicating we expect and send JSON.

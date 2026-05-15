@@ -1,29 +1,36 @@
-import * as React from 'react';
+import { useState, useEffect, type DependencyList } from 'react';
 
 export function useEffectWithLoading<T>(
     effect: () => Promise<T>, // Change any to T
     initialValue: T,
-    inputs: React.DependencyList
-): [T, boolean] {
-    const [getter, setter] = React.useState(initialValue);
-    const [isLoading, setIsLoading] = React.useState(true);
-    let _isMounted = false;
+    inputs: DependencyList
+): [T, boolean, Error | null] {
+    const [getter, setter] = useState(initialValue);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<Error | null>(null);
 
-    React.useEffect(() => {
-        _isMounted = true;
+    useEffect(() => {
+        let _isMounted = true;
         setIsLoading(true);
 
-        effect().then((resp: T) => { // Change any to T
-            if (_isMounted) {
-                setter(resp);
-                setIsLoading(false);
-            }
-        });
+        effect()
+            .then((resp: T) => { // Change any to T
+                if (_isMounted) {
+                    setter(resp);
+                    setIsLoading(false);
+                }
+            })
+            .catch((err) => {
+                if (_isMounted) {
+                    setError(err instanceof Error ? err : new Error(String(err)));
+                    setIsLoading(false);
+                }
+            });
 
         return (): void => {
             _isMounted = false;
         };
-    }, inputs || []);
+    }, inputs);
 
-    return [getter, isLoading];
+    return [getter, isLoading, error];
 }

@@ -16,7 +16,7 @@ import type { ReactNode } from 'react';
 export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
     // Split the HTML string on anchor tags.
     // The regex captures two groups: the attributes and the inner text of the <a> tag.
-    const parts = htmlString.split(/<a\s+([^>]+)>(.*?)<\/a>/).filter(Boolean);
+    const parts = htmlString.split(/<a\s+([^>]+)>(.*?)<\/a>/);
 
     return parts.reduce<ReactNode[]>((elements, part, index) => {
         // Expected parts array indices:
@@ -25,7 +25,9 @@ export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
         // index % 3 === 2: Inner text for the <a> element (already rendered as link content).
         if (index % 3 === 0) {
             // Plain text: push directly to elements.
-            elements.push(part);
+            if (part) {
+                elements.push(part);
+            }
         } else if (index % 3 === 1) {
             // Extract attributes from the anchor tag using regex.
             // The regex now accounts for potential trailing whitespace after each attribute.

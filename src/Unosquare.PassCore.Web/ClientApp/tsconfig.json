@@ -3,11 +3,11 @@
         "sourceMap": true,
         "noImplicitAny": true,
         "module": "esnext",
-        "target": "es5",
+        "target": "ES2020",
         "jsx": "react-jsx",
         "lib": ["esnext", "dom"],
-        "moduleResolution": "node",
-        "strictNullChecks": false,
+        "moduleResolution": "bundler",
+        "strictNullChecks": true,
         "noImplicitReturns": true,
         "forceConsistentCasingInFileNames": true,
         "noEmit": true,
@@ -17,6 +17,5 @@
         "esModuleInterop": true
     },
     "include": ["./**/*"],
-    "exclude": ["node_modules", "build", "scripts", "acceptance-tests", "webpack"],
-    "types": ["typesPatches"]
+    "exclude": ["node_modules", "build", "scripts", "acceptance-tests", "webpack"]
 }

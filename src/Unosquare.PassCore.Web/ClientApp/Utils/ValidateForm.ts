@@ -1,11 +1,11 @@
 import { IChangePasswordFormInitialModel } from '../types/Components';
 import { IGlobalContext } from '../types/Providers';
 
-interface ValidationErrors {
+export interface ValidationErrors {
     [key: string]: string | undefined;
 }
 
-type ValidationRule = {
+export type ValidationRule = {
     name: string;
     rule: (value: string, formData: IChangePasswordFormInitialModel, context: IGlobalContext) => Promise<boolean>;
     message: string;
@@ -13,7 +13,7 @@ type ValidationRule = {
 
 type FieldValidationRules = Partial<Record<keyof IChangePasswordFormInitialModel, ValidationRule[]>>;
 
-const validateForm = async (
+export const validateForm = async (
     formData: IChangePasswordFormInitialModel,
     context: IGlobalContext,
     fieldRules: FieldValidationRules
@@ -34,7 +34,8 @@ const validateForm = async (
                         return { valid, message: rule.message };
                     } catch (error) {
                         // If an error occurs, treat it as failed validation
-                        console.error(`Validator ${rule.rule.name} failed with error ${error.message}: ${error}`);
+                        const errorMessage = error instanceof Error ? error.message : String(error);
+                        console.error(`Validator ${rule.rule.name} failed with error ${errorMessage}: ${error}`);
                         return { valid: false, message: rule.message };
                     }
                 })
@@ -50,5 +51,4 @@ const validateForm = async (
     return errors;
 };
 
-export type { ValidationRule, FieldValidationRules };
-export default validateForm;
+export type { FieldValidationRules };

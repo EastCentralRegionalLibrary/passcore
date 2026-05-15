@@ -8,23 +8,23 @@ import passcoreLogo from 'url:../assets/images/passcore-logo.png';
 
 export function Footer() {
     return (
-    <Box sx={{ mt: '40px' }}>
-        <Box
-            sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-            }}
-        >
-            <Box>
-                <img src={passcoreLogo} style={{ marginLeft: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
+        <Box sx={{ mt: '40px' }}>
+            <Box
+                sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                }}
+            >
+                <Box>
+                    <Box component="img" src={passcoreLogo} sx={{ ml: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
+                </Box>
+                <Box>
+                    <Box component="img" src={osiLogo} sx={{ margin: '0 10px 0 40px', maxHeight: '30px' }} alt="OSI Logo" />
+                    <Box component="img" src={mitLogo} sx={{ marginRight: '10px', maxHeight: '30px' }} alt="MIT Logo" />
+                    <Box component="img" src={uslogo} sx={{ maxHeight: '30px' }} alt="US Logo" />
+                </Box>
             </Box>
-            <Box>
-                <img src={osiLogo} style={{ margin: '0 10px 0 40px', maxHeight: '30px' }} alt="OSI Logo" />
-                <img src={mitLogo} style={{ marginRight: '10px', maxHeight: '30px' }} alt="MIT Logo" />
-                <img src={uslogo} style={{ maxHeight: '30px' }} alt="US Logo" />
-            </Box>
-        </Box>
         <Box
             sx={{
                 display: 'flex',

@@ -2,13 +2,10 @@
 
 import { IGlobalContext } from "../types/Providers";
 
-// This should be completely implemented in IGlobalContext
-
-
 export async function resolveAppSettings(): Promise<IGlobalContext> {
     const response = await fetch('api/password');
 
-    if (!response || response.status !== 200) {
+    if (!response || !response.ok) {
         throw new Error('Error fetching settings.');
     }
 

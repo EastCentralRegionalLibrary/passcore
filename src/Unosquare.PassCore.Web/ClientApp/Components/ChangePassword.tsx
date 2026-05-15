@@ -10,31 +10,8 @@ import { ApiError } from '../types/Providers';
 import Box from '@mui/material/Box';
 
 export function ChangePassword() {
-    const [disabled, setDisabled] = useState(true);
-    const [submit, setSubmit] = useState(false);
-    const [dialogIsOpen, setDialog] = useState(false);
-    const [token, setToken] = useState('');
-    const globalContext = use(GlobalContext);
-    const { alerts, changePasswordForm, recaptcha } = globalContext;
-    const { changePasswordButtonLabel } = changePasswordForm;
-    const { sendMessage } = use(SnackbarContext);
-    const [shouldReset, setReset] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const errorCodes: Record<number, string> = {
-        1: 'FieldRequired',
-        2: 'FieldMismatch',
-        3: 'UserNotFound',
-        4: 'InvalidCredentials',
-        5: 'InvalidCaptcha',
-        6: 'ChangeNotPermitted',
-        7: 'InvalidDomain',
-        8: 'LdapProblem',
-        9: 'ComplexPassword',
-        10: 'MinimumScore',
-        11: 'MinimumDistance',
-        12: 'PwnedPassword',
-    };
+    const globalContext = use(GlobalContext)!;
+    const { alerts } = globalContext;
 
     const errorMessages: Record<number, string> = {
         1: alerts.errorFieldRequired,
@@ -51,6 +28,16 @@ export function ChangePassword() {
         12: alerts.errorPwnedPassword,
     };
 
+    const [disabled, setDisabled] = useState(true);
+    const [submit, setSubmit] = useState(false);
+    const [dialogIsOpen, setDialog] = useState(false);
+    const [token, setToken] = useState('');
+    const { changePasswordForm } = globalContext;
+    const { changePasswordButtonLabel } = changePasswordForm;
+    const { sendMessage } = use(SnackbarContext)!;
+    const [shouldReset, setReset] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
     const handleSubmit = () => {
         if (!isSubmitting) {
             setIsSubmitting(true);
@@ -64,10 +51,6 @@ export function ChangePassword() {
             const payload = JSON.stringify({ ...formData, Recaptcha: token });
             const response = await fetchRequest('api/password', 'POST', payload);
             if (response?.errors?.length) {
-                const firstError = response.errors[0];
-                const logCode = errorCodes[firstError.errorCode] || 'Generic';
-                console.log(`[PassCore:Error:${logCode}]`);
-
                 const errorAlertMessage = response.errors
                     .map((error: ApiError) =>
                         error.errorCode === 0
@@ -78,7 +61,6 @@ export function ChangePassword() {
                 sendMessage(errorAlertMessage, 'error');
                 return;
             }
-            console.log('[PassCore:Success]');
             setDialog(true);
         } catch (err) {
             const errorMsg = (err as { message?: string })?.message || String(err);
