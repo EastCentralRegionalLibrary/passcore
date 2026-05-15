@@ -57,14 +57,19 @@ jobs:
 
       - name: Run Backend Unit Tests
         run: |
-          dotnet test \
+          set -euo pipefail
+          for proj in \
             tests/Unosquare.PassCore.Common.Tests/Unosquare.PassCore.Common.Tests.csproj \
             tests/Unosquare.PassCore.PasswordProvider.Debug.Tests/Unosquare.PassCore.PasswordProvider.Debug.Tests.csproj \
             tests/Zyborg.PassCore.PasswordProvider.LDAP.Tests/Zyborg.PassCore.PasswordProvider.LDAP.Tests.csproj \
-            tests/PwnedPasswordsSearch.Tests/PwnedPasswordsSearch.Tests.csproj \
-            --configuration Debug \
-            --logger "trx;LogFileName=test-results.trx" \
-            --logger "console;verbosity=normal"
+            tests/PwnedPasswordsSearch.Tests/PwnedPasswordsSearch.Tests.csproj
+          do
+            echo "==> Testing $proj"
+            dotnet test "$proj" \
+              --configuration Debug \
+              --logger "trx;LogFileName=test-results.trx" \
+              --logger "console;verbosity=normal"
+          done
 
       - name: Upload .NET Test Results
         if: always()
