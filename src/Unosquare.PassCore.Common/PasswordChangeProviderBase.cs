@@ -4,17 +4,28 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Unosquare.PassCore.Common.Exceptions;
+using Unosquare.PassCore.Common.Models;
 
 namespace Unosquare.PassCore.Common;
 
+/// <summary>
+/// Base class for password change providers. Centralizes logging, policy evaluation,
+/// validation and exception-to-error mapping so concrete providers only need to
+/// implement <see cref="ChangePasswordCore"/>.
+/// </summary>
 public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
 {
     protected ILogger Logger { get; }
     protected IEnumerable<IPasswordPolicy> Policies { get; }
+    protected ClientSettings ClientSettings { get; }
 
-    protected PasswordChangeProviderBase(ILogger logger, IEnumerable<IPasswordPolicy>? policies = null)
+    protected PasswordChangeProviderBase(
+        ILogger logger,
+        ClientSettings? clientSettings = null,
+        IEnumerable<IPasswordPolicy>? policies = null)
     {
         Logger = logger;
+        ClientSettings = clientSettings ?? new ClientSettings();
         Policies = policies ?? Array.Empty<IPasswordPolicy>();
     }
 
@@ -72,10 +83,12 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
             new EventId(9, nameof(LogProviderExecutionSuccess)),
             "[{CorrelationId}] Provider execution success for user: {Username}");
 
-    public abstract Task<PasswordChangeResult> PerformPasswordChangeAsync(
+    /// <inheritdoc />
+    public virtual Task<PasswordChangeResult> PerformPasswordChangeAsync(
         string username,
         string currentPassword,
-        string newPassword);
+        string newPassword) =>
+        ChangePasswordAsync(new PasswordChangeContext(username, currentPassword, newPassword, ClientSettings));
 
     protected virtual async Task<PasswordChangeResult> ChangePasswordAsync(PasswordChangeContext context, CancellationToken cancellationToken = default)
     {

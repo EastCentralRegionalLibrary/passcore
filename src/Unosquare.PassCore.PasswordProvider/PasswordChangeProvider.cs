@@ -28,45 +28,23 @@ namespace Unosquare.PassCore.PasswordProvider
     [SupportedOSPlatform("windows")]
     public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester
     {
-        // Readonly fields
         private readonly PasswordChangeOptions _options;
-        private readonly ClientSettings _clientSettings;
-        private IdentityType _idType = IdentityType.UserPrincipalName; // Default identity type
+        private IdentityType _idType = IdentityType.UserPrincipalName;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="PasswordChangeProvider"/> class.
-        /// Constructor to inject logger and options.
-        /// </summary>
-        /// <param name="logger">The logger interface for logging events within this provider.</param>
-        /// <param name="options">The options configuration for password change operations, injected through IOptions.</param>
-        /// <param name="clientSettings">The client settings.</param>
-        /// <param name="policies">The password policies.</param>
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
             IOptions<ClientSettings> clientSettings,
             IEnumerable<IPasswordPolicy> policies)
-            : base(logger, policies)
+            : base(logger, clientSettings?.Value, policies)
         {
-            ArgumentNullException.ThrowIfNull(logger);
             ArgumentNullException.ThrowIfNull(options);
             _options = options.Value;
-            _clientSettings = clientSettings?.Value ?? new ClientSettings();
-            SetIdType(); // Determine IdentityType from options
+            SetIdType();
         }
 
         /// <inheritdoc />
-        public override async Task<PasswordChangeResult> PerformPasswordChangeAsync(
-            string username,
-            string currentPassword,
-            string newPassword)
-        {
-            var context = new PasswordChangeContext(username, currentPassword, newPassword, _clientSettings);
-            return await ChangePasswordAsync(context);
-        }
-
-        /// <inheritdoc />
-        protected override async Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
+        protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(context);
 
@@ -95,9 +73,10 @@ namespace Unosquare.PassCore.PasswordProvider
                 throw new InvalidCredentialsException();
             }
 
-            UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal); // Attempt to update the password
+            UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal);
+            userPrincipal.Save();
 
-            userPrincipal.Save(); // Save changes to Active Directory
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />
@@ -218,23 +197,17 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             try
             {
-                userPrincipal.ChangePassword(currentPassword, newPassword); // Attempt to change password using ChangePassword method (preferred method)
+                userPrincipal.ChangePassword(currentPassword, newPassword);
             }
-            catch (Exception) // Catch exceptions during ChangePassword operation
+            catch (Exception)
             {
-                if (_options.UseAutomaticContext) // If AutomaticContext is enabled, ChangePassword failure is critical
-                {
-                    throw; // Re-throw the original exception - Password update is aborted in AutomaticContext mode if ChangePassword fails
-                }
+                // In automatic-context mode we never set passwords administratively;
+                // surface the original failure.
+                if (_options.UseAutomaticContext)
+                    throw;
 
-                try // Attempt to use SetPassword as a fallback if ChangePassword fails and AutomaticContext is disabled
-                {
-                    userPrincipal.SetPassword(newPassword); // Fallback to SetPassword method if ChangePassword fails
-                }
-                catch (Exception) // Catch exceptions during SetPassword operation
-                {
-                    throw; // Re-throw the SetPassword exception as password update ultimately failed
-                }
+                // Service-account mode: fall back to administrative SetPassword.
+                userPrincipal.SetPassword(newPassword);
             }
         }
 
