@@ -16,9 +16,10 @@ export function ChangePasswordDialog({
     open,
     onClose,
 }: IChangePasswordDialogProps) {
-    const { successAlertBody, successAlertTitle } = use(GlobalContext).alerts;
+    const { successAlertBody, successAlertTitle } = use(GlobalContext)!.alerts;
     return (
         <Dialog
+            data-testid="success-dialog"
             open={open}
             onClose={(_event, reason) => {
                 if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') {
@@ -37,4 +38,4 @@ export function ChangePasswordDialog({
             </DialogContent>
         </Dialog>
     );
-};
+}

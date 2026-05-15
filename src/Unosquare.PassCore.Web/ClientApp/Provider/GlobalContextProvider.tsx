@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { GlobalContext } from './GlobalContext';
 import { IGlobalContext } from '../types/Providers';
 
@@ -11,10 +11,10 @@ export function GlobalContextProvider({
     children,
     settings,
 }: IGlobalContextProviderProps) {
-    const [getProviderValue] = useState<IGlobalContext>({ ...settings });
+    const providerValue = useMemo(() => ({ ...settings }), [settings]);
 
     return (
-        <GlobalContext.Provider value={getProviderValue}>
+        <GlobalContext.Provider value={providerValue}>
             {children}
         </GlobalContext.Provider>
     );

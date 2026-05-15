@@ -5,21 +5,12 @@ import { SnackbarMessageType } from '../types/Components';
 
 export interface GlobalSnackbarProps {
     message: { messageText: string; messageType: SnackbarMessageType };
-    milliSeconds: number;
-    mobile: boolean;
+    milliSeconds?: number;
 }
-
-const severityMap: Record<SnackbarMessageType, 'success' | 'error' | 'warning' | 'info'> = {
-    success: 'success',
-    error: 'error',
-    warning: 'warning',
-    info: 'info',
-};
 
 export function GlobalSnackbar({
     message,
     milliSeconds = 2500,
-    mobile = false,
 }: GlobalSnackbarProps) {
     const [open, setOpen] = useState(false);
 
@@ -35,20 +26,19 @@ export function GlobalSnackbar({
     }, [message, milliSeconds]);
 
     const anchorOrigin: SnackbarOrigin = {
-        horizontal: mobile ? 'center' : 'right',
+        horizontal: 'right',
         vertical: 'bottom',
     };
 
     return (
-        <Snackbar anchorOrigin={anchorOrigin} open={open}>
+        <Snackbar data-testid="error-snackbar" anchorOrigin={anchorOrigin} open={open}>
             <Alert
-                severity={severityMap[message.messageType]}
-                onClose={mobile ? undefined : () => setOpen(false)}
+                severity={message.messageType}
+                onClose={() => setOpen(false)}
                 variant="filled"
-                sx={{ fontSize: mobile ? '1.2rem' : undefined }}
             >
                 {message.messageText}
             </Alert>
         </Snackbar>
     );
-};
+}

@@ -1,5 +1,5 @@
 import Stack from '@mui/material/Stack';
-import { useState, use, useEffect, FocusEvent, ChangeEvent } from 'react';
+import { useState, use, useEffect, FocusEvent, ChangeEvent, useMemo, useCallback } from 'react';
 import TextField from '@mui/material/TextField';
 import { GlobalContext } from '../Provider/GlobalContext';
 import { IChangePasswordFormInitialModel, IChangePasswordFormProps } from '../types/Components';
@@ -8,7 +8,7 @@ import { PasswordStrengthBar } from './PasswordStrengthBar';
 import { ReCaptcha } from './ReCaptcha';
 import Typography from '@mui/material/Typography';
 import { parsePlainTextAndLinks } from '../Utils/HtmlStringUtils';
-import validateForm, { ValidationRule, FieldValidationRules } from '../Utils/ValidateForm';
+import { validateForm, ValidationRule, FieldValidationRules } from '../Utils/ValidateForm';
 import { IGlobalContext } from '../types/Providers';
 
 const defaultState: IChangePasswordFormInitialModel = {
@@ -18,6 +18,27 @@ const defaultState: IChangePasswordFormInitialModel = {
     recaptcha: '',
     username: new URLSearchParams(window.location.search).get('userName') || '',
 };
+
+const isUsernamePatternValid = async (
+    value: string,
+    _formData: IChangePasswordFormInitialModel,
+    context: IGlobalContext,
+    regex: RegExp,
+): Promise<boolean> => {
+    return regex.test(value);
+};
+
+const isPasswordMatchRule = async (value: string, formData: IChangePasswordFormInitialModel): Promise<boolean> => {
+    return value === formData.newPassword;
+};
+
+const isRequired = (message: string): ValidationRule => ({
+    name: 'isRequired',
+    rule: async (value: string) => {
+        return !!value.trim();
+    },
+    message,
+});
 
 export function ChangePasswordForm({
     submitData,
@@ -30,7 +51,7 @@ export function ChangePasswordForm({
 }: IChangePasswordFormProps) {
     const [fields, setFields] = useState<IChangePasswordFormInitialModel>(defaultState);
     const [errors, setErrors] = useState<{ [key: string]: string | undefined }>({});
-    const context = use(GlobalContext);
+    const context = use(GlobalContext)!;
     const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
     const [touched, setTouched] = useState(() =>
         Object.keys(defaultState).reduce(
@@ -92,57 +113,45 @@ export function ChangePasswordForm({
         }));
     };
 
-    const isRequired: ValidationRule = {
-        name: 'isRequired',
-        rule: async (value: string) => {
-            return !!value.trim(); // Returns a Promise resolving to a boolean
-        },
-        message: context.errorsPasswordForm.fieldRequired,
-    };
+    const validationRegex = useMemo(
+        () =>
+            context.useEmail
+                ? new RegExp(context.validationRegex.emailRegex)
+                : new RegExp(context.validationRegex.usernameRegex),
+        [context.useEmail, context.validationRegex.emailRegex, context.validationRegex.usernameRegex],
+    );
 
-    const isUsernamePatternValid = async (
-        value: string,
-        _formData: IChangePasswordFormInitialModel,
-        context: IGlobalContext,
-    ): Promise<boolean> => {
-        const regex = context.useEmail
-            ? new RegExp(context.validationRegex.emailRegex)
-            : new RegExp(context.validationRegex.usernameRegex);
-        return regex.test(value);
-    };
+    const fieldRules: FieldValidationRules = useMemo(
+        () => ({
+            username: [
+                isRequired(context.errorsPasswordForm.fieldRequired),
+                {
+                    name: 'isUsernameValid',
+                    rule: (value, formData, ctx) => isUsernamePatternValid(value, formData, ctx, validationRegex),
+                    message: context.useEmail
+                        ? context.errorsPasswordForm.usernameEmailPattern
+                        : context.errorsPasswordForm.usernamePattern,
+                },
+            ],
+            currentPassword: [isRequired(context.errorsPasswordForm.fieldRequired)],
+            newPassword: [isRequired(context.errorsPasswordForm.fieldRequired)],
+            newPasswordVerify: [
+                isRequired(context.errorsPasswordForm.fieldRequired),
+                {
+                    name: 'isPasswordMatch',
+                    rule: isPasswordMatchRule,
+                    message: context.errorsPasswordForm.passwordMatch,
+                },
+            ],
+        }),
+        [context, validationRegex],
+    );
 
-    const isPasswordMatchRule = async (value: string, formData: IChangePasswordFormInitialModel): Promise<boolean> => {
-        return value === formData.newPassword;
-    };
-
-    const fieldRules: FieldValidationRules = {
-        username: [
-            isRequired,
-            {
-                name: 'isUsernameValid',
-                rule: isUsernamePatternValid,
-                message: context.useEmail
-                    ? context.errorsPasswordForm.usernameEmailPattern
-                    : context.errorsPasswordForm.usernamePattern,
-            } as ValidationRule,
-        ],
-        currentPassword: [isRequired],
-        newPassword: [isRequired],
-        newPasswordVerify: [
-            isRequired,
-            {
-                name: 'isPasswordMatch',
-                rule: isPasswordMatchRule,
-                message: context.errorsPasswordForm.passwordMatch,
-            } as ValidationRule,
-        ],
-    };
-
-    const validateAllFields = async () => {
+    const validateAllFields = useCallback(async () => {
         const validationErrors = await validateForm(fields, context, fieldRules);
         setErrors(validationErrors);
         return validationErrors;
-    };
+    }, [fields, context, fieldRules]);
 
     useEffect(() => {
         validateAllFields().then((validationErrors) => {
@@ -154,8 +163,8 @@ export function ChangePasswordForm({
 
     useEffect(() => {
         onValidated(
-            Object.keys(errors).some((key) => errors[key]) ||
-                (recaptcha?.siteKey && recaptcha.siteKey !== '' && ReCaptchaToken === ''),
+            Object.keys(errors).some((key) => !!errors[key]) ||
+                !!(recaptcha?.siteKey && recaptcha.siteKey !== '' && ReCaptchaToken === ''),
         );
     }, [errors, onValidated, recaptcha?.siteKey, ReCaptchaToken]);
 
@@ -192,7 +201,7 @@ export function ChangePasswordForm({
                 onChange={handleChange}
                 value={fields.username}
                 fullWidth
-                error={errors.username && (touched.username || !!fields.username)}
+                error={!!errors.username && (touched.username || !!fields.username)}
                 helperText={getHelperText("username")}
             />
             <TextField
@@ -206,7 +215,7 @@ export function ChangePasswordForm({
                 type="password"
                 value={fields.currentPassword}
                 fullWidth
-                error={errors.currentPassword && (touched.currentPassword || !!fields.currentPassword)}
+                error={!!errors.currentPassword && (touched.currentPassword || !!fields.currentPassword)}
                 helperText={getHelperText("currentPassword")}
             />
             {usePasswordGeneration ? (
@@ -224,8 +233,8 @@ export function ChangePasswordForm({
                         type="password"
                         value={fields.newPassword}
                         fullWidth
-                        error={errors.newPassword && (touched.newPassword || !!fields.newPassword)}
-                        // helperText={errors.NewPassword || ''}
+                        error={!!errors.newPassword && (touched.newPassword || !!fields.newPassword)}
+                        helperText={getHelperText("newPassword")}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.newPassword} />}
                     <Typography variant="body2" sx={{ marginBottom: '15px' }}>
@@ -242,7 +251,7 @@ export function ChangePasswordForm({
                         type="password"
                         value={fields.newPasswordVerify}
                         fullWidth
-                        error={errors.newPasswordVerify && (touched.newPasswordVerify || !!fields.newPasswordVerify)}
+                        error={!!errors.newPasswordVerify && (touched.newPasswordVerify || !!fields.newPasswordVerify)}
                         helperText={getHelperText("newPasswordVerify")}
                     />
                 </>
@@ -252,4 +261,4 @@ export function ChangePasswordForm({
             )}
         </Stack>
     );
-};
+}

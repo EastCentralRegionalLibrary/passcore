@@ -16,7 +16,7 @@ export function PasswordGenerator({
     value,
     setValue,
 }: IPasswordGenProps) {
-    const { sendMessage } = use(SnackbarContext);
+    const { sendMessage } = use(SnackbarContext)!;
     const [visibility, setVisibility] = useState(false);
     const [isLoading, setLoading] = useState(true);
 
@@ -93,4 +93,4 @@ export function PasswordGenerator({
             }}
         />
     );
-};
+}

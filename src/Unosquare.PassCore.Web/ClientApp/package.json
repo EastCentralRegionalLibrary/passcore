@@ -49,7 +49,6 @@
         "@playwright/test": "^1.59.1",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
-        "@types/zxcvbn": "^4.4.0",
         "eslint": "^9.39.4",
         "eslint-plugin-react": "^7.37.5",
         "globals": "^16.5.0",

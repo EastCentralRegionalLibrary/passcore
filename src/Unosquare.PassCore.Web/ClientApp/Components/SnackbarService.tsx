@@ -1,14 +1,13 @@
-import { SimpleObservable, SnackbarMessageType } from '../types/Components';
+import { SnackbarMessageType } from '../types/Components';
+import { SimpleObservable } from '../Utils/SimpleObservable';
 
 export interface Snackbar {
     message: { messageText: string; messageType: SnackbarMessageType };
     milliSeconds?: number;
-    isMobile: boolean;
 }
 
 class SnackbarService extends SimpleObservable {
     private snackbar: Snackbar = {
-        isMobile: false,
         message: { messageText: '', messageType: 'success' },
     };
 
@@ -16,19 +15,15 @@ class SnackbarService extends SimpleObservable {
         return this.snackbar;
     }
 
-    public async showSnackbar(message: string, type: SnackbarMessageType = 'success', milliSeconds = 5000): Promise<void> {
-        return new Promise((resolve) => {
-            this.snackbar = {
-                isMobile: false,
-                message: {
-                    messageText: message,
-                    messageType: type,
-                },
-                milliSeconds,
-            };
-            this.inform();
-            resolve(); // Ensure the promise resolves
-        });
+    public showSnackbar(message: string, type: SnackbarMessageType = 'success', milliSeconds = 5000): void {
+        this.snackbar = {
+            message: {
+                messageText: message,
+                messageType: type,
+            },
+            milliSeconds,
+        };
+        this.inform();
     }
 }
 

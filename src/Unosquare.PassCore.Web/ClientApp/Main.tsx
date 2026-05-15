@@ -11,10 +11,10 @@ import { resolveAppSettings } from './Utils/AppSettings';
 import { IGlobalContext } from './types/Providers';
 
 export function Main() {
-    const [settings, isLoading] = useEffectWithLoading<IGlobalContext>(resolveAppSettings, {} as IGlobalContext, []);
+    const [settings, isLoading, error] = useEffectWithLoading<IGlobalContext>(resolveAppSettings, {} as IGlobalContext, []);
 
     useEffect(() => {
-        if (settings && typeof settings !== 'boolean' && settings.recaptcha?.siteKey) {
+        if (settings?.recaptcha?.siteKey) {
             if (settings.recaptcha.siteKey !== '') {
                 loadReCaptcha();
             }
@@ -43,30 +43,28 @@ export function Main() {
         );
     }
 
-    if (settings && typeof settings !== 'boolean' && settings.applicationTitle) {
+    if (settings?.applicationTitle) {
         const titleElement = document.getElementById('title');
         if (titleElement) {
-            titleElement.innerHTML = settings.applicationTitle;
+            titleElement.textContent = settings.applicationTitle;
         }
     }
 
-    // Type guard before passing to GlobalContextProvider
-    if (typeof settings !== 'boolean') {
+    if (error) {
         return (
-            <GlobalContextProvider settings={settings}>
-                <SnackbarContextProvider>
-                    <EntryPoint />
-                </SnackbarContextProvider>
-            </GlobalContextProvider>
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+                <Typography variant="h6" sx={{ color: 'error.main' }}>
+                    Failed to load application settings. Be sure the settings file exists and file permissions are correct.
+                </Typography>
+            </Box>
         );
     }
 
-    // Handle the boolean case (e.g., render an error message)
     return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-            <Typography variant="h6" sx={{ color: 'error.main' }}>
-                Failed to load application settings. Be sure the settings file exists and file permissions are correct.
-            </Typography>
-        </Box>
+        <GlobalContextProvider settings={settings}>
+            <SnackbarContextProvider>
+                <EntryPoint />
+            </SnackbarContextProvider>
+        </GlobalContextProvider>
     );
-};
+}

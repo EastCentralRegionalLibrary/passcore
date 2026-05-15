@@ -1,4 +1,4 @@
-import * as React from 'react';
+import { Component, createRef } from 'react';
 
 const noop = (): any => undefined;
 interface IReCaptchaProps {
@@ -23,7 +23,7 @@ interface IReCaptchaState {
     ready: boolean;
 }
 
-class GoogleReCaptcha extends React.Component<Partial<IReCaptchaProps>, IReCaptchaState> {
+class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaState> {
     protected static defaultProps: Partial<IReCaptchaProps> = {
         badge: 'bottomright',
         hl: 'en',
@@ -39,12 +39,12 @@ class GoogleReCaptcha extends React.Component<Partial<IReCaptchaProps>, IReCaptc
         type: 'image',
     };
 
-    public readyIntervalId = setInterval(() => this._updateReadyState(), 1000);
-    public recaptcha = React.createRef<HTMLDivElement>();
+    public readyIntervalId: ReturnType<typeof setInterval>;
+    public recaptcha = createRef<HTMLDivElement>();
 
-    private widgetId: string;
+    private widgetId: string | undefined;
 
-    constructor(props: any) {
+    constructor(props: Partial<IReCaptchaProps>) {
         super(props);
         this.state = {
             ready: this.isReady(),
@@ -61,6 +61,7 @@ class GoogleReCaptcha extends React.Component<Partial<IReCaptchaProps>, IReCaptc
     }
 
     public componentDidMount() {
+        this.readyIntervalId = setInterval(() => this._updateReadyState(), 1000);
         this.renderManually();
     }
 
@@ -71,13 +72,15 @@ class GoogleReCaptcha extends React.Component<Partial<IReCaptchaProps>, IReCaptc
     }
 
     public reset = () => {
-        if (this.isReady()) {
+        if (this.isReady() && this.widgetId !== undefined) {
             this.grecaptcha().reset(this.widgetId);
         }
     };
 
     public execute = () => {
-        this.grecaptcha().execute(this.widgetId);
+        if (this.isReady() && this.widgetId !== undefined) {
+            this.grecaptcha().execute(this.widgetId);
+        }
     };
 
     public shouldComponentUpdate(_nextProps: any, nextState: IReCaptchaState) {
@@ -143,7 +146,9 @@ class GoogleReCaptcha extends React.Component<Partial<IReCaptchaProps>, IReCaptc
                 ready: true,
             }));
             clearInterval(this.readyIntervalId);
-            this.props.onLoad();
+            if (this.props.onLoad) {
+                this.props.onLoad();
+            }
         }
     };
 }

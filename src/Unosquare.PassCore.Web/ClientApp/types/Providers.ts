@@ -42,7 +42,6 @@ interface IErrorsPasswordForm {
 interface IRecaptcha {
     languageCode: string;
     siteKey: string;
-    privateKey: string;
 }
 
 interface IValidationRegex {

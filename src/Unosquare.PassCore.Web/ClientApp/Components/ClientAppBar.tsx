@@ -8,7 +8,7 @@ import { use } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
 export function ClientAppBar() {
-    const { changePasswordForm, changePasswordTitle } = use(GlobalContext);
+    const { changePasswordForm, changePasswordTitle } = use(GlobalContext)!;
     const { helpText } = changePasswordForm;
 
     return (
@@ -29,8 +29,7 @@ export function ClientAppBar() {
             >
                 <Typography
                     variant="h6"
-                    color="secondary"
-                    sx={{ flexGrow: 1 }}
+                    sx={{ flexGrow: 1, color: 'secondary.main' }}
                 >
                     {changePasswordTitle}
                 </Typography>
@@ -49,4 +48,4 @@ export function ClientAppBar() {
             </Box>
         </AppBar>
     );
-};
+}
