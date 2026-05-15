@@ -33,7 +33,6 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
 {
     private readonly LdapPasswordChangeOptions _options;
-    private readonly ClientSettings _clientSettings;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
 
@@ -41,7 +40,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     {
         "distinguishedName",
         "sAMAccountName",
-        "memberOf"
+        "memberOf",
     };
 
     public LdapPasswordChangeProvider(
@@ -49,10 +48,10 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         IOptions<LdapPasswordChangeOptions> options,
         IOptions<ClientSettings> clientSettings,
         IEnumerable<IPasswordPolicy> policies)
-        : base(logger, policies)
+        : base(logger, clientSettings?.Value, policies)
     {
-        _options = options.Value ?? throw new ArgumentNullException(nameof(options));
-        _clientSettings = clientSettings?.Value ?? new ClientSettings();
+        ArgumentNullException.ThrowIfNull(options);
+        _options = options.Value;
         ValidateOptions(_options);
 
         // First find user DN by username (SAM Account Name)
@@ -80,24 +79,36 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         ArgumentNullException.ThrowIfNull(groupName);
 
         var user = FindUser(username);
-        return Task.FromResult(
-                user.Groups.Any(g =>
-                    g.Contains(groupName, StringComparison.OrdinalIgnoreCase)));
 
+        // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
+        // Compare against the group's RDN value or its full DN, never as a substring,
+        // so that "Admins" cannot accidentally match "AdminsExtra".
+        var isMember = user.Groups.Any(dn =>
+            DnMatchesGroup(dn, groupName));
+
+        return Task.FromResult(isMember);
+    }
+
+    private static bool DnMatchesGroup(string dn, string groupName)
+    {
+        if (string.Equals(dn, groupName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Extract the first RDN value (the bit before the first comma, after the '=').
+        var firstComma = dn.IndexOf(',', StringComparison.Ordinal);
+        var rdn = firstComma >= 0 ? dn[..firstComma] : dn;
+
+        var equals = rdn.IndexOf('=', StringComparison.Ordinal);
+        if (equals < 0)
+            return false;
+
+        var cn = rdn[(equals + 1)..].Trim();
+        return string.Equals(cn, groupName, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---------------------------------------------------------------------
     // Password change entry point
     // ---------------------------------------------------------------------
-
-    public override async Task<PasswordChangeResult> PerformPasswordChangeAsync(
-        string username,
-        string currentPassword,
-        string newPassword)
-    {
-        var context = new PasswordChangeContext(username, currentPassword, newPassword, _clientSettings);
-        return await ChangePasswordAsync(context);
-    }
 
     protected override Task ChangePasswordCore(
         PasswordChangeContext context,
@@ -185,10 +196,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         {
             using var ldap = Bind(userDn, password);
         }
-        catch (LdapException ex)
+        catch (LdapBindException ex)
         {
-            throw new InvalidCredentialsException(
-                "Invalid current password", ex);
+            throw new InvalidCredentialsException("Invalid current password", ex);
         }
     }
 
@@ -248,9 +258,30 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // LDAP connection helpers
     // ---------------------------------------------------------------------
 
-    private LdapConnection BindAsServiceAccount() =>
-        Bind(_options.LdapUsername, _options.LdapPassword);
+    /// <summary>
+    /// Binds as the configured service account. A bind failure here is treated
+    /// as an infrastructure error (the operator misconfigured the bind credentials),
+    /// never as an end-user authentication error.
+    /// </summary>
+    private LdapConnection BindAsServiceAccount()
+    {
+        try
+        {
+            return Bind(_options.LdapUsername, _options.LdapPassword);
+        }
+        catch (LdapBindException ex)
+        {
+            throw new DirectoryUnavailableException(
+                "Failed to bind as the configured LDAP service account.", ex);
+        }
+    }
 
+    /// <summary>
+    /// Connects to one of the configured hosts and binds with the supplied
+    /// credentials. Connect-time failures fall through to the next host;
+    /// bind failures (post-connect) surface as <see cref="LdapBindException"/>
+    /// so callers can decide whether to treat them as auth or infra failures.
+    /// </summary>
     private LdapConnection Bind(string bindDn, string password)
     {
         LdapException? lastConnectException = null;
@@ -268,28 +299,43 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
                 if (_options.LdapStartTls)
                     ldap.StartTls();
-
-                // IMPORTANT: bind errors must NOT be treated as host failures
-                ldap.Bind(bindDn, password);
-                return ldap;
             }
             catch (LdapException ex)
             {
-                // Detect bind vs connect failure
-                if (ldap.Connected)
-                {
-                    // Connected but bind failed → invalid credentials
-                    throw new InvalidCredentialsException("Invalid current password", ex);
-                }
-
                 lastConnectException = ex;
-                // Try the next host
+                ldap.Dispose();
+                continue; // Try the next host
+            }
+
+            try
+            {
+                ldap.Bind(bindDn, password);
+                return ldap;
+            }
+            catch (LdapException bindEx)
+            {
+                ldap.Dispose();
+                throw new LdapBindException(bindEx);
             }
         }
 
         throw new DirectoryUnavailableException(
             "Failed to connect to any configured LDAP hostname",
             lastConnectException);
+    }
+
+    /// <summary>
+    /// Marker exception raised when the LDAP bind step (rather than the
+    /// connect step) fails. Lets callers distinguish a wrong password from
+    /// an unreachable host while keeping the original <see cref="LdapException"/>
+    /// available as <see cref="System.Exception.InnerException"/>.
+    /// </summary>
+    private sealed class LdapBindException : Exception
+    {
+        public LdapBindException(LdapException inner)
+            : base(inner.Message, inner)
+        {
+        }
     }
 
     // ---------------------------------------------------------------------

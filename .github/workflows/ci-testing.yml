@@ -55,12 +55,25 @@ jobs:
             --property:PASSCORE_PROVIDER=DEBUG \
             --no-restore
 
-      - name: Run Backend Tests
+      - name: Run Backend Unit Tests
         run: |
           dotnet test \
+            tests/Unosquare.PassCore.Common.Tests/Unosquare.PassCore.Common.Tests.csproj \
             tests/Unosquare.PassCore.PasswordProvider.Debug.Tests/Unosquare.PassCore.PasswordProvider.Debug.Tests.csproj \
-            --no-build \
-            --property:PASSCORE_PROVIDER=DEBUG
+            tests/Zyborg.PassCore.PasswordProvider.LDAP.Tests/Zyborg.PassCore.PasswordProvider.LDAP.Tests.csproj \
+            tests/PwnedPasswordsSearch.Tests/PwnedPasswordsSearch.Tests.csproj \
+            --configuration Debug \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "console;verbosity=normal"
+
+      - name: Upload .NET Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: tests/**/TestResults/*.trx
+          retention-days: 7
+          if-no-files-found: ignore
 
 
       # -------------------------

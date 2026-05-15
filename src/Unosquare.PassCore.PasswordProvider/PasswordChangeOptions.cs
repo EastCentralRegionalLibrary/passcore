@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using System;
+﻿using System;
 using Unosquare.PassCore.Common;
 
 namespace Unosquare.PassCore.PasswordProvider;
@@ -16,35 +15,17 @@ public class PasswordChangeOptions : IAppSettings
     private string? _ldapUsername;
 
     /// <summary>
-    /// Gets or sets a value indicating whether [use automatic context].
+    /// Gets or sets a value indicating whether to acquire the principal context
+    /// from the host's current domain credentials. When <c>false</c> the
+    /// <see cref="IAppSettings.LdapUsername"/> / <see cref="IAppSettings.LdapPassword"/>
+    /// values are used to bind explicitly.
     /// </summary>
-    /// <value>
-    ///   <c>true</c> if [use automatic context]; otherwise, <c>false</c>.
-    /// </value>
     public bool UseAutomaticContext { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the restricted ad groups.
+    /// Gets or sets the identifier type used to look up the user
+    /// (UPN, SAM, DN, GUID, SID or Name).
     /// </summary>
-    /// <value>
-    /// The restricted ad groups.
-    /// </value>
-    public List<string>? RestrictedAdGroups { get; set; }
-
-    /// <summary>
-    /// Gets or sets the allowed ad groups.
-    /// </summary>
-    /// <value>
-    /// The allowed ad groups.
-    /// </value>
-    public List<string>? AllowedAdGroups { get; set; }
-
-    /// <summary>
-    /// Gets or sets the identifier type for user.
-    /// </summary>
-    /// <value>
-    /// The identifier type for user.
-    /// </value>
     public string? IdTypeForUser { get; set; }
 
     /// <summary>

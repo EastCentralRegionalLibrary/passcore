@@ -1,32 +1,30 @@
+using System;
 using System.Collections.Generic;
 using Unosquare.PassCore.Common;
 
 namespace Unosquare.PassCore.PasswordProvider.Debug;
 
-#if DEBUG
 /// <summary>
-/// Options for the debug password change provider.
+/// Options that configure the behavior of <see cref="DebugPasswordChangeProvider"/>.
 /// </summary>
 public class DebugProviderOptions
 {
     /// <summary>
-    /// Gets or sets a value indicating whether to enable pwned password checks.
+    /// Maps usernames (local part, case-insensitive) to specific API error codes
+    /// that the provider should raise instead of succeeding.
     /// </summary>
-    public bool EnablePwnedCheck { get; set; }
+    public Dictionary<string, ApiErrorCode> ForcedErrors { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Gets or sets the mapping of usernames to specific API error codes.
-    /// </summary>
-    public Dictionary<string, ApiErrorCode> ForcedErrors { get; set; } = new();
-
-    /// <summary>
-    /// Gets or sets the latency to simulate in milliseconds.
+    /// Artificial latency, in milliseconds, applied before evaluating the request.
+    /// Useful for exercising UI loading states.
     /// </summary>
     public int SimulateLatencyMs { get; set; }
 
     /// <summary>
-    /// Gets or sets the default result if no forced error is matched.
+    /// Optional fallback error code returned when neither <see cref="ForcedErrors"/>
+    /// nor the legacy username-based mapping matches.
     /// </summary>
     public ApiErrorCode? DefaultErrorCode { get; set; }
 }
-#endif
