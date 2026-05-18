@@ -8,7 +8,7 @@ import { PasswordStrengthBar } from './PasswordStrengthBar';
 import { ReCaptcha } from './ReCaptcha';
 import Typography from '@mui/material/Typography';
 import { parsePlainTextAndLinks } from '../Utils/HtmlStringUtils';
-import { validateForm, ValidationRule, FieldValidationRules } from '../Utils/ValidateForm';
+import { validateForm, ValidationRule, FieldValidationRules, ValidationErrors } from '../Utils/ValidateForm';
 import { IGlobalContext } from '../types/Providers';
 
 const defaultState: IChangePasswordFormInitialModel = {
@@ -22,7 +22,7 @@ const defaultState: IChangePasswordFormInitialModel = {
 const isUsernamePatternValid = async (
     value: string,
     _formData: IChangePasswordFormInitialModel,
-    context: IGlobalContext,
+    _context: IGlobalContext,
     regex: RegExp,
 ): Promise<boolean> => {
     return regex.test(value);
@@ -50,7 +50,7 @@ export function ChangePasswordForm({
     ReCaptchaToken,
 }: IChangePasswordFormProps) {
     const [fields, setFields] = useState<IChangePasswordFormInitialModel>(defaultState);
-    const [errors, setErrors] = useState<{ [key: string]: string | undefined }>({});
+    const [errors, setErrors] = useState<ValidationErrors>({});
     const context = use(GlobalContext)!;
     const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
     const [touched, setTouched] = useState(() =>

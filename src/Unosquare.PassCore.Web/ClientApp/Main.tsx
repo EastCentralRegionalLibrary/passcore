@@ -14,9 +14,14 @@ export function Main() {
     const [settings, isLoading, error] = useEffectWithLoading<IGlobalContext>(resolveAppSettings, {} as IGlobalContext, []);
 
     useEffect(() => {
-        if (settings?.recaptcha?.siteKey) {
-            if (settings.recaptcha.siteKey !== '') {
-                loadReCaptcha();
+        if (settings?.recaptcha?.siteKey && settings.recaptcha.siteKey !== '') {
+            loadReCaptcha();
+        }
+
+        if (settings?.applicationTitle) {
+            const titleElement = document.getElementById('title');
+            if (titleElement) {
+                titleElement.textContent = settings.applicationTitle;
             }
         }
     }, [settings]);
@@ -41,13 +46,6 @@ export function Main() {
                 </Box>
             </Box>
         );
-    }
-
-    if (settings?.applicationTitle) {
-        const titleElement = document.getElementById('title');
-        if (titleElement) {
-            titleElement.textContent = settings.applicationTitle;
-        }
     }
 
     if (error) {

@@ -1,6 +1,6 @@
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
-import { useState, use } from 'react';
+import { useState, use, useMemo } from 'react';
 import { ChangePasswordDialog } from '../Dialogs/ChangePasswordDialog';
 import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { fetchRequest } from '../Utils/FetchRequest';
@@ -10,10 +10,18 @@ import { ApiError } from '../types/Providers';
 import Box from '@mui/material/Box';
 
 export function ChangePassword() {
-    const globalContext = use(GlobalContext)!;
-    const { alerts } = globalContext;
+    const { alerts, changePasswordForm } = use(GlobalContext)!;
+    const { changePasswordButtonLabel } = changePasswordForm;
+    const { sendMessage } = use(SnackbarContext)!;
 
-    const errorMessages: Record<number, string> = {
+    const [disabled, setDisabled] = useState(true);
+    const [submit, setSubmit] = useState(false);
+    const [dialogIsOpen, setDialog] = useState(false);
+    const [token, setToken] = useState('');
+    const [shouldReset, setReset] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const errorMessages = useMemo<Record<number, string>>(() => ({
         1: alerts.errorFieldRequired,
         2: alerts.errorFieldMismatch,
         3: alerts.errorInvalidUser,
@@ -26,17 +34,7 @@ export function ChangePassword() {
         10: alerts.errorScorePassword,
         11: alerts.errorDistancePassword,
         12: alerts.errorPwnedPassword,
-    };
-
-    const [disabled, setDisabled] = useState(true);
-    const [submit, setSubmit] = useState(false);
-    const [dialogIsOpen, setDialog] = useState(false);
-    const [token, setToken] = useState('');
-    const { changePasswordForm } = globalContext;
-    const { changePasswordButtonLabel } = changePasswordForm;
-    const { sendMessage } = use(SnackbarContext)!;
-    const [shouldReset, setReset] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    }), [alerts]);
 
     const handleSubmit = () => {
         if (!isSubmitting) {
