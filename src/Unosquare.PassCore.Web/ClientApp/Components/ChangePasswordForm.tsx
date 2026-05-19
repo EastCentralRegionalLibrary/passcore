@@ -76,7 +76,7 @@ export function ChangePasswordForm({
         username: context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
         currentPassword: currentPasswordHelpblock,
         recaptcha: '',
-        newPassword: newPasswordHelpblock,
+        newPassword: '',
         newPasswordVerify: newPasswordVerifyHelpblock,
     };
 
