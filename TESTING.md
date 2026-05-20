@@ -6,7 +6,7 @@ PassCore is exercised by three layers of automated tests:
 | ----- | ---------- | ------ |
 | Backend unit tests | `tests/Unosquare.PassCore.Common.Tests`, `tests/Unosquare.PassCore.PasswordProvider.Debug.Tests`, `tests/Zyborg.PassCore.PasswordProvider.LDAP.Tests`, `tests/PwnedPasswordsSearch.Tests` | xUnit (`dotnet test`) |
 | LDAP integration smoke test | `tests/mokapi` (MokAPI LDAP fixtures) + `.github/workflows/ldap-provider-smoke-test.yml` | curl + `jq` against a running container |
-| Front-end E2E | `src/Unosquare.PassCore.Web/ClientApp/tests/e2e` | Playwright (Chromium) against the Debug provider |
+| Front-end E2E | `src/Unosquare.PassCore.Web/ClientApp/tests/e2e` | Playwright (Chromium, Firefox) against the Debug provider |
 
 ## Prerequisites
 
@@ -47,7 +47,7 @@ dotnet build src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
 # 2. Install front-end dependencies + Playwright browsers
 cd src/Unosquare.PassCore.Web/ClientApp
 npm ci
-npx playwright install --with-deps chromium
+npx playwright install --with-deps chromium firefox
 
 # 3. In one terminal, run the backend
 cd ../../..
@@ -93,8 +93,8 @@ artifacts when a job fails.
 
 ## Known limitations
 
-- Playwright only runs Chromium in CI. Add Firefox / WebKit projects to
-  `playwright.config.ts` if cross-browser coverage is desired.
+- Playwright runs Chromium and Firefox in CI. Add a WebKit project to
+  `playwright.config.ts` if additional cross-browser coverage is desired.
 - There is no automated integration test for the AD provider — it lives
   behind `[SupportedOSPlatform("windows")]` and depends on a real Active
   Directory. CI coverage is limited to the Windows build job.

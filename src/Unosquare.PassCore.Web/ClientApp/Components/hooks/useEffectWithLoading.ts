@@ -1,7 +1,7 @@
 import { useState, useEffect, type DependencyList } from 'react';
 
 export function useEffectWithLoading<T>(
-    effect: () => Promise<T>, // Change any to T
+    effect: () => Promise<T>,
     initialValue: T,
     inputs: DependencyList
 ): [T, boolean, Error | null] {
@@ -11,10 +11,11 @@ export function useEffectWithLoading<T>(
 
     useEffect(() => {
         let _isMounted = true;
+        setError(null);
         setIsLoading(true);
 
         effect()
-            .then((resp: T) => { // Change any to T
+            .then((resp: T) => {
                 if (_isMounted) {
                     setter(resp);
                     setIsLoading(false);

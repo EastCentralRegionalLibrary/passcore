@@ -1,4 +1,6 @@
 const loadReCaptcha = () => {
+    if (document.querySelector('script[src*="recaptcha/api.js"]')) return;
+
     const script = document.createElement('script');
     script.async = true;
     script.defer = true;

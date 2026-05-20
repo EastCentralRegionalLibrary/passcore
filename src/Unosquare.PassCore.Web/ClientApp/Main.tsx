@@ -34,6 +34,7 @@ export function Main() {
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    height: '100vh',
                 }}
             >
                 <Box key="title" sx={{ mb: 2 }}>

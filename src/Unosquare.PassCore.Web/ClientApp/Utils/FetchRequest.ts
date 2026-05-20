@@ -16,12 +16,6 @@ export async function fetchRequest<T = unknown>(
     requestMethod: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
     requestBody?: unknown
 ): Promise<ApiResponse<T>> {
-    // Create headers indicating we expect and send JSON.
-    const headers = new Headers({
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-    });
-
     // Determine the body. If requestBody is already a string, use it directly.
     const body =
         typeof requestBody === 'string'
@@ -29,6 +23,12 @@ export async function fetchRequest<T = unknown>(
             : requestBody
                 ? JSON.stringify(requestBody)
                 : null;
+
+    // Indicate we expect JSON, and only send Content-Type when there is a body.
+    const headers = new Headers({ Accept: 'application/json' });
+    if (body) {
+        headers.set('Content-Type', 'application/json');
+    }
 
     // Create a Request object with the provided parameters.
     const request = new Request(url, {

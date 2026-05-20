@@ -18,20 +18,20 @@ export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
     // The regex captures two groups: the attributes and the inner text of the <a> tag.
     const parts = htmlString.split(/<a\s+([^>]+)>(.*?)<\/a>/);
 
-    return parts.reduce<ReactNode[]>((elements, part, index) => {
-        // Expected parts array indices:
-        // index % 3 === 0: Plain text segments.
-        // index % 3 === 1: Attributes string for the <a> element.
-        // index % 3 === 2: Inner text for the <a> element (already rendered as link content).
-        if (index % 3 === 0) {
-            // Plain text: push directly to elements.
-            if (part) {
-                elements.push(part);
-            }
-        } else if (index % 3 === 1) {
+    // After splitting, parts come in groups of three:
+    //   parts[i]     -> plain text segment
+    //   parts[i + 1] -> attributes string for the <a> element
+    //   parts[i + 2] -> inner content for the <a> element
+    const result: ReactNode[] = [];
+    for (let i = 0; i < parts.length; i += 3) {
+        if (parts[i]) {
+            result.push(parts[i]);
+        }
+
+        if (i + 1 < parts.length) {
             // Extract attributes from the anchor tag using regex.
-            // The regex now accounts for potential trailing whitespace after each attribute.
-            const attributes = part.match(/(\w+)=(['"])(.*?)\2\s*/g) || [];
+            // The regex accounts for potential trailing whitespace after each attribute.
+            const attributes = parts[i + 1].match(/(\w+)=(['"])(.*?)\2\s*/g) || [];
             const attributeMap: { [key: string]: string } = {};
 
             attributes.forEach((attr: string) => {
@@ -44,18 +44,18 @@ export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
 
             const href = attributeMap.href || '#';
             const target = attributeMap.target;
-            elements.push(
+            result.push(
                 <a
-                    key={index}
+                    key={href}
                     href={href}
                     target={target}
                     rel={target === '_blank' ? 'noopener noreferrer' : undefined}
                 >
-                    {parts[index + 1] || ''}
+                    {parts[i + 2] || ''}
                 </a>,
             );
         }
-        // Skip index % 3 === 2 since that inner text is already rendered in the <a> element.
-        return elements;
-    }, []);
+    }
+
+    return result;
 }

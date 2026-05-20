@@ -1,16 +1,16 @@
 import { Component, createRef } from 'react';
 
-const noop = (): any => undefined;
+const noop = (): void => undefined;
 interface IReCaptchaProps {
     badge: 'bottomright' | 'bottomleft' | 'inline';
     hl: string;
     inherit: boolean;
     isolated: boolean;
-    onError: () => any;
-    onExpired: () => any;
-    onLoad: () => any;
-    onloadCallback: () => any;
-    onSuccess: (recaptchaToken: string) => any;
+    onError: () => void;
+    onExpired: () => void;
+    onLoad: () => void;
+    onloadCallback: () => void;
+    onSuccess: (recaptchaToken: string) => void;
     render: string;
     sitekey: string;
     size: 'compact' | 'normal' | 'invisible';
@@ -23,6 +23,12 @@ interface IReCaptchaState {
     ready: boolean;
 }
 
+/**
+ * Wraps the Google reCAPTCHA v2 widget.
+ * Implemented as a class component to expose imperative `reset()` and `execute()`
+ * methods via ref, which are required by ReCaptcha.tsx to control the widget lifecycle.
+ * Converting to a functional component would require useImperativeHandle.
+ */
 class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaState> {
     protected static defaultProps: Partial<IReCaptchaProps> = {
         badge: 'bottomright',
@@ -39,10 +45,10 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
         type: 'image',
     };
 
-    public readyIntervalId: ReturnType<typeof setInterval>;
-    public recaptcha = createRef<HTMLDivElement>();
+    private readyIntervalId: ReturnType<typeof setInterval>;
+    private recaptcha = createRef<HTMLDivElement>();
 
-    private widgetId: string | undefined;
+    private widgetId: number | undefined;
 
     constructor(props: Partial<IReCaptchaProps>) {
         super(props);
@@ -65,7 +71,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
         this.renderManually();
     }
 
-    public componentDidUpdate(_prevProps: IReCaptchaProps, prevState: any) {
+    public componentDidUpdate(_prevProps: IReCaptchaProps, prevState: IReCaptchaState) {
         if (!prevState.ready && this.state.ready) {
             this.renderManually();
         }
@@ -83,7 +89,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
         }
     };
 
-    public shouldComponentUpdate(_nextProps: any, nextState: IReCaptchaState) {
+    public shouldComponentUpdate(_nextProps: Partial<IReCaptchaProps>, nextState: IReCaptchaState) {
         return !this.state.ready && nextState.ready;
     }
 

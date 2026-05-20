@@ -31,7 +31,7 @@ export function GlobalSnackbar({
     };
 
     return (
-        <Snackbar data-testid="error-snackbar" anchorOrigin={anchorOrigin} open={open}>
+        <Snackbar data-testid="snackbar-notification" anchorOrigin={anchorOrigin} open={open}>
             <Alert
                 severity={message.messageType}
                 onClose={() => setOpen(false)}

@@ -20,27 +20,27 @@ export function Footer() {
                     <Box component="img" src={passcoreLogo} sx={{ ml: '15px', maxWidth: '125px' }} alt="PassCore Logo" />
                 </Box>
                 <Box>
-                    <Box component="img" src={osiLogo} sx={{ mx: '10px', ml: '40px', maxHeight: '30px' }} alt="OSI Logo" />
+                    <Box component="img" src={osiLogo} sx={{ ml: '40px', mr: '10px', maxHeight: '30px' }} alt="OSI Logo" />
                     <Box component="img" src={mitLogo} sx={{ mr: '10px', maxHeight: '30px' }} alt="MIT Logo" />
                     <Box component="img" src={uslogo} sx={{ maxHeight: '30px' }} alt="US Logo" />
                 </Box>
             </Box>
-        <Box
-            sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'space-evenly',
-                mt: 2,
-            }}
-        >
-            <Typography variant="caption" sx={{ textAlign: 'center' }}>
-                Powered by PassCore {appVersion} - Open Source Initiative and MIT Licensed
-            </Typography>
-            <Typography variant="caption" sx={{ textAlign: 'center' }}>
-                Copyright © 2016-{new Date().getFullYear()} Unosquare
-            </Typography>
+            <Box
+                sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'space-evenly',
+                    mt: 2,
+                }}
+            >
+                <Typography variant="caption" sx={{ textAlign: 'center' }}>
+                    Powered by PassCore {appVersion} - Open Source Initiative and MIT Licensed
+                </Typography>
+                <Typography variant="caption" sx={{ textAlign: 'center' }}>
+                    Copyright © 2016-{new Date().getFullYear()} Unosquare
+                </Typography>
+            </Box>
         </Box>
-    </Box>
     );
 }

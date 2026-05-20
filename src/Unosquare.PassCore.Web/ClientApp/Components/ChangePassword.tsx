@@ -1,6 +1,6 @@
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
-import { useState, use, useMemo } from 'react';
+import { useState, use, useMemo, useCallback } from 'react';
 import { ChangePasswordDialog } from '../Dialogs/ChangePasswordDialog';
 import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { fetchRequest } from '../Utils/FetchRequest';
@@ -36,14 +36,14 @@ export function ChangePassword() {
         12: alerts.errorPwnedPassword,
     }), [alerts]);
 
-    const handleSubmit = () => {
+    const handleSubmit = useCallback(() => {
         if (!isSubmitting) {
             setIsSubmitting(true);
             setSubmit(true); // triggers form submission
         }
-    };
+    }, [isSubmitting]);
 
-    const toSubmitData = async (formData: IChangePasswordFormInitialModel): Promise<void> => {
+    const toSubmitData = useCallback(async (formData: IChangePasswordFormInitialModel): Promise<void> => {
         setSubmit(false);
         try {
             const payload = JSON.stringify({ ...formData, Recaptcha: token });
@@ -66,12 +66,12 @@ export function ChangePassword() {
         } finally {
             setIsSubmitting(false);
         }
-    };
+    }, [token, errorMessages, sendMessage]);
 
-    const onCloseDialog = () => {
+    const onCloseDialog = useCallback(() => {
         setDialog(false);
         setReset(true);
-    };
+    }, []);
 
     return (
         <>
@@ -83,7 +83,7 @@ export function ChangePassword() {
                     shouldReset={shouldReset}
                     changeResetState={setReset}
                     setReCaptchaToken={setToken}
-                    ReCaptchaToken={token}
+                    recaptchaToken={token}
                 />
                 <Box
                     sx={{
@@ -97,6 +97,7 @@ export function ChangePassword() {
                         type="button"
                         variant="contained"
                         color="primary"
+                        data-testid="submit-button"
                         disabled={disabled || isSubmitting}
                         sx={{ width: 240 }}
                         onClick={handleSubmit}
