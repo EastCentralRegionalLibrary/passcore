@@ -15,7 +15,7 @@ export function ClientAppBar() {
         <AppBar
             position="fixed"
             elevation={0}
-            sx={{ height: 64 }}
+            sx={{ height: 64, left: 0, right: 0 }}
         >
             <Box
                 sx={{
