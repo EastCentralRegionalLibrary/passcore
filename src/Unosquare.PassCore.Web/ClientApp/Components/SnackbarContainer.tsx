@@ -15,5 +15,5 @@ export function SnackbarContainer() {
         return null;
     }
 
-    return <GlobalSnackbar milliSeconds={5000} message={snackbar.message} />;
+    return <GlobalSnackbar milliSeconds={snackbar.milliSeconds} message={snackbar.message} />;
 }

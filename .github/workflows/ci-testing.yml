@@ -90,7 +90,7 @@ jobs:
       # This should already have been completed as part of the build
 
       - name: Install Playwright Browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox
         working-directory: src/Unosquare.PassCore.Web/ClientApp
 
       # -------------------------

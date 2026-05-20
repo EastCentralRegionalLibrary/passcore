@@ -26,24 +26,23 @@ export const validateForm = async (
 
             const value = formData[fieldName as keyof IChangePasswordFormInitialModel];
 
-            const results = await Promise.all(
-                rules.map(async (rule) => {
-                    try {
-                        // Attempt to run the validation rule
-                        const valid = await rule.rule(value, formData, context);
-                        return { valid, message: rule.message };
-                    } catch (error) {
-                        // If an error occurs, treat it as failed validation
-                        const errorMessage = error instanceof Error ? error.message : String(error);
-                        console.error(`Validator ${rule.rule.name} failed with error ${errorMessage}: ${error}`);
-                        return { valid: false, message: rule.message };
+            let fieldError: string | undefined;
+            for (const rule of rules) {
+                try {
+                    const valid = await rule.rule(value, formData, context);
+                    if (!valid) {
+                        fieldError = rule.message;
+                        break;
                     }
-                })
-            );
-
-            const errorRule = results.find((r) => !r.valid);
-            if (errorRule) {
-                errors[fieldName] = errorRule.message;
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    console.error(`Validator ${rule.rule.name} failed with error ${errorMessage}: ${error}`);
+                    fieldError = rule.message;
+                    break;
+                }
+            }
+            if (fieldError) {
+                errors[fieldName] = fieldError;
             }
         })
     );

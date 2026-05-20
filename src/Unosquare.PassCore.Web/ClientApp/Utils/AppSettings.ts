@@ -1,5 +1,3 @@
-//AppSettings.ts
-
 import { IGlobalContext } from "../types/Providers";
 
 export async function resolveAppSettings(): Promise<IGlobalContext> {

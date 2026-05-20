@@ -10,6 +10,8 @@ const baseTheme = createTheme({
         },
         text: {
             primary: '#191919',
+            // Override MUI's default grey secondary text with black for stronger
+            // contrast on helper text; this is intentional, not a leftover.
             secondary: '#000000',
         },
     },

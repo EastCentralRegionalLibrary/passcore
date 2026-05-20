@@ -47,12 +47,13 @@ export function ChangePasswordForm({
     shouldReset,
     changeResetState,
     setReCaptchaToken,
-    ReCaptchaToken,
+    recaptchaToken,
 }: IChangePasswordFormProps) {
     const [fields, setFields] = useState<IChangePasswordFormInitialModel>(defaultState);
     const [errors, setErrors] = useState<ValidationErrors>({});
     const context = use(GlobalContext)!;
     const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
+    const recaptchaRequired = !!recaptcha?.siteKey;
     const [touched, setTouched] = useState(() =>
         Object.keys(defaultState).reduce(
             (acc, key) => ({ ...acc, [key]: false }),
@@ -72,46 +73,52 @@ export function ChangePasswordForm({
         usernameLabel,
     } = changePasswordForm;
 
-    const fieldHelpTextMap: Record<keyof IChangePasswordFormInitialModel, string> = {
-        username: context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
-        currentPassword: currentPasswordHelpblock,
-        recaptcha: '',
-        newPassword: '',
-        newPasswordVerify: newPasswordVerifyHelpblock,
-    };
+    const fieldHelpTextMap: Record<keyof IChangePasswordFormInitialModel, string> = useMemo(
+        () => ({
+            username: context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
+            currentPassword: currentPasswordHelpblock,
+            recaptcha: '',
+            newPassword: '',
+            newPasswordVerify: newPasswordVerifyHelpblock,
+        }),
+        [context, usernameHelpblock, usernameDefaultDomainHelperBlock, currentPasswordHelpblock, newPasswordVerifyHelpblock],
+    );
 
-    const getHelperText = (fieldName: keyof IChangePasswordFormInitialModel) => {
-        if (errors[fieldName] && (touched[fieldName] || !!fields[fieldName])) {
-            return errors[fieldName];
-        }
-    
-        return fieldHelpTextMap[fieldName] || '';
-    };
+    const getHelperText = useCallback(
+        (fieldName: keyof IChangePasswordFormInitialModel) => {
+            if (errors[fieldName] && (touched[fieldName] || !!fields[fieldName])) {
+                return errors[fieldName];
+            }
 
-    const resetTouchedState = () => {
+            return fieldHelpTextMap[fieldName] || '';
+        },
+        [errors, touched, fields, fieldHelpTextMap],
+    );
+
+    const resetTouchedState = useCallback(() => {
         setTouched(
             Object.keys(defaultState).reduce(
                 (acc, key) => ({ ...acc, [key]: false }),
                 {} as Record<keyof IChangePasswordFormInitialModel, boolean>,
             ),
         );
-    };
+    }, []);
 
-    const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
+    const handleBlur = useCallback((event: FocusEvent<HTMLInputElement>) => {
         const { name } = event.target;
         setTouched((prevTouched) => ({
             ...prevTouched,
             [name]: true,
         }));
-    };
+    }, []);
 
-    const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const handleChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
         const { name, value } = event.target;
         setFields((prevFields) => ({
             ...prevFields,
             [name]: value,
         }));
-    };
+    }, []);
 
     const validationRegex = useMemo(
         () =>
@@ -159,14 +166,14 @@ export function ChangePasswordForm({
                 toSubmitData(fields);
             }
         });
-    }, [submitData, fields, toSubmitData]);
+    }, [submitData, validateAllFields, toSubmitData, fields]);
 
     useEffect(() => {
         onValidated(
             Object.keys(errors).some((key) => !!errors[key]) ||
-                !!(recaptcha?.siteKey && recaptcha.siteKey !== '' && ReCaptchaToken === ''),
+                (recaptchaRequired && recaptchaToken === ''),
         );
-    }, [errors, onValidated, recaptcha?.siteKey, ReCaptchaToken]);
+    }, [errors, onValidated, recaptchaRequired, recaptchaToken]);
 
     useEffect(() => {
         if (shouldReset) {
@@ -177,13 +184,13 @@ export function ChangePasswordForm({
         }
     }, [shouldReset, changeResetState]);
 
-    const setGenerated = (password: string) => {
+    const setGenerated = useCallback((password: string) => {
         setFields((prevFields) => ({
             ...prevFields,
             newPassword: password,
             newPasswordVerify: password,
         }));
-    };
+    }, []);
 
     return (
         <Stack
@@ -256,8 +263,8 @@ export function ChangePasswordForm({
                     />
                 </>
             )}
-            {recaptcha?.siteKey && recaptcha.siteKey !== '' && (
-                <ReCaptcha setToken={setReCaptchaToken} shouldReset={false} />
+            {recaptchaRequired && (
+                <ReCaptcha setToken={setReCaptchaToken} shouldReset={shouldReset} />
             )}
         </Stack>
     );

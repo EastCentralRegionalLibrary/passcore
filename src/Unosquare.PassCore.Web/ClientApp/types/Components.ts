@@ -13,7 +13,7 @@ export interface IChangePasswordFormProps {
     shouldReset: boolean;
     changeResetState: (state: boolean) => void;
     setReCaptchaToken: (token: string) => void;
-    ReCaptchaToken: string;
+    recaptchaToken: string;
 }
 
 export interface IPasswordGenProps {

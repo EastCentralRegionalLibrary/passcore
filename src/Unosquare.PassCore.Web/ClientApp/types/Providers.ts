@@ -1,6 +1,6 @@
 import { SnackbarMessageType } from "./Components";
 
-interface IAlerts {
+export interface IAlerts {
     errorCaptcha: string;
     errorComplexPassword: string;
     errorConnectionLdap: string;
@@ -32,19 +32,19 @@ export interface IChangePasswordForm {
     recaptchaHelpblock?: string;
 }
 
-interface IErrorsPasswordForm {
+export interface IErrorsPasswordForm {
     fieldRequired: string;
     passwordMatch: string;
     usernameEmailPattern: string;
     usernamePattern: string;
 }
 
-interface IRecaptcha {
+export interface IRecaptcha {
     languageCode: string;
     siteKey: string;
 }
 
-interface IValidationRegex {
+export interface IValidationRegex {
     emailRegex: string;
     usernameRegex: string;
 }
