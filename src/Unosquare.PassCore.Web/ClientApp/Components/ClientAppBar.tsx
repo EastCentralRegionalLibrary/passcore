@@ -23,8 +23,7 @@ export function ClientAppBar() {
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     height: 64,
-                    width: '100%',
-                    px: 3,
+                    pl: 3,
                 }}
             >
                 <Typography
