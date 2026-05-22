@@ -15,7 +15,7 @@ export function ClientAppBar() {
         <AppBar
             position="fixed"
             elevation={0}
-            sx={{ height: 64, left: 0, right: 0 }}
+            sx={{ height: 64 }}
         >
             <Box
                 sx={{
@@ -24,6 +24,7 @@ export function ClientAppBar() {
                     alignItems: 'center',
                     height: 64,
                     pl: 3,
+                    boxSizing: 'border-box',
                 }}
             >
                 <Typography
