@@ -75,7 +75,16 @@ export function ChangePassword() {
 
     return (
         <>
-            <Paper elevation={6} sx={{ display: 'flex', flexDirection: 'column', borderRadius: '10px', minHeight: 550, mt: '75px', zIndex: 1 }}>
+            <Paper
+                elevation={6}
+                sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderRadius: 2,
+                    minHeight: { xs: 'auto', sm: 550 },
+                    zIndex: 1,
+                }}
+            >
                 <ChangePasswordForm
                     submitData={submit}
                     toSubmitData={toSubmitData}

@@ -1,6 +1,6 @@
 import AppBar from '@mui/material/AppBar';
-import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
+import Toolbar from '@mui/material/Toolbar';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import HelpIcon from '@mui/icons-material/Help';
@@ -15,37 +15,42 @@ export function ClientAppBar() {
         <AppBar
             position="fixed"
             elevation={0}
-            sx={{ height: 64 }}
+            sx={{
+                zIndex: (theme) => theme.zIndex.appBar,
+            }}
         >
-            <Box
+            <Toolbar
                 sx={{
-                    display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
-                    height: 64,
-                    pl: 3,
-                    boxSizing: 'border-box',
+                    px: { xs: 2, sm: 3 },
                 }}
             >
                 <Typography
                     variant="h6"
-                    sx={{ flexGrow: 1, color: 'secondary.main' }}
+                    noWrap
+                    component="div"
+                    sx={{
+                        flexGrow: 1,
+                        color: 'secondary.main',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                    }}
                 >
                     {changePasswordTitle}
                 </Typography>
 
                 {helpText ? (
                     <Tooltip title={helpText} placement="left" arrow>
-                        <IconButton color="secondary" size="large">
+                        <IconButton color="secondary" size="large" edge="end">
                             <HelpIcon />
                         </IconButton>
                     </Tooltip>
                 ) : (
-                    <IconButton color="secondary" size="large" disabled>
+                    <IconButton color="secondary" size="large" edge="end" disabled>
                         <HelpIcon sx={{ opacity: 0.5 }} />
                     </IconButton>
                 )}
-            </Box>
+            </Toolbar>
         </AppBar>
     );
 }
