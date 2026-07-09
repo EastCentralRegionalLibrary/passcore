@@ -64,6 +64,7 @@ public class LdapPasswordChangeOptions : IAppSettings
     /// <remarks>
     /// Optional, if 'true', then the specified port is a non-secured port by default
     /// and requires the use of the "StartTLS" command over LDAP to enable TLS.
+    /// Mutually exclusive with <see cref="LdapSecureSocketLayer"/>.
     /// </remarks>
     /// <value>
     ///   <c>true</c> if [LDAP start TLS]; otherwise, <c>false</c>.

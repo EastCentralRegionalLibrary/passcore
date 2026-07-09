@@ -93,7 +93,7 @@ public class Win32ErrorCode
     /// <summary>
     /// Get Error Code by the code.
     /// </summary>
-    /// <param name=code>The code.</param>
+    /// <param name="code">The code.</param>
     /// <returns>A Win32ErrorCode from the code.</returns>
     public static Win32ErrorCode? ByCode(int code) =>
         ErrorByCode.TryGetValue(code, out var err) ? err : null;
