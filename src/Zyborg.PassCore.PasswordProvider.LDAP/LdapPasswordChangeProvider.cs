@@ -27,7 +27,9 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 ///
 /// Guarantees:
 /// - User existence is checked before authorization
-/// - User must prove knowledge of current password
+/// - User must prove knowledge of current password (on Active Directory,
+///   expired / must-change-at-next-logon passwords still count as proof)
+/// - User-supplied input cannot alter the structure of the LDAP search filter
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
 public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
@@ -35,6 +37,39 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
+
+    // Win32 error codes surfaced in Active Directory extended error messages.
+    // See Win32ErrorCode for the full catalog with descriptions.
+    private const int ErrorInvalidPassword = 0x56;
+    private const int ErrorWrongPassword = 0x52B;
+    private const int ErrorIllFormedPassword = 0x52C;
+    private const int ErrorPasswordRestriction = 0x52D;
+    private const int ErrorLogonFailure = 0x52E;
+    private const int ErrorPasswordExpired = 0x532;
+    private const int ErrorPasswordMustChange = 0x773;
+
+    // AD operation errors lead with the Win32 code, e.g.
+    // "0000052D: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM), data 0".
+    private static readonly Regex LeadingHexCodeRegex =
+        new("^\\s*([0-9a-fA-F]{1,8}):", RegexOptions.CultureInvariant);
+
+    // AD bind errors lead with a generic SEC_E code and carry the Win32 code
+    // in the "data" field, e.g.
+    // "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 52e, v2580".
+    private static readonly Regex DataSubCodeRegex =
+        new("\\bdata\\s+([0-9a-fA-F]+)", RegexOptions.CultureInvariant);
+
+    // Characters that are never valid in a sAMAccountName, per AD naming rules.
+    private static readonly Regex InvalidAccountNameCharsRegex =
+        new(@"[""/\\\[\]:;|=,+*?<>]", RegexOptions.CultureInvariant);
+
+    private static readonly Action<ILogger, Exception?> LogNoTransportSecurity =
+        LoggerMessage.Define(
+            LogLevel.Warning,
+            new EventId(100, nameof(LogNoTransportSecurity)),
+            "Neither LdapSecureSocketLayer nor LdapStartTls is enabled; user credentials " +
+            "and new passwords will be sent to the LDAP server unencrypted. Enable one of " +
+            "them unless the connection is protected by other means (e.g. a local test server).");
 
     private static readonly string[] RequiredAttributes =
     {
@@ -53,6 +88,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value;
         ValidateOptions(_options);
+
+        if (!_options.LdapSecureSocketLayer && !_options.LdapStartTls)
+            LogNoTransportSecurity(Logger, null);
 
         // First find user DN by username (SAM Account Name)
         _searchConstraints = new(
@@ -89,21 +127,57 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         return Task.FromResult(isMember);
     }
 
-    private static bool DnMatchesGroup(string dn, string groupName)
+    internal static bool DnMatchesGroup(string dn, string groupName)
     {
         if (string.Equals(dn, groupName, StringComparison.OrdinalIgnoreCase))
             return true;
 
-        // Extract the first RDN value (the bit before the first comma, after the '=').
-        var firstComma = dn.IndexOf(',', StringComparison.Ordinal);
+        // Extract the first RDN value (the bit before the first unescaped comma,
+        // after the '='). RFC 4514 escapes literal commas in RDN values as "\,",
+        // which is the form AD uses in memberOf values.
+        var firstComma = IndexOfUnescapedComma(dn);
         var rdn = firstComma >= 0 ? dn[..firstComma] : dn;
 
         var equals = rdn.IndexOf('=', StringComparison.Ordinal);
         if (equals < 0)
             return false;
 
-        var cn = rdn[(equals + 1)..].Trim();
+        var cn = UnescapeRdnValue(rdn[(equals + 1)..].Trim());
         return string.Equals(cn, groupName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int IndexOfUnescapedComma(string dn)
+    {
+        for (var i = 0; i < dn.Length; i++)
+        {
+            if (dn[i] == '\\')
+            {
+                i++; // Skip the escaped character
+                continue;
+            }
+
+            if (dn[i] == ',')
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static string UnescapeRdnValue(string value)
+    {
+        if (!value.Contains('\\', StringComparison.Ordinal))
+            return value;
+
+        var sb = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 1 < value.Length)
+                i++;
+
+            sb.Append(value[i]);
+        }
+
+        return sb.ToString();
     }
 
     // ---------------------------------------------------------------------
@@ -190,6 +264,16 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // Credential verification
     // ---------------------------------------------------------------------
 
+    /// <summary>
+    /// Verifies the user's current credentials by binding as the user.
+    /// On Active Directory, a bind rejected only because the password is
+    /// expired or must be changed at next logon (resultCode 49 with extended
+    /// error data 532/773) still proves the user knows the current password,
+    /// so those cases are allowed through — matching the Windows AD provider's
+    /// <c>ErrorPasswordMustChange</c>/<c>ErrorPasswordExpired</c> handling.
+    /// Generic LDAP servers do not emit these AD-specific data codes, so their
+    /// bind failures continue to surface as invalid credentials.
+    /// </summary>
     private void VerifyUserCredentials(string userDn, string password)
     {
         try
@@ -198,8 +282,32 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (LdapBindException ex)
         {
+            if (ex.InnerException is LdapException ldapEx && IsPasswordExpiredOrMustChange(ldapEx))
+                return;
+
             throw new InvalidCredentialsException("Invalid current password", ex);
         }
+    }
+
+    /// <summary>
+    /// Detects the Active Directory bind failures that mean "the password is
+    /// correct but needs changing": resultCode 49 (invalidCredentials) whose
+    /// extended error message carries data sub-code 532 (ERROR_PASSWORD_EXPIRED)
+    /// or 773 (ERROR_PASSWORD_MUST_CHANGE).
+    /// </summary>
+    internal static bool IsPasswordExpiredOrMustChange(LdapException ex)
+    {
+        if (ex.ResultCode != LdapException.InvalidCredentials)
+            return false;
+
+        var message = ex.LdapErrorMessage;
+        if (string.IsNullOrEmpty(message))
+            return false;
+
+        var data = DataSubCodeRegex.Match(message);
+        return data.Success
+            && int.TryParse(data.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
+            && code is ErrorPasswordExpired or ErrorPasswordMustChange;
     }
 
     // ---------------------------------------------------------------------
@@ -342,25 +450,64 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // Error translation
     // ---------------------------------------------------------------------
 
-    private static Exception TranslateLdapException(LdapException ex)
+    /// <summary>
+    /// Maps an <see cref="LdapException"/> raised during search or modify to a
+    /// domain exception, decoding Active Directory extended error messages when
+    /// present. AD emits two shapes: operation errors lead with the Win32 code
+    /// ("0000052D: SvcErr: ..., problem 5003 (WILL_NOT_PERFORM), data 0"), while
+    /// bind-style errors lead with a generic SEC_E code and carry the Win32 code
+    /// in the "data" field ("80090308: LdapErr: ..., data 52e, v2580"). Messages
+    /// from other LDAP servers (no recognizable Win32 code) surface verbatim as
+    /// a directory error.
+    /// </summary>
+    internal static Exception TranslateLdapException(LdapException ex)
     {
         if (string.IsNullOrWhiteSpace(ex.LdapErrorMessage))
             return new DirectoryUnavailableException(
                 "Unexpected LDAP error", ex);
 
-        var match = Regex.Match(ex.LdapErrorMessage,
-            "([0-9a-fA-F]+):");
-
-        if (!match.Success)
+        var known = ExtractWin32ErrorCode(ex.LdapErrorMessage);
+        if (known is null)
             return new DirectoryUnavailableException(
                 ex.LdapErrorMessage, ex);
 
-        var code = int.Parse(
-            match.Groups[1].Value,
-            NumberStyles.HexNumber);
+        return known.Code switch
+        {
+            ErrorInvalidPassword or ErrorWrongPassword or ErrorLogonFailure =>
+                new InvalidCredentialsException(known.Description, ex),
+            ErrorIllFormedPassword or ErrorPasswordRestriction =>
+                new PasswordPolicyViolationException(known.Description, ex),
+            _ => new DirectoryUnavailableException(
+                $"{known.CodeName}: {known.Description}", ex),
+        };
+    }
 
-        return new DirectoryUnavailableException(
-            $"LDAP error (Win32 code {code})", ex);
+    /// <summary>
+    /// Extracts the Win32 error code from an AD extended error message,
+    /// preferring the leading hex code when it is a known password-change
+    /// code and falling back to the "data" sub-code otherwise. Returns
+    /// <see langword="null"/> when neither resolves to a known code, so the
+    /// raw server message can be surfaced instead of a mislabeled number.
+    /// </summary>
+    internal static Win32ErrorCode? ExtractWin32ErrorCode(string message)
+    {
+        var leading = LeadingHexCodeRegex.Match(message);
+        if (leading.Success
+            && int.TryParse(leading.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
+            && Win32ErrorCode.ByCode(code) is { } fromLeading)
+        {
+            return fromLeading;
+        }
+
+        var data = DataSubCodeRegex.Match(message);
+        if (data.Success
+            && int.TryParse(data.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var subCode)
+            && Win32ErrorCode.ByCode(subCode) is { } fromData)
+        {
+            return fromData;
+        }
+
+        return null;
     }
 
     // ---------------------------------------------------------------------
@@ -383,19 +530,69 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         if (!opts.LdapSearchFilter.Contains("{Username}", StringComparison.Ordinal))
             throw new ArgumentException("Search filter must include {Username}");
+
+        if (opts.LdapSecureSocketLayer && opts.LdapStartTls)
+            throw new ArgumentException(
+                "LdapSecureSocketLayer and LdapStartTls are mutually exclusive: " +
+                "StartTLS is issued over a plaintext connection, while SecureSocketLayer " +
+                "expects TLS from the first byte. Enable at most one of them.");
     }
 
-    private static string SanitizeUsername(string username)
+    /// <summary>
+    /// Produces a value safe to substitute into <see cref="LdapPasswordChangeOptions.LdapSearchFilter"/>:
+    /// takes the local part of the username, rejects characters that are never
+    /// valid in a sAMAccountName (including control characters and the empty
+    /// string), then escapes the remaining RFC 4515 filter metacharacters so the
+    /// substituted value cannot alter the structure of the search filter.
+    /// </summary>
+    internal static string SanitizeUsername(string username)
     {
         var clean = username.Split('@')[0];
-        if (Regex.IsMatch(clean, @"[""/\\\[\]:;|=,+*?<>]"))
+
+        if (clean.Length == 0
+            || clean.Any(char.IsControl)
+            || InvalidAccountNameCharsRegex.IsMatch(clean))
+        {
             throw new InvalidCredentialsException(
                 "Invalid username format");
+        }
 
-        return clean;
+        return EscapeLdapSearchFilterValue(clean);
     }
 
-    private bool ValidateServerCertificate(
+    /// <summary>
+    /// Escapes the characters RFC 4515 §3 requires escaping inside a filter
+    /// value: '*', '(', ')', '\' and NUL. Applied after character validation
+    /// as defense in depth, so the substituted value is inert in the filter
+    /// even if the validation rules are relaxed in the future.
+    /// </summary>
+    internal static string EscapeLdapSearchFilterValue(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append("\\5c"); break;
+                case '*': sb.Append("\\2a"); break;
+                case '(': sb.Append("\\28"); break;
+                case ')': sb.Append("\\29"); break;
+                case '\0': sb.Append("\\00"); break;
+                default: sb.Append(c); break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Server certificate validation honoring the TLS options:
+    /// <see cref="LdapPasswordChangeOptions.LdapIgnoreTlsErrors"/> accepts any
+    /// certificate, while <see cref="LdapPasswordChangeOptions.LdapIgnoreTlsValidation"/>
+    /// accepts chain-trust failures only (e.g. self-signed or untrusted CA) and
+    /// still rejects name mismatches and other errors.
+    /// </summary>
+    internal bool ValidateServerCertificate(
         object sender,
         X509Certificate cert,
         X509Chain chain,
@@ -403,6 +600,12 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     {
         if (_options.LdapIgnoreTlsErrors)
             return true;
+
+        if (_options.LdapIgnoreTlsValidation)
+        {
+            return (errors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors)
+                == System.Net.Security.SslPolicyErrors.None;
+        }
 
         return errors == System.Net.Security.SslPolicyErrors.None;
     }

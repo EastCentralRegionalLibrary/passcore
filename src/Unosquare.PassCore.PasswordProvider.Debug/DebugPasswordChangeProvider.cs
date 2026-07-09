@@ -15,6 +15,14 @@ namespace Unosquare.PassCore.PasswordProvider.Debug;
 /// development and E2E scenarios. Supports forced error injection by
 /// username and simulated latency.
 /// </summary>
+/// <remarks>
+/// In addition to the configurable <see cref="DebugProviderOptions.ForcedErrors"/>
+/// map, a fixed legacy map turns a set of magic usernames (the local part,
+/// case-insensitive: "error", "invalidCredentials", "userNotFound", ...) into
+/// their matching error codes. Entries in <see cref="DebugProviderOptions.ForcedErrors"/>
+/// take precedence over the legacy map; pick usernames outside that set when a
+/// change should succeed.
+/// </remarks>
 public class DebugPasswordChangeProvider : PasswordChangeProviderBase
 {
     private static readonly IReadOnlyDictionary<string, ApiErrorCode> LegacyForcedErrors =
