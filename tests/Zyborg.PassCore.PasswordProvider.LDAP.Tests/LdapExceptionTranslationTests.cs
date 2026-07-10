@@ -56,14 +56,20 @@ public class LdapExceptionTranslationTests
     }
 
     [Fact]
-    public void Translate_UnknownCode_SurfacesRawServerMessage()
+    public void Translate_UnknownCode_UsesCuratedMessageAndKeepsServerTextForLogsOnly()
     {
+        // Expectation changed deliberately: the server's diagnostic string used to
+        // be surfaced verbatim as the wire message; it now survives only in the
+        // inner exception (for logs) while the wire carries a curated constant.
         const string message = "some vendor-specific failure without codes";
+        var ldapEx = Ldap(message);
 
-        var result = LdapPasswordChangeProvider.TranslateLdapException(Ldap(message));
+        var result = LdapPasswordChangeProvider.TranslateLdapException(ldapEx);
 
         var dir = Assert.IsType<DirectoryUnavailableException>(result);
-        Assert.Equal(message, dir.Message);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, dir.Message);
+        Assert.DoesNotContain(message, dir.Message, StringComparison.Ordinal);
+        Assert.Same(ldapEx, dir.InnerException);
     }
 
     [Fact]
@@ -75,15 +81,19 @@ public class LdapExceptionTranslationTests
     }
 
     [Fact]
-    public void Translate_KnownNonCredentialCode_ReportsCodeNameAndDescription()
+    public void Translate_AccountLockedOut_RoutesToInvalidCredentialsUnderConservativePosture()
     {
-        // Account locked out: bind-style message with data 775
+        // Expectation changed deliberately: account-state codes (locked, disabled,
+        // hours, restriction) used to surface as a directory error naming the
+        // condition; under the interim conservative posture they are
+        // indistinguishable from wrong credentials so the account state leaks
+        // to no one. A later phase makes this configurable.
         var result = LdapPasswordChangeProvider.TranslateLdapException(Ldap(
             "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v2580",
             LdapException.InvalidCredentials));
 
-        var dir = Assert.IsType<DirectoryUnavailableException>(result);
-        Assert.Contains("ERROR_ACCOUNT_LOCKED_OUT", dir.Message, StringComparison.Ordinal);
+        var cred = Assert.IsType<InvalidCredentialsException>(result);
+        Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, cred.Message);
     }
 
     [Fact]
