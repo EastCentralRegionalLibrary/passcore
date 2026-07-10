@@ -44,37 +44,63 @@ namespace Unosquare.PassCore.PasswordProvider
         }
 
         /// <inheritdoc />
+        /// <remarks>
+        /// Directory failures are routed through
+        /// <see cref="DirectoryErrorTranslator"/> so this provider and the LDAP
+        /// provider report identical conditions identically. An unresolvable
+        /// username reports as invalid credentials rather than user-not-found —
+        /// the interim conservative (hardened) posture shared with the LDAP
+        /// provider's <c>HideUserNotFound</c> default, pending the configurable
+        /// disclosure mode planned for a later phase.
+        /// </remarks>
         protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            var fixedUsername = FixUsernameWithDomain(context.Username);
-
-            using var principalContext = AcquirePrincipalContext(); // Acquire PrincipalContext for AD operations, using 'using' for automatic disposal
-            var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername); // Find the UserPrincipal object
-
-            if (userPrincipal == null) // Check if UserPrincipal is null
+            try
             {
-                throw new UserNotFoundException();
-            }
+                var fixedUsername = FixUsernameWithDomain(context.Username);
 
-            if (userPrincipal.UserCannotChangePassword) // Check if the UserCannotChangePassword flag is set
+                using var principalContext = AcquirePrincipalContext(); // Acquire PrincipalContext for AD operations, using 'using' for automatic disposal
+                var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername); // Find the UserPrincipal object
+
+                if (userPrincipal == null) // Check if UserPrincipal is null
+                {
+                    // Interim conservative posture: do not disclose whether the account exists.
+                    throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
+                }
+
+                if (userPrincipal.UserCannotChangePassword) // Check if the UserCannotChangePassword flag is set
+                {
+                    throw new PasswordPolicyViolationException("User cannot change password", ApiErrorCode.ChangeNotPermitted);
+                }
+
+                if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
+                {
+                    SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
+                }
+
+                if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext)) // Validate provided current password
+                {
+                    throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
+                }
+
+                UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal);
+                userPrincipal.Save();
+            }
+            catch (PasswordChangeException)
             {
-                throw new PasswordPolicyViolationException("User cannot change password", ApiErrorCode.ChangeNotPermitted);
+                throw;
             }
-
-            if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
+            catch (Exception ex)
             {
-                SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
+                // Never let raw AccountManagement/COM exception text reach the wire:
+                // recover the Win32 code from the exception chain when present (e.g.
+                // COMException 0x800708C5 for a policy rejection) and route it through
+                // the shared translator; anything unrecognizable degrades to a
+                // curated directory-failure message with the detail preserved for logs.
+                throw DirectoryErrorTranslator.TranslateException(ex);
             }
-
-            if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext)) // Validate provided current password
-            {
-                throw new InvalidCredentialsException();
-            }
-
-            UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal);
-            userPrincipal.Save();
 
             return Task.CompletedTask;
         }
@@ -88,24 +114,37 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <inheritdoc />
         public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
         {
-            using var principalContext = AcquirePrincipalContext();
-            var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username));
-            if (userPrincipal == null) return Task.FromResult(false);
-
             try
             {
-                var groups = userPrincipal.GetGroups();
-                if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(true);
-            }
-            catch
-            {
-                var groups = userPrincipal.GetAuthorizationGroups();
-                if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(true);
-            }
+                using var principalContext = AcquirePrincipalContext();
+                var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username));
+                if (userPrincipal == null) return Task.FromResult(false);
 
-            return Task.FromResult(false);
+                try
+                {
+                    var groups = userPrincipal.GetGroups();
+                    if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                        return Task.FromResult(true);
+                }
+                catch
+                {
+                    var groups = userPrincipal.GetAuthorizationGroups();
+                    if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                        return Task.FromResult(true);
+                }
+
+                return Task.FromResult(false);
+            }
+            catch (PasswordChangeException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Group lookups run inside policy evaluation; without this wrap a raw
+                // AccountManagement exception would surface as Generic + raw text.
+                throw DirectoryErrorTranslator.TranslateException(ex);
+            }
         }
 
         /// <summary>
@@ -138,8 +177,10 @@ namespace Unosquare.PassCore.PasswordProvider
             // Check for specific error codes indicating password expiration or must change scenarios
             var errorCode = System.Runtime.InteropServices.Marshal.GetLastWin32Error(); // Get the last Win32 error code
 
-            // Return true if error code indicates password must change or is expired (treat these as valid for password change process)
-            return errorCode is NativeMethods.ErrorPasswordMustChange or NativeMethods.ErrorPasswordExpired;
+            // Expired / must-change-at-next-logon still proves the user knows the current
+            // password; the shared classification keeps this decision identical to the
+            // LDAP provider's bind handling.
+            return DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(errorCode);
         }
 
         /// <summary>

@@ -26,6 +26,12 @@ public class PasswordPolicyViolationException : PasswordChangeException
     {
         ErrorCode = errorCode;
     }
+
+    public PasswordPolicyViolationException(string message, ApiErrorCode errorCode, Exception innerException)
+        : base(message, innerException)
+    {
+        ErrorCode = errorCode;
+    }
 }
 
 public class UserNotFoundException : PasswordChangeException

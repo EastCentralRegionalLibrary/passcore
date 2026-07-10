@@ -38,16 +38,6 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
 
-    // Win32 error codes surfaced in Active Directory extended error messages.
-    // See Win32ErrorCode for the full catalog with descriptions.
-    private const int ErrorInvalidPassword = 0x56;
-    private const int ErrorWrongPassword = 0x52B;
-    private const int ErrorIllFormedPassword = 0x52C;
-    private const int ErrorPasswordRestriction = 0x52D;
-    private const int ErrorLogonFailure = 0x52E;
-    private const int ErrorPasswordExpired = 0x532;
-    private const int ErrorPasswordMustChange = 0x773;
-
     // AD operation errors lead with the Win32 code, e.g.
     // "0000052D: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM), data 0".
     private static readonly Regex LeadingHexCodeRegex =
@@ -116,15 +106,31 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         ArgumentNullException.ThrowIfNull(username);
         ArgumentNullException.ThrowIfNull(groupName);
 
-        var user = FindUser(username);
+        try
+        {
+            var user = FindUser(username);
 
-        // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
-        // Compare against the group's RDN value or its full DN, never as a substring,
-        // so that "Admins" cannot accidentally match "AdminsExtra".
-        var isMember = user.Groups.Any(dn =>
-            DnMatchesGroup(dn, groupName));
+            // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
+            // Compare against the group's RDN value or its full DN, never as a substring,
+            // so that "Admins" cannot accidentally match "AdminsExtra".
+            var isMember = user.Groups.Any(dn =>
+                DnMatchesGroup(dn, groupName));
 
-        return Task.FromResult(isMember);
+            return Task.FromResult(isMember);
+        }
+        catch (PasswordChangeException)
+        {
+            throw;
+        }
+        catch (LdapException ex)
+        {
+            throw TranslateLdapException(ex);
+        }
+        catch (Exception ex)
+        {
+            throw new DirectoryUnavailableException(
+                DirectoryErrorTranslator.DirectoryFailureMessage, ex);
+        }
     }
 
     internal static bool DnMatchesGroup(string dn, string groupName)
@@ -212,7 +218,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         catch (Exception ex)
         {
             throw new DirectoryUnavailableException(
-                "Unexpected LDAP infrastructure failure", ex);
+                DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }
 
         return Task.CompletedTask;
@@ -241,7 +247,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         if (!search.HasMore())
         {
             if (_options.HideUserNotFound)
-                throw new InvalidCredentialsException("Invalid username or password");
+                throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
 
             throw new UserNotFoundException("User not found");
         }
@@ -285,7 +291,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             if (ex.InnerException is LdapException ldapEx && IsPasswordExpiredOrMustChange(ldapEx))
                 return;
 
-            throw new InvalidCredentialsException("Invalid current password", ex);
+            throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage, ex);
         }
     }
 
@@ -293,7 +299,10 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// Detects the Active Directory bind failures that mean "the password is
     /// correct but needs changing": resultCode 49 (invalidCredentials) whose
     /// extended error message carries data sub-code 532 (ERROR_PASSWORD_EXPIRED)
-    /// or 773 (ERROR_PASSWORD_MUST_CHANGE).
+    /// or 773 (ERROR_PASSWORD_MUST_CHANGE). Sub-code parsing is LDAP-transport
+    /// knowledge and stays here; the decision of which codes count as
+    /// expired/must-change is shared via
+    /// <see cref="DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(int)"/>.
     /// </summary>
     internal static bool IsPasswordExpiredOrMustChange(LdapException ex)
     {
@@ -307,7 +316,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         var data = DataSubCodeRegex.Match(message);
         return data.Success
             && int.TryParse(data.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
-            && code is ErrorPasswordExpired or ErrorPasswordMustChange;
+            && DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(code);
     }
 
     // ---------------------------------------------------------------------
@@ -452,34 +461,29 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
     /// <summary>
     /// Maps an <see cref="LdapException"/> raised during search or modify to a
-    /// domain exception, decoding Active Directory extended error messages when
-    /// present. AD emits two shapes: operation errors lead with the Win32 code
+    /// domain exception. This method owns only the LDAP-transport parsing of
+    /// Active Directory extended error messages, which come in two shapes:
+    /// operation errors lead with the Win32 code
     /// ("0000052D: SvcErr: ..., problem 5003 (WILL_NOT_PERFORM), data 0"), while
     /// bind-style errors lead with a generic SEC_E code and carry the Win32 code
-    /// in the "data" field ("80090308: LdapErr: ..., data 52e, v2580"). Messages
-    /// from other LDAP servers (no recognizable Win32 code) surface verbatim as
-    /// a directory error.
+    /// in the "data" field ("80090308: LdapErr: ..., data 52e, v2580"). Routing
+    /// of the extracted code is delegated to
+    /// <see cref="DirectoryErrorTranslator.Translate(int, Exception?)"/> — see
+    /// that class for the routing table and the interim conservative posture.
+    /// Messages with no recognizable Win32 code become a
+    /// <see cref="DirectoryUnavailableException"/> whose wire message is a fixed
+    /// curated string; the server's diagnostic text survives only in the inner
+    /// exception, which reaches logs but never the wire.
     /// </summary>
     internal static Exception TranslateLdapException(LdapException ex)
     {
-        if (string.IsNullOrWhiteSpace(ex.LdapErrorMessage))
-            return new DirectoryUnavailableException(
-                "Unexpected LDAP error", ex);
+        var known = string.IsNullOrWhiteSpace(ex.LdapErrorMessage)
+            ? null
+            : ExtractWin32ErrorCode(ex.LdapErrorMessage);
 
-        var known = ExtractWin32ErrorCode(ex.LdapErrorMessage);
-        if (known is null)
-            return new DirectoryUnavailableException(
-                ex.LdapErrorMessage, ex);
-
-        return known.Code switch
-        {
-            ErrorInvalidPassword or ErrorWrongPassword or ErrorLogonFailure =>
-                new InvalidCredentialsException(known.Description, ex),
-            ErrorIllFormedPassword or ErrorPasswordRestriction =>
-                new PasswordPolicyViolationException(known.Description, ex),
-            _ => new DirectoryUnavailableException(
-                $"{known.CodeName}: {known.Description}", ex),
-        };
+        return known is null
+            ? new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex)
+            : DirectoryErrorTranslator.Translate(known.Code, ex);
     }
 
     /// <summary>

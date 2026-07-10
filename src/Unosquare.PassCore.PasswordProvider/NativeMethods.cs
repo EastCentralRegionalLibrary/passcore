@@ -7,11 +7,9 @@ namespace Unosquare.PassCore.PasswordProvider;
 /// </summary>
 public class NativeMethods
 {
-    // See http://support.microsoft.com/kb/155012
-    internal const int ErrorPasswordMustChange = 1907;
-
-    // It gives this error if the account is locked, REGARDLESS OF WHETHER VALID CREDENTIALS WERE PROVIDED!!!
-    internal const int ErrorPasswordExpired = 1330;
+    // The expired/must-change LogonUser error codes (1330/1907) previously kept
+    // here now come from the shared Win32ErrorCode catalog via
+    // DirectoryErrorTranslator.IsPasswordExpiredOrMustChange.
 
     // here are enums
     internal enum LogonTypes : uint
