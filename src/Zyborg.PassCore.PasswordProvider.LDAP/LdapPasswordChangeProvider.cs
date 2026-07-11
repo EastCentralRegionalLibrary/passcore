@@ -128,6 +128,10 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (Exception ex)
         {
+            // Deliberately broad: group lookups run inside policy evaluation, and
+            // any exception that escapes here surfaces to the wire as Generic plus
+            // raw exception text. Wrapping keeps the detail in logs (inner
+            // exception) and a curated message on the wire.
             throw new DirectoryUnavailableException(
                 DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }
