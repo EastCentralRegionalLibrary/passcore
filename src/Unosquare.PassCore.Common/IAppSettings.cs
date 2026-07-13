@@ -6,6 +6,24 @@
 public interface IAppSettings
 {
     /// <summary>
+    /// Gets or sets the error-disclosure posture applied when a password
+    /// change fails. Server-side only — never expose this value through a
+    /// client-visible payload.
+    /// </summary>
+    /// <remarks>
+    /// Optional, defaults to <see cref="ErrorDisclosureMode.Hardened"/>
+    /// (unknown users and unusable accounts are indistinguishable from a
+    /// wrong password). Set to <see cref="ErrorDisclosureMode.Informative"/>
+    /// to give legitimate users actionable guidance (user-not-found and
+    /// contact-IT responses) at the cost of exposing an account-existence
+    /// and account-state oracle to unauthenticated callers.
+    /// </remarks>
+    /// <value>
+    /// The error disclosure mode.
+    /// </value>
+    ErrorDisclosureMode ErrorDisclosureMode { get; set; }
+
+    /// <summary>
     /// Gets or sets the default domain.
     /// </summary>
     /// <value>

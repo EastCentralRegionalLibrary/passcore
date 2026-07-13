@@ -104,16 +104,45 @@ public class PasswordChangeProviderBaseTests
     }
 
     [Fact]
-    public async Task ChangePasswordAsync_GenericExceptionFromCore_MappedToGeneric()
+    public async Task ChangePasswordAsync_GenericExceptionFromCore_MappedToGenericWithoutRawText()
     {
+        // Expectation changed deliberately: the catch-all used to serialize the
+        // raw exception message ("Operation failed"), which the UI renders
+        // verbatim for the Generic code. It now returns a clean surface message
+        // carrying only a correlation reference; the detail stays in logs.
         var provider = new TestProvider();
         var context = new PasswordChangeContext("fail", "old", "new", new ClientSettings());
 
         var result = await provider.TestChangePasswordAsync(context);
 
         Assert.False(result.IsSuccessful);
-        Assert.Equal(ApiErrorCode.Generic, result.Errors.Single().ErrorCode);
-        Assert.Equal("Operation failed", result.Errors.Single().Message);
+        var error = result.Errors.Single();
+        Assert.Equal(ApiErrorCode.Generic, error.ErrorCode);
+        Assert.NotNull(error.Message);
+        Assert.StartsWith("An unexpected error occurred", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Operation failed", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PerformPasswordChangeAsync_GeneratesCorrelationIdAndEmbedsItInGenericFailures()
+    {
+        string? observedCorrelationId = null;
+
+        var policy = new Mock<IPasswordPolicy>();
+        policy.Setup(p => p.ValidateAsync(It.IsAny<PasswordChangeContext>(), It.IsAny<IPasswordChangeProvider>()))
+            .Callback<PasswordChangeContext, IPasswordChangeProvider>((ctx, _) => observedCorrelationId = ctx.CorrelationId)
+            .Returns(Task.CompletedTask);
+
+        var provider = new TestProvider(new[] { policy.Object });
+
+        var result = await provider.PerformPasswordChangeAsync("fail", "old", "new");
+
+        Assert.False(string.IsNullOrWhiteSpace(observedCorrelationId));
+        Assert.False(result.IsSuccessful);
+        var error = result.Errors.Single();
+        Assert.Equal(ApiErrorCode.Generic, error.ErrorCode);
+        Assert.NotNull(error.Message);
+        Assert.Contains(observedCorrelationId!, error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -61,6 +61,16 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             "and new passwords will be sent to the LDAP server unencrypted. Enable one of " +
             "them unless the connection is protected by other means (e.g. a local test server).");
 
+    private static readonly Action<ILogger, ErrorDisclosureMode, Exception?> LogHideUserNotFoundDeprecated =
+        LoggerMessage.Define<ErrorDisclosureMode>(
+            LogLevel.Warning,
+            new EventId(101, nameof(LogHideUserNotFoundDeprecated)),
+            "The HideUserNotFound setting is deprecated and has no effect. User-not-found " +
+            "disclosure is controlled by ErrorDisclosureMode (currently {ErrorDisclosureMode}): " +
+            "'Hardened' hides unknown users like HideUserNotFound=true did; 'Informative' " +
+            "discloses them like HideUserNotFound=false did. Remove HideUserNotFound from the " +
+            "configuration and set ErrorDisclosureMode explicitly if the default is not wanted.");
+
     private static readonly string[] RequiredAttributes =
     {
         "distinguishedName",
@@ -81,6 +91,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         if (!_options.LdapSecureSocketLayer && !_options.LdapStartTls)
             LogNoTransportSecurity(Logger, null);
+
+        if (_options.HideUserNotFound.HasValue)
+            LogHideUserNotFoundDeprecated(Logger, _options.ErrorDisclosureMode, null);
 
         // First find user DN by username (SAM Account Name)
         _searchConstraints = new(
@@ -124,7 +137,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (LdapException ex)
         {
-            throw TranslateLdapException(ex);
+            throw TranslateLdapException(ex, _options.ErrorDisclosureMode);
         }
         catch (Exception ex)
         {
@@ -217,7 +230,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (LdapException ex)
         {
-            throw TranslateLdapException(ex);
+            throw TranslateLdapException(ex, _options.ErrorDisclosureMode);
         }
         catch (Exception ex)
         {
@@ -250,10 +263,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         if (!search.HasMore())
         {
-            if (_options.HideUserNotFound)
-                throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
-
-            throw new UserNotFoundException("User not found");
+            // Posture-aware existence handling shared with the AD provider
+            // (replaces the deprecated LDAP-only HideUserNotFound switch).
+            throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
         }
 
         var entry = search.Next();
@@ -472,14 +484,14 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// bind-style errors lead with a generic SEC_E code and carry the Win32 code
     /// in the "data" field ("80090308: LdapErr: ..., data 52e, v2580"). Routing
     /// of the extracted code is delegated to
-    /// <see cref="DirectoryErrorTranslator.Translate(int, Exception?)"/> — see
-    /// that class for the routing table and the interim conservative posture.
+    /// <see cref="DirectoryErrorTranslator.Translate(int, ErrorDisclosureMode, Exception?)"/> —
+    /// see that class for the per-mode routing table.
     /// Messages with no recognizable Win32 code become a
     /// <see cref="DirectoryUnavailableException"/> whose wire message is a fixed
     /// curated string; the server's diagnostic text survives only in the inner
     /// exception, which reaches logs but never the wire.
     /// </summary>
-    internal static Exception TranslateLdapException(LdapException ex)
+    internal static Exception TranslateLdapException(LdapException ex, ErrorDisclosureMode disclosureMode)
     {
         var known = string.IsNullOrWhiteSpace(ex.LdapErrorMessage)
             ? null
@@ -487,7 +499,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         return known is null
             ? new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex)
-            : DirectoryErrorTranslator.Translate(known.Code, ex);
+            : DirectoryErrorTranslator.Translate(known.Code, disclosureMode, ex);
     }
 
     /// <summary>

@@ -7,42 +7,84 @@ namespace Unosquare.PassCore.Common.Tests;
 
 public class DirectoryErrorTranslatorTests
 {
-    // Expected routing for every cataloged Win32 code. Deliberately duplicated
-    // from the production table so that changing a routing decision requires a
-    // conscious change here too.
-    public static TheoryData<int, Type, ApiErrorCode, string> RoutingTable => new()
+    // Expected routing for every cataloged Win32 code in both disclosure modes.
+    // Deliberately duplicated from the production table so that changing a
+    // routing decision requires a conscious change here too.
+    public static TheoryData<int, ErrorDisclosureMode, Type, ApiErrorCode, string> RoutingTable
     {
-        { 0x005, typeof(DirectoryUnavailableException), ApiErrorCode.LdapProblem, DirectoryErrorTranslator.DirectoryFailureMessage },
-        { 0x056, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x523, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x524, typeof(DirectoryUnavailableException), ApiErrorCode.LdapProblem, DirectoryErrorTranslator.DirectoryFailureMessage },
-        { 0x525, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x52B, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x52C, typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword, DirectoryErrorTranslator.NewPasswordPolicyMessage },
-        { 0x52D, typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword, DirectoryErrorTranslator.NewPasswordPolicyMessage },
-        { 0x52E, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x52F, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x530, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x531, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x532, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x533, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x701, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x773, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x774, typeof(DirectoryUnavailableException), ApiErrorCode.LdapProblem, DirectoryErrorTranslator.DirectoryFailureMessage },
-        { 0x775, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage },
-        { 0x8C3, typeof(PasswordPolicyViolationException), ApiErrorCode.ChangeNotPermitted, DirectoryErrorTranslator.ChangeNotPermittedMessage },
-        { 0x8C4, typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword, DirectoryErrorTranslator.NewPasswordPolicyMessage },
-        { 0x8C5, typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword, DirectoryErrorTranslator.NewPasswordPolicyMessage },
-        { 0x8C6, typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword, DirectoryErrorTranslator.NewPasswordPolicyMessage },
-    };
+        get
+        {
+            var data = new TheoryData<int, ErrorDisclosureMode, Type, ApiErrorCode, string>();
+
+            // (code, hardened expectation, informative expectation)
+            foreach (var (code, hardened, informative) in new (int, Expectation, Expectation)[]
+            {
+                (0x005, Infra, Infra),
+                (0x056, Credentials, Credentials),
+                (0x523, Credentials, NotFound),
+                (0x524, Infra, Infra),
+                (0x525, Credentials, NotFound),
+                (0x52B, Credentials, Credentials),
+                (0x52C, Policy, Policy),
+                (0x52D, Policy, Policy),
+                (0x52E, Credentials, Credentials),
+                (0x52F, Credentials, AccountState),
+                (0x530, Credentials, AccountState),
+                (0x531, Credentials, AccountState),
+                (0x532, Credentials, Credentials),
+                (0x533, Credentials, AccountState),
+                (0x701, Credentials, AccountState),
+                (0x773, Credentials, Credentials),
+                (0x774, Infra, Infra),
+                (0x775, Credentials, AccountState),
+                (0x8C3, CannotChange, CannotChange),
+                (0x8C4, Policy, Policy),
+                (0x8C5, Policy, Policy),
+                (0x8C6, Policy, Policy),
+            })
+            {
+                data.Add(code, ErrorDisclosureMode.Hardened, hardened.ExceptionType, hardened.Code, hardened.Message);
+                data.Add(code, ErrorDisclosureMode.Informative, informative.ExceptionType, informative.Code, informative.Message);
+            }
+
+            return data;
+        }
+    }
+
+    private sealed record Expectation(Type ExceptionType, ApiErrorCode Code, string Message);
+
+    private static Expectation Credentials => new(
+        typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials,
+        DirectoryErrorTranslator.InvalidCredentialsMessage);
+
+    private static Expectation NotFound => new(
+        typeof(UserNotFoundException), ApiErrorCode.UserNotFound,
+        DirectoryErrorTranslator.UserNotFoundMessage);
+
+    private static Expectation AccountState => new(
+        typeof(PasswordPolicyViolationException), ApiErrorCode.ChangeNotPermitted,
+        DirectoryErrorTranslator.AccountStateMessage);
+
+    private static Expectation Policy => new(
+        typeof(PasswordPolicyViolationException), ApiErrorCode.ComplexPassword,
+        DirectoryErrorTranslator.NewPasswordPolicyMessage);
+
+    private static Expectation CannotChange => new(
+        typeof(PasswordPolicyViolationException), ApiErrorCode.ChangeNotPermitted,
+        DirectoryErrorTranslator.ChangeNotPermittedMessage);
+
+    private static Expectation Infra => new(
+        typeof(DirectoryUnavailableException), ApiErrorCode.LdapProblem,
+        DirectoryErrorTranslator.DirectoryFailureMessage);
 
     [Theory]
     [MemberData(nameof(RoutingTable))]
-    public void Translate_CatalogedCode_RoutesPerTable(int code, Type exceptionType, ApiErrorCode apiCode, string message)
+    public void Translate_CatalogedCode_RoutesPerTable(
+        int code, ErrorDisclosureMode mode, Type exceptionType, ApiErrorCode apiCode, string message)
     {
         var inner = new InvalidOperationException("raw transport detail");
 
-        var translated = DirectoryErrorTranslator.Translate(code, inner);
+        var translated = DirectoryErrorTranslator.Translate(code, mode, inner);
 
         Assert.IsType(exceptionType, translated);
         Assert.Same(inner, translated.InnerException);
@@ -54,19 +96,64 @@ public class DirectoryErrorTranslatorTests
     }
 
     [Fact]
-    public void RoutingTable_CoversEntireCatalog()
+    public void RoutingTable_CoversEntireCatalogInBothModes()
     {
-        var testedCodes = RoutingTable.Select(row => (int)row[0]).OrderBy(c => c);
-        var catalogedCodes = Win32ErrorCode.Codes.Select(c => c.Code).OrderBy(c => c);
+        var testedCodes = RoutingTable
+            .Select(row => ((int)row[0], (ErrorDisclosureMode)row[1]))
+            .Distinct()
+            .OrderBy(pair => pair.Item1).ThenBy(pair => pair.Item2)
+            .ToList();
 
-        // A code added to the catalog must also get an explicit routing expectation here.
-        Assert.Equal(catalogedCodes, testedCodes);
+        var expected = Win32ErrorCode.Codes
+            .SelectMany(c => new[]
+            {
+                (c.Code, ErrorDisclosureMode.Hardened),
+                (c.Code, ErrorDisclosureMode.Informative),
+            })
+            .OrderBy(pair => pair.Item1).ThenBy(pair => pair.Item2)
+            .ToList();
+
+        // A code added to the catalog must also get explicit per-mode routing
+        // expectations here.
+        Assert.Equal(expected, testedCodes);
     }
 
     [Fact]
-    public void Translate_UnknownCode_DegradesToDirectoryUnavailable()
+    public void Translate_Hardened_WrongPasswordUnknownUserAndLockedAreByteIdentical()
     {
-        var translated = DirectoryErrorTranslator.Translate(0x9999);
+        // The hardened-mode guarantee: no oracle survives in the JSON.
+        var wrongPassword = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(0x52E, ErrorDisclosureMode.Hardened));
+        var unknownUser = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(0x525, ErrorDisclosureMode.Hardened));
+        var lockedOut = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(0x775, ErrorDisclosureMode.Hardened));
+        var disabled = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(0x533, ErrorDisclosureMode.Hardened));
+        var structuralNotFound = ApiErrorMapper.Map(
+            DirectoryErrorTranslator.CreateUserNotFoundError(ErrorDisclosureMode.Hardened));
+
+        foreach (var item in new[] { unknownUser, lockedOut, disabled, structuralNotFound })
+        {
+            Assert.Equal(wrongPassword.ErrorCode, item.ErrorCode);
+            Assert.Equal(wrongPassword.Message, item.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened, typeof(InvalidCredentialsException), ApiErrorCode.InvalidCredentials)]
+    [InlineData(ErrorDisclosureMode.Informative, typeof(UserNotFoundException), ApiErrorCode.UserNotFound)]
+    public void CreateUserNotFoundError_FollowsDisclosureMode(
+        ErrorDisclosureMode mode, Type exceptionType, ApiErrorCode apiCode)
+    {
+        var ex = DirectoryErrorTranslator.CreateUserNotFoundError(mode);
+
+        Assert.IsType(exceptionType, ex);
+        Assert.Equal(apiCode, ApiErrorMapper.Map(ex).ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public void Translate_UnknownCode_DegradesToDirectoryUnavailableInBothModes(ErrorDisclosureMode mode)
+    {
+        var translated = DirectoryErrorTranslator.Translate(0x9999, mode);
 
         var dir = Assert.IsType<DirectoryUnavailableException>(translated);
         Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, dir.Message);
@@ -76,7 +163,7 @@ public class DirectoryErrorTranslatorTests
     [Fact]
     public void Translate_WithoutInnerException_Succeeds()
     {
-        var translated = DirectoryErrorTranslator.Translate(0x52E);
+        var translated = DirectoryErrorTranslator.Translate(0x52E, ErrorDisclosureMode.Hardened);
 
         Assert.IsType<InvalidCredentialsException>(translated);
         Assert.Null(translated.InnerException);
@@ -158,8 +245,10 @@ public class DirectoryErrorTranslatorTests
     // TranslateException end-to-end
     // ------------------------------------------------------------------
 
-    [Fact]
-    public void TranslateException_PolicyHResult_MapsToComplexPassword()
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public void TranslateException_PolicyHResult_MapsToComplexPasswordInBothModes(ErrorDisclosureMode mode)
     {
         // The AD automatic-context policy failure: previously escaped as
         // Generic + raw .NET message.
@@ -167,7 +256,7 @@ public class DirectoryErrorTranslatorTests
             unchecked((int)0x800708C5),
             "The password does not meet the password policy requirements (raw .NET text)");
 
-        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.TranslateException(raw));
+        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.TranslateException(raw, mode));
 
         Assert.Equal(ApiErrorCode.ComplexPassword, item.ErrorCode);
         Assert.Equal(DirectoryErrorTranslator.NewPasswordPolicyMessage, item.Message);
@@ -179,7 +268,7 @@ public class DirectoryErrorTranslatorTests
     {
         var raw = new InvalidOperationException("secret internal diagnostic");
 
-        var translated = DirectoryErrorTranslator.TranslateException(raw);
+        var translated = DirectoryErrorTranslator.TranslateException(raw, ErrorDisclosureMode.Hardened);
 
         var dir = Assert.IsType<DirectoryUnavailableException>(translated);
         Assert.Same(raw, dir.InnerException); // detail preserved for logs
@@ -195,7 +284,8 @@ public class DirectoryErrorTranslatorTests
     {
         var raw = new HResultException(unchecked((int)0x80070056));
 
-        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.TranslateException(raw));
+        var item = ApiErrorMapper.Map(
+            DirectoryErrorTranslator.TranslateException(raw, ErrorDisclosureMode.Hardened));
 
         Assert.Equal(ApiErrorCode.InvalidCredentials, item.ErrorCode);
         Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, item.Message);

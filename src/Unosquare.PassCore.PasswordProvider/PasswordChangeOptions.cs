@@ -37,6 +37,9 @@ public class PasswordChangeOptions : IAppSettings
     public bool UpdateLastPassword { get; set; }
 
     /// <inheritdoc />
+    public ErrorDisclosureMode ErrorDisclosureMode { get; set; } = ErrorDisclosureMode.Hardened;
+
+    /// <inheritdoc />
     public string DefaultDomain
     {
         get => _defaultDomain ?? string.Empty;

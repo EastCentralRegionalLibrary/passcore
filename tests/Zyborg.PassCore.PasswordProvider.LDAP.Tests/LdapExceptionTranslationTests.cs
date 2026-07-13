@@ -31,7 +31,8 @@ public class LdapExceptionTranslationTests
     public void Translate_BindStyleLogonFailure_MapsToInvalidCredentials()
     {
         var result = LdapPasswordChangeProvider.TranslateLdapException(
-            Ldap(BindLogonFailure, LdapException.InvalidCredentials));
+            Ldap(BindLogonFailure, LdapException.InvalidCredentials),
+            ErrorDisclosureMode.Hardened);
 
         Assert.IsType<InvalidCredentialsException>(result);
     }
@@ -40,7 +41,8 @@ public class LdapExceptionTranslationTests
     public void Translate_ModifyPasswordRestriction_MapsToPolicyViolation()
     {
         var result = LdapPasswordChangeProvider.TranslateLdapException(
-            Ldap(ModifyPasswordRestriction, LdapException.UnwillingToPerform));
+            Ldap(ModifyPasswordRestriction, LdapException.UnwillingToPerform),
+            ErrorDisclosureMode.Hardened);
 
         var policy = Assert.IsType<PasswordPolicyViolationException>(result);
         Assert.Equal(ApiErrorCode.ComplexPassword, policy.ErrorCode);
@@ -50,7 +52,8 @@ public class LdapExceptionTranslationTests
     public void Translate_ModifyWrongOldPassword_MapsToInvalidCredentials()
     {
         var result = LdapPasswordChangeProvider.TranslateLdapException(
-            Ldap(ModifyWrongOldPassword, LdapException.ConstraintViolation));
+            Ldap(ModifyWrongOldPassword, LdapException.ConstraintViolation),
+            ErrorDisclosureMode.Hardened);
 
         Assert.IsType<InvalidCredentialsException>(result);
     }
@@ -64,7 +67,7 @@ public class LdapExceptionTranslationTests
         const string message = "some vendor-specific failure without codes";
         var ldapEx = Ldap(message);
 
-        var result = LdapPasswordChangeProvider.TranslateLdapException(ldapEx);
+        var result = LdapPasswordChangeProvider.TranslateLdapException(ldapEx, ErrorDisclosureMode.Hardened);
 
         var dir = Assert.IsType<DirectoryUnavailableException>(result);
         Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, dir.Message);
@@ -75,25 +78,49 @@ public class LdapExceptionTranslationTests
     [Fact]
     public void Translate_EmptyServerMessage_MapsToDirectoryUnavailable()
     {
-        var result = LdapPasswordChangeProvider.TranslateLdapException(Ldap(string.Empty));
+        var result = LdapPasswordChangeProvider.TranslateLdapException(Ldap(string.Empty), ErrorDisclosureMode.Hardened);
 
         Assert.IsType<DirectoryUnavailableException>(result);
     }
 
+    private const string BindAccountLockedOut =
+        "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v2580";
+
+    private const string BindNoSuchUser =
+        "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 525, v2580";
+
     [Fact]
-    public void Translate_AccountLockedOut_RoutesToInvalidCredentialsUnderConservativePosture()
+    public void Translate_AccountLockedOut_Hardened_IsIndistinguishableFromWrongCredentials()
     {
-        // Expectation changed deliberately: account-state codes (locked, disabled,
-        // hours, restriction) used to surface as a directory error naming the
-        // condition; under the interim conservative posture they are
-        // indistinguishable from wrong credentials so the account state leaks
-        // to no one. A later phase makes this configurable.
-        var result = LdapPasswordChangeProvider.TranslateLdapException(Ldap(
-            "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v2580",
-            LdapException.InvalidCredentials));
+        var result = LdapPasswordChangeProvider.TranslateLdapException(
+            Ldap(BindAccountLockedOut, LdapException.InvalidCredentials),
+            ErrorDisclosureMode.Hardened);
 
         var cred = Assert.IsType<InvalidCredentialsException>(result);
         Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, cred.Message);
+    }
+
+    [Fact]
+    public void Translate_AccountLockedOut_Informative_ReportsChangeNotPermitted()
+    {
+        var result = LdapPasswordChangeProvider.TranslateLdapException(
+            Ldap(BindAccountLockedOut, LdapException.InvalidCredentials),
+            ErrorDisclosureMode.Informative);
+
+        var policy = Assert.IsType<PasswordPolicyViolationException>(result);
+        Assert.Equal(ApiErrorCode.ChangeNotPermitted, policy.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.AccountStateMessage, policy.Message);
+    }
+
+    [Fact]
+    public void Translate_NoSuchUser_Informative_ReportsUserNotFound()
+    {
+        var result = LdapPasswordChangeProvider.TranslateLdapException(
+            Ldap(BindNoSuchUser, LdapException.InvalidCredentials),
+            ErrorDisclosureMode.Informative);
+
+        var notFound = Assert.IsType<UserNotFoundException>(result);
+        Assert.Equal(DirectoryErrorTranslator.UserNotFoundMessage, notFound.Message);
     }
 
     [Fact]

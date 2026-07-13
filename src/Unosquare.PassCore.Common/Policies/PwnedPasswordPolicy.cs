@@ -34,11 +34,20 @@ public class PwnedPasswordPolicy : IPasswordPolicy
         }
         catch (PwnedPasswordsApiException ex)
         {
-            throw new PasswordPolicyViolationException($"Error during Pwned Password API check: {ex.Message}", ApiErrorCode.Generic);
+            // Fail closed with a clean surface message: the Generic code renders
+            // its message verbatim in the UI, so the HIBP client's exception text
+            // must stay out of it. Full detail reaches logs via the inner
+            // exception (the base class logs policy failures with correlation ID).
+            throw new PasswordPolicyViolationException(
+                UnavailableMessage(context.CorrelationId), ApiErrorCode.Generic, ex);
         }
         catch (PwnedPasswordsSearchException ex)
         {
-            throw new PasswordPolicyViolationException($"Unexpected error during Pwned Password search: {ex.Message}", ApiErrorCode.Generic);
+            throw new PasswordPolicyViolationException(
+                UnavailableMessage(context.CorrelationId), ApiErrorCode.Generic, ex);
         }
     }
+
+    private static string UnavailableMessage(string? correlationId) =>
+        $"The compromised-password check could not be completed. Please try again later (ref: {correlationId ?? "n/a"})";
 }

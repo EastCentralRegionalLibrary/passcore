@@ -47,11 +47,10 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <remarks>
         /// Directory failures are routed through
         /// <see cref="DirectoryErrorTranslator"/> so this provider and the LDAP
-        /// provider report identical conditions identically. An unresolvable
-        /// username reports as invalid credentials rather than user-not-found —
-        /// the interim conservative (hardened) posture shared with the LDAP
-        /// provider's <c>HideUserNotFound</c> default, pending the configurable
-        /// disclosure mode planned for a later phase.
+        /// provider report identical conditions identically. How much a failure
+        /// discloses (user-not-found, account state) is controlled by the
+        /// <see cref="IAppSettings.ErrorDisclosureMode"/> setting shared by both
+        /// providers; see <see cref="ErrorDisclosureMode"/> for the trade-off.
         /// </remarks>
         protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
@@ -66,8 +65,8 @@ namespace Unosquare.PassCore.PasswordProvider
 
                 if (userPrincipal == null) // Check if UserPrincipal is null
                 {
-                    // Interim conservative posture: do not disclose whether the account exists.
-                    throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
+                    // Posture-aware existence handling shared with the LDAP provider.
+                    throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
                 }
 
                 if (userPrincipal.UserCannotChangePassword) // Check if the UserCannotChangePassword flag is set
@@ -99,7 +98,7 @@ namespace Unosquare.PassCore.PasswordProvider
                 // COMException 0x800708C5 for a policy rejection) and route it through
                 // the shared translator; anything unrecognizable degrades to a
                 // curated directory-failure message with the detail preserved for logs.
-                throw DirectoryErrorTranslator.TranslateException(ex);
+                throw DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
             }
 
             return Task.CompletedTask;
@@ -143,7 +142,7 @@ namespace Unosquare.PassCore.PasswordProvider
             {
                 // Group lookups run inside policy evaluation; without this wrap a raw
                 // AccountManagement exception would surface as Generic + raw text.
-                throw DirectoryErrorTranslator.TranslateException(ex);
+                throw DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
             }
         }
 
