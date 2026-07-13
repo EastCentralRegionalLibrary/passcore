@@ -105,18 +105,28 @@ public class PasswordController : Controller
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Failed to update password");
-
-            result.Errors.Add(new ApiErrorItem(ApiErrorCode.Generic, ex.Message));
+            result.Errors.Add(UnexpectedError(ex));
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogError(ex, "Failed to update password");
-
-            result.Errors.Add(new ApiErrorItem(ApiErrorCode.Generic, ex.Message));
+            result.Errors.Add(UnexpectedError(ex));
         }
 
         return BadRequest(result);
+    }
+
+    /// <summary>
+    /// Logs the exception under a fresh correlation reference and returns a
+    /// clean Generic error carrying only that reference — the Generic code's
+    /// message renders verbatim in the UI, so raw exception text must never
+    /// be placed in it.
+    /// </summary>
+    private ApiErrorItem UnexpectedError(Exception ex)
+    {
+        var reference = Guid.NewGuid().ToString("N")[..8];
+        _logger.LogError(ex, "Failed to update password (ref: {Reference})", reference);
+
+        return new ApiErrorItem(ApiErrorCode.Generic, $"An unexpected error occurred (ref: {reference})");
     }
 
     private async Task<bool> ValidateRecaptcha(string? recaptchaResponse)

@@ -109,18 +109,24 @@ public class LdapPasswordChangeOptions : IAppSettings
     public string? LdapSearchBase { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether [hide user not found].
+    /// Gets or sets the deprecated [hide user not found] switch.
     /// </summary>
     /// <remarks>
-    /// When the user cannot be located in the directory, you can
-    /// either expose that error, or hide it and treat like an arbitrary
-    /// bad credential -- in order to prevent brute force attack to
-    /// discover the presence or absence of a username.
+    /// Deprecated and non-functional: superseded by
+    /// <see cref="ErrorDisclosureMode"/>, which controls user-not-found
+    /// disclosure consistently across providers (<c>Hardened</c> hides it like
+    /// <c>HideUserNotFound=true</c> did; <c>Informative</c> discloses it like
+    /// <c>HideUserNotFound=false</c> did). The property remains only so that
+    /// configurations still carrying the key produce a startup warning instead
+    /// of silently changing meaning; its value has no effect.
     /// </remarks>
     /// <value>
-    ///   <c>true</c> if [hide user not found]; otherwise, <c>false</c>.
+    /// Non-null when the configuration still sets the deprecated key.
     /// </value>
-    public bool HideUserNotFound { get; set; } = true;
+    public bool? HideUserNotFound { get; set; }
+
+    /// <inheritdoc />
+    public ErrorDisclosureMode ErrorDisclosureMode { get; set; } = ErrorDisclosureMode.Hardened;
 
     /// <summary>
     /// Gets or sets a value indicating whether [LDAP change password with delete add].

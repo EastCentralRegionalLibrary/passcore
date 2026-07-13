@@ -140,6 +140,8 @@ The most relevant configuration entries are shown below. Make sure you make your
   - Find the `MinimumScore` entry and set it to a numeric value (without quotes) between 1 and 4, where 1 is a bit secure and 4 is the most secure. Set to 0, for deactivate the validation.
 - To enable restricted group checking
   1. Find the `RestrictedADGroups` entry and add any groups that are sensitive.  Accounts in these groups (directly or inherited) will not be able to change their password.
+- To choose how much failed password changes disclose
+  - Find the `ErrorDisclosureMode` entry (in `AppSettings`, applies to both the AD and LDAP providers). `"Hardened"` (the default) makes unknown usernames and locked/disabled/expired/restricted accounts indistinguishable from a wrong password, so an attacker probing the form learns nothing about which accounts exist or their state. `"Informative"` tells legitimate users when the account was not found or cannot currently change its password ("contact IT"), which reduces help-desk confusion but hands that same information to attackers. This setting is server-side only and is never sent to the browser. It replaces the old LDAP-only `HideUserNotFound` setting, which is now ignored (a startup warning is logged if it is still present).
 - Find the `DefaultDomain` entry and set it to your default Active Directory domain. This should eliminate confusion about using e-mail domains / internal domain names. **NOTE:** if you are using a subdomain, and you have errors, please try using your top-level domain. 
 - To provide an optional parameter to the URL to set the username text box automatically
   1. `http://mypasscore.com/?userName=someusername`

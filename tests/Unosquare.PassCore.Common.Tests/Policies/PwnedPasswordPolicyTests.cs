@@ -65,6 +65,31 @@ public class PwnedPasswordPolicyTests
         Assert.Equal(ApiErrorCode.Generic, ex.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(typeof(PwnedPasswordsApiException))]
+    [InlineData(typeof(PwnedPasswordsSearchException))]
+    public async Task ValidateAsync_ApiFailure_NeverLeaksClientExceptionText(Type exceptionType)
+    {
+        // The Generic code renders its message verbatim in the UI, so the HIBP
+        // client's internal detail must never appear in it — only a clean
+        // message with the correlation reference.
+        var raw = (Exception)Activator.CreateInstance(
+            exceptionType, "HIBP internals: socket timed out at 10.0.0.5:443", null)!;
+        var search = new FaultySearch(raw);
+        var policy = new PwnedPasswordPolicy(search);
+        var settings = new ClientSettings { EnablePwnedPasswordCheck = true };
+        var context = new PasswordChangeContext("u", "old", "any", settings, correlationId: "abc12345");
+
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
+            () => policy.ValidateAsync(context, provider: null!));
+
+        Assert.Equal(ApiErrorCode.Generic, ex.ErrorCode);
+        Assert.DoesNotContain("HIBP internals", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("10.0.0.5", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("abc12345", ex.Message, StringComparison.Ordinal);
+        Assert.Same(raw, ex.InnerException); // detail preserved for the base class's logging
+    }
+
     private sealed class ThrowingSearch : IPwnedPasswordSearch
     {
         public bool WasCalled { get; private set; }

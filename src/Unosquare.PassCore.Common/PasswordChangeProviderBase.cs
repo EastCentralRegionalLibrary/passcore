@@ -88,7 +88,12 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
         string username,
         string currentPassword,
         string newPassword) =>
-        ChangePasswordAsync(new PasswordChangeContext(username, currentPassword, newPassword, ClientSettings));
+        ChangePasswordAsync(new PasswordChangeContext(
+            username,
+            currentPassword,
+            newPassword,
+            ClientSettings,
+            correlationId: Guid.NewGuid().ToString("N")[..8]));
 
     protected virtual async Task<PasswordChangeResult> ChangePasswordAsync(PasswordChangeContext context, CancellationToken cancellationToken = default)
     {
@@ -136,7 +141,13 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
         catch (Exception ex)
         {
             LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
-            return PasswordChangeResult.Fail(new ApiErrorItem(ApiErrorCode.Generic, ex.Message));
+
+            // Never serialize raw exception text: the Generic code renders its
+            // message verbatim in the UI. The correlation ID ties the clean
+            // surface text back to the full detail logged above.
+            return PasswordChangeResult.Fail(new ApiErrorItem(
+                ApiErrorCode.Generic,
+                $"An unexpected error occurred (ref: {context.CorrelationId ?? "n/a"})"));
         }
     }
 

@@ -59,30 +59,42 @@ public enum DirectoryFailureClass
 /// <see cref="ApiErrorItem"/>s. Providers own only transport-specific
 /// extraction (parsing an LDAP extended-error message, unwrapping an HRESULT)
 /// and must delegate routing here so identical directory conditions produce
-/// identical results across providers.
+/// identical results across providers. Every entry point requires an
+/// <see cref="ErrorDisclosureMode"/>, so no caller can route without choosing
+/// the configured posture.
 ///
-/// Routing table (interim conservative/hardened posture — a later phase makes
-/// the existence/account-state rows configurable):
+/// Routing table (per <see cref="ErrorDisclosureMode"/>):
 /// <list type="bullet">
-/// <item><see cref="DirectoryFailureClass.Credentials"/>,
-/// <see cref="DirectoryFailureClass.Existence"/>,
-/// <see cref="DirectoryFailureClass.AccountState"/> and
+/// <item><see cref="DirectoryFailureClass.Credentials"/> and
 /// <see cref="DirectoryFailureClass.PasswordExpiredOrMustChange"/> →
 /// <see cref="InvalidCredentialsException"/> with the uniform
-/// <see cref="InvalidCredentialsMessage"/>, so an unauthenticated caller gets
-/// no account-existence or account-state oracle.</item>
+/// <see cref="InvalidCredentialsMessage"/> in both modes.</item>
+/// <item><see cref="DirectoryFailureClass.Existence"/> → hardened:
+/// <see cref="InvalidCredentialsException"/> (indistinguishable from a wrong
+/// password); informative: <see cref="UserNotFoundException"/> with
+/// <see cref="UserNotFoundMessage"/>.</item>
+/// <item><see cref="DirectoryFailureClass.AccountState"/> → hardened:
+/// <see cref="InvalidCredentialsException"/>; informative:
+/// <see cref="PasswordPolicyViolationException"/> with
+/// <see cref="ApiErrorCode.ChangeNotPermitted"/> and
+/// <see cref="AccountStateMessage"/> ("stop retrying, contact IT").</item>
 /// <item><see cref="DirectoryFailureClass.NewPasswordPolicy"/> →
 /// <see cref="PasswordPolicyViolationException"/> with an explicit
-/// <see cref="ApiErrorCode.ComplexPassword"/> (0x52C and 0x52D deliberately
-/// collapse into that code).</item>
+/// <see cref="ApiErrorCode.ComplexPassword"/> in both modes (0x52C and 0x52D
+/// deliberately collapse into that code).</item>
 /// <item><see cref="DirectoryFailureClass.ChangeNotPermitted"/> →
 /// <see cref="PasswordPolicyViolationException"/> with
-/// <see cref="ApiErrorCode.ChangeNotPermitted"/>.</item>
+/// <see cref="ApiErrorCode.ChangeNotPermitted"/> in both modes (this code is
+/// only produced by the directory after the caller proved the current
+/// password).</item>
 /// <item><see cref="DirectoryFailureClass.Infrastructure"/> and every
-/// uncataloged code → <see cref="DirectoryUnavailableException"/>.</item>
+/// uncataloged code → <see cref="DirectoryUnavailableException"/> in both
+/// modes.</item>
 /// </list>
 /// Exception messages are fixed curated strings; the specific code survives
-/// only in the inner exception, which reaches logs but never the wire.
+/// only in the inner exception, which reaches logs but never the wire. In
+/// hardened mode the credentials/existence/account-state rows are
+/// byte-identical on the wire (same code, same message).
 /// </summary>
 public static class DirectoryErrorTranslator
 {
@@ -114,6 +126,20 @@ public static class DirectoryErrorTranslator
         "The directory service could not complete the password change request";
 
     /// <summary>
+    /// Wire message for unknown users in
+    /// <see cref="ErrorDisclosureMode.Informative"/> mode only.
+    /// </summary>
+    public const string UserNotFoundMessage = "User not found";
+
+    /// <summary>
+    /// Wire message for unusable accounts (locked, disabled, expired,
+    /// hours/workstation-restricted) in
+    /// <see cref="ErrorDisclosureMode.Informative"/> mode only.
+    /// </summary>
+    public const string AccountStateMessage =
+        "This account cannot change its password at this time. Contact your administrator or IT help desk";
+
+    /// <summary>
     /// Classifies a Win32 error code via the <see cref="Win32ErrorCode"/>
     /// catalog. Uncataloged codes degrade to
     /// <see cref="DirectoryFailureClass.Infrastructure"/>; never throws.
@@ -137,30 +163,32 @@ public static class DirectoryErrorTranslator
 
     /// <summary>
     /// Translates a Win32 error code to the domain exception described in the
-    /// class-level routing table.
+    /// class-level routing table, applying the configured disclosure posture.
     /// </summary>
     /// <param name="win32Code">The Win32 error code.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
     /// <param name="innerException">The transport exception, preserved for logs.</param>
     /// <returns>The domain exception to throw.</returns>
-    public static Exception Translate(int win32Code, Exception? innerException = null)
+    public static Exception Translate(
+        int win32Code,
+        ErrorDisclosureMode disclosureMode,
+        Exception? innerException = null)
     {
         return Classify(win32Code) switch
         {
             DirectoryFailureClass.Credentials or
-            DirectoryFailureClass.Existence or
-            DirectoryFailureClass.AccountState or
             DirectoryFailureClass.PasswordExpiredOrMustChange =>
-                innerException is null
-                    ? new InvalidCredentialsException(InvalidCredentialsMessage)
-                    : new InvalidCredentialsException(InvalidCredentialsMessage, innerException),
+                InvalidCredentials(innerException),
+            DirectoryFailureClass.Existence =>
+                CreateUserNotFoundError(disclosureMode, innerException),
+            DirectoryFailureClass.AccountState =>
+                disclosureMode == ErrorDisclosureMode.Informative
+                    ? PolicyViolation(AccountStateMessage, ApiErrorCode.ChangeNotPermitted, innerException)
+                    : InvalidCredentials(innerException),
             DirectoryFailureClass.NewPasswordPolicy =>
-                innerException is null
-                    ? new PasswordPolicyViolationException(NewPasswordPolicyMessage, ApiErrorCode.ComplexPassword)
-                    : new PasswordPolicyViolationException(NewPasswordPolicyMessage, ApiErrorCode.ComplexPassword, innerException),
+                PolicyViolation(NewPasswordPolicyMessage, ApiErrorCode.ComplexPassword, innerException),
             DirectoryFailureClass.ChangeNotPermitted =>
-                innerException is null
-                    ? new PasswordPolicyViolationException(ChangeNotPermittedMessage, ApiErrorCode.ChangeNotPermitted)
-                    : new PasswordPolicyViolationException(ChangeNotPermittedMessage, ApiErrorCode.ChangeNotPermitted, innerException),
+                PolicyViolation(ChangeNotPermittedMessage, ApiErrorCode.ChangeNotPermitted, innerException),
             _ =>
                 innerException is null
                     ? new DirectoryUnavailableException(DirectoryFailureMessage)
@@ -169,24 +197,61 @@ public static class DirectoryErrorTranslator
     }
 
     /// <summary>
+    /// Builds the exception for the structural "user could not be resolved"
+    /// condition (an empty search result or a null principal, where no Win32
+    /// code exists). Kept here so both providers report unknown users through
+    /// the same posture-aware routing as the coded existence failures:
+    /// hardened → indistinguishable from a wrong password; informative →
+    /// <see cref="UserNotFoundException"/>.
+    /// </summary>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="innerException">Optional transport exception, preserved for logs.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception CreateUserNotFoundError(
+        ErrorDisclosureMode disclosureMode,
+        Exception? innerException = null)
+    {
+        if (disclosureMode == ErrorDisclosureMode.Informative)
+        {
+            return innerException is null
+                ? new UserNotFoundException(UserNotFoundMessage)
+                : new UserNotFoundException(UserNotFoundMessage, innerException);
+        }
+
+        return InvalidCredentials(innerException);
+    }
+
+    /// <summary>
     /// Translates an arbitrary exception raised by a directory operation:
     /// extracts a Win32 code from the exception chain when one is present and
-    /// routes it through <see cref="Translate(int, Exception?)"/>; anything
-    /// unrecognizable becomes a <see cref="DirectoryUnavailableException"/>
+    /// routes it through <see cref="Translate(int, ErrorDisclosureMode, Exception?)"/>;
+    /// anything unrecognizable becomes a <see cref="DirectoryUnavailableException"/>
     /// with the curated <see cref="DirectoryFailureMessage"/>. The original
     /// exception is preserved as the inner exception so its detail reaches
     /// logs, never the wire.
     /// </summary>
     /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
     /// <returns>The domain exception to throw.</returns>
-    public static Exception TranslateException(Exception exception)
+    public static Exception TranslateException(Exception exception, ErrorDisclosureMode disclosureMode)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
         return TryGetWin32Code(exception, out var code)
-            ? Translate(code, exception)
+            ? Translate(code, disclosureMode, exception)
             : new DirectoryUnavailableException(DirectoryFailureMessage, exception);
     }
+
+    private static InvalidCredentialsException InvalidCredentials(Exception? innerException) =>
+        innerException is null
+            ? new InvalidCredentialsException(InvalidCredentialsMessage)
+            : new InvalidCredentialsException(InvalidCredentialsMessage, innerException);
+
+    private static PasswordPolicyViolationException PolicyViolation(
+        string message, ApiErrorCode errorCode, Exception? innerException) =>
+        innerException is null
+            ? new PasswordPolicyViolationException(message, errorCode)
+            : new PasswordPolicyViolationException(message, errorCode, innerException);
 
     /// <summary>
     /// Walks an exception chain looking for a Win32 error code: a
