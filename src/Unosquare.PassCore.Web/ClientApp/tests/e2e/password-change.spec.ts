@@ -62,7 +62,7 @@ test.describe('Password Change Flow', () => {
 
     await responsePromise;
     await expect(page.getByTestId('snackbar-notification')).toBeVisible();
-    await expect(page.locator('text=You are not allowed to change your password')).toBeVisible();
+    await expect(page.locator('text=Your password cannot be changed at this time')).toBeVisible();
   });
 
   test('should show error for password policy violation', async ({ page }) => {
@@ -77,6 +77,6 @@ test.describe('Password Change Flow', () => {
 
     await responsePromise;
     await expect(page.getByTestId('snackbar-notification')).toBeVisible();
-    await expect(page.locator('text=Failed due to password complexity policies')).toBeVisible();
+    await expect(page.locator('text=The new password was rejected by the domain')).toBeVisible();
   });
 });
