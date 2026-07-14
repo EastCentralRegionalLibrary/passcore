@@ -31,6 +31,15 @@ namespace Unosquare.PassCore.PasswordProvider
         private readonly PasswordChangeOptions _options;
         private IdentityType _idType = IdentityType.UserPrincipalName;
 
+        private static readonly Action<ILogger, Exception?> LogAdminResetIgnoredInAutomaticContext =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(103, nameof(LogAdminResetIgnoredInAutomaticContext)),
+                "AllowAdministrativeReset is enabled but UseAutomaticContext is true, so it is " +
+                "ignored: in automatic-context mode there is no service account to perform an " +
+                "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
+                "credentials (UseAutomaticContext=false) if the fallback is wanted.");
+
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
@@ -41,6 +50,9 @@ namespace Unosquare.PassCore.PasswordProvider
             ArgumentNullException.ThrowIfNull(options);
             _options = options.Value;
             SetIdType();
+
+            if (_options.AllowAdministrativeReset && _options.UseAutomaticContext)
+                LogAdminResetIgnoredInAutomaticContext(Logger, null);
         }
 
         /// <inheritdoc />
@@ -84,7 +96,9 @@ namespace Unosquare.PassCore.PasswordProvider
                     throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
                 }
 
-                UpdatePassword(context.CurrentPassword, context.NewPassword, userPrincipal);
+                // The verified flag is derived from control flow: this line is
+                // reachable only after ValidateUserCredentials returned true.
+                UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
                 userPrincipal.Save();
             }
             catch (PasswordChangeException)
@@ -224,30 +238,48 @@ namespace Unosquare.PassCore.PasswordProvider
         }
 
         /// <summary>
-        /// Updates the user's password in Active Directory.
-        /// Attempts to use ChangePassword first, and falls back to SetPassword if ChangePassword fails and 'UseAutomaticContext' is disabled.
+        /// Updates the user's password in Active Directory with a user-context
+        /// ChangePassword. On failure, an administrative SetPassword fallback
+        /// may fire — but only when <see cref="PasswordChangeOptions.AllowAdministrativeReset"/>
+        /// is enabled (default off), the user's current password was verified in
+        /// this request, the failure is one a reset can cure (new-password
+        /// policy or cannot-change; the shared <see cref="AdministrativeReset"/>
+        /// gate), and the provider is bound with service-account credentials
+        /// (automatic-context mode never resets). Every reset is logged at
+        /// Warning with the request correlation ID. With the fallback disabled
+        /// or ineligible, the failure surfaces through
+        /// <see cref="DirectoryErrorTranslator"/> like any other change failure.
         /// </summary>
-        /// <param name="currentPassword">The user's current password.</param>
-        /// <param name="newPassword">The new password to set.</param>
+        /// <param name="context">The password change context.</param>
         /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
+        /// <param name="currentPasswordVerified">Whether the current password was verified in this request.</param>
         private void UpdatePassword(
-            string currentPassword,
-            string newPassword,
-            AuthenticablePrincipal userPrincipal)
+            PasswordChangeContext context,
+            AuthenticablePrincipal userPrincipal,
+            bool currentPasswordVerified)
         {
             try
             {
-                userPrincipal.ChangePassword(currentPassword, newPassword);
+                userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // In automatic-context mode we never set passwords administratively;
-                // surface the original failure.
-                if (_options.UseAutomaticContext)
-                    throw;
+                var translated = DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
 
-                // Service-account mode: fall back to administrative SetPassword.
-                userPrincipal.SetPassword(newPassword);
+                // Automatic-context mode never resets administratively (there is
+                // no service account to reset with); otherwise the shared gate
+                // decides. Ineligible failures surface translated.
+                var attemptReset = !_options.UseAutomaticContext
+                    && AdministrativeReset.ShouldAttempt(
+                        _options.AllowAdministrativeReset,
+                        currentPasswordVerified,
+                        translated);
+
+                if (!attemptReset)
+                    throw translated;
+
+                userPrincipal.SetPassword(context.NewPassword);
+                AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
             }
         }
 
