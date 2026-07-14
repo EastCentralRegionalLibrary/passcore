@@ -128,9 +128,23 @@ public class LdapPasswordChangeOptions : IAppSettings
     /// <inheritdoc />
     public ErrorDisclosureMode ErrorDisclosureMode { get; set; } = ErrorDisclosureMode.Hardened;
 
+    /// <inheritdoc />
+    public bool AllowAdministrativeReset { get; set; }
+
     /// <summary>
     /// Gets or sets a value indicating whether [LDAP change password with delete add].
     /// </summary>
+    /// <remarks>
+    /// Selects the normal change mechanism for the directory type:
+    /// <see langword="true"/> (default) performs an Active Directory-style
+    /// user change (delete/add of <c>unicodePwd</c>, which the server verifies
+    /// against the current password and full password policy);
+    /// <see langword="false"/> performs a generic-LDAP administrative replace
+    /// of <c>userPassword</c>. Note the replace form is inherently an
+    /// administrative operation performed by the service account, so
+    /// <see cref="AllowAdministrativeReset"/> adds nothing when this is
+    /// <see langword="false"/> (a startup warning is logged if both are set).
+    /// </remarks>
     /// <value>
     ///   <c>true</c> if [LDAP change password with delete add]; otherwise, <c>false</c>.
     /// </value>

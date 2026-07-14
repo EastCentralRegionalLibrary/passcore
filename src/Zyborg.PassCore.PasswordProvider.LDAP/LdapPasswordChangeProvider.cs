@@ -71,6 +71,15 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             "discloses them like HideUserNotFound=false did. Remove HideUserNotFound from the " +
             "configuration and set ErrorDisclosureMode explicitly if the default is not wanted.");
 
+    private static readonly Action<ILogger, Exception?> LogAdminResetIneffective =
+        LoggerMessage.Define(
+            LogLevel.Warning,
+            new EventId(102, nameof(LogAdminResetIneffective)),
+            "AllowAdministrativeReset is enabled but LdapChangePasswordWithDelAdd is false, so it " +
+            "has no effect: the Replace change mechanism is already an administrative operation " +
+            "performed by the service account. Remove AllowAdministrativeReset or switch to the " +
+            "delete/add mechanism if a fallback from a user-style change is what you want.");
+
     private static readonly string[] RequiredAttributes =
     {
         "distinguishedName",
@@ -94,6 +103,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         if (_options.HideUserNotFound.HasValue)
             LogHideUserNotFoundDeprecated(Logger, _options.ErrorDisclosureMode, null);
+
+        if (_options.AllowAdministrativeReset && !_options.LdapChangePasswordWithDelAdd)
+            LogAdminResetIneffective(Logger, null);
 
         // First find user DN by username (SAM Account Name)
         _searchConstraints = new(
@@ -221,8 +233,11 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             // 2. Verify current credentials (portable across LDAP servers)
             VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
 
-            // 3. Perform password change using administrative context
-            ChangePassword(user.DistinguishedName, context);
+            // 3. Perform password change using administrative context. The
+            //    verified flag is derived from control flow: VerifyUserCredentials
+            //    throws on failure, so this line is reachable only after the user
+            //    proved knowledge of the current password in this request.
+            ChangePassword(user.DistinguishedName, context, currentPasswordVerified: true);
         }
         catch (PasswordChangeException)
         {
@@ -339,23 +354,84 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // Password modification
     // ---------------------------------------------------------------------
 
-    private void ChangePassword(string userDn, PasswordChangeContext context)
+    /// <summary>
+    /// Performs the password change. With the delete/add mechanism (AD-style
+    /// user change, server-enforced old password and full policy), a failure
+    /// may fall back to an administrative <c>unicodePwd</c> replace when
+    /// <see cref="LdapPasswordChangeOptions.AllowAdministrativeReset"/> permits
+    /// it — see <see cref="TranslateAndDecideRescue"/> for the exact gate. The
+    /// Replace mechanism is already administrative, so no fallback applies there.
+    /// </summary>
+    private void ChangePassword(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
         using var ldap = BindAsServiceAccount();
 
-        if (_options.LdapChangePasswordWithDelAdd)
+        if (!_options.LdapChangePasswordWithDelAdd)
+        {
+            ChangePasswordReplace(
+                ldap, userDn,
+                context.NewPassword);
+            return;
+        }
+
+        try
         {
             ChangePasswordDelAdd(
                 ldap, userDn,
                 context.CurrentPassword,
                 context.NewPassword);
         }
-        else
+        catch (LdapException ex)
         {
-            ChangePasswordReplace(
-                ldap, userDn,
-                context.NewPassword);
+            var translated = TranslateAndDecideRescue(ex, _options, currentPasswordVerified, out var attemptReset);
+            if (!attemptReset)
+                throw translated;
+
+            AdminResetUnicodePwd(ldap, userDn, context.NewPassword);
+            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
         }
+    }
+
+    /// <summary>
+    /// Translates a failed delete/add modification and decides whether the
+    /// administrative-reset fallback may fire: option enabled, current password
+    /// verified in this request, delete/add mechanism in use, and the failure
+    /// is one a reset can cure (new-password policy or cannot-change) — the
+    /// shared <see cref="AdministrativeReset.ShouldAttempt"/> gate.
+    /// </summary>
+    internal static Exception TranslateAndDecideRescue(
+        LdapException ex,
+        LdapPasswordChangeOptions options,
+        bool currentPasswordVerified,
+        out bool attemptReset)
+    {
+        var translated = TranslateLdapException(ex, options.ErrorDisclosureMode);
+
+        attemptReset = options.LdapChangePasswordWithDelAdd
+            && AdministrativeReset.ShouldAttempt(
+                options.AllowAdministrativeReset,
+                currentPasswordVerified,
+                translated);
+
+        return translated;
+    }
+
+    /// <summary>
+    /// Administrative reset of an Active Directory password: a single Replace
+    /// of <c>unicodePwd</c> performed by the service account. Bypasses password
+    /// history and minimum-age policy; only reachable through the
+    /// <see cref="AdministrativeReset"/> gate.
+    /// </summary>
+    private static void AdminResetUnicodePwd(
+        LdapConnection ldap, string userDn, string newPassword)
+    {
+        var newBytes = Encoding.Unicode.GetBytes($"\"{newPassword}\"");
+        ldap.Modify(userDn, new[]
+        {
+            new LdapModification(
+                LdapModification.Replace,
+                new LdapAttribute("unicodePwd", newBytes)),
+        });
     }
 
     private static void ChangePasswordReplace(

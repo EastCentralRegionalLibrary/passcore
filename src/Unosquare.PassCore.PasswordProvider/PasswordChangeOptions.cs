@@ -40,6 +40,9 @@ public class PasswordChangeOptions : IAppSettings
     public ErrorDisclosureMode ErrorDisclosureMode { get; set; } = ErrorDisclosureMode.Hardened;
 
     /// <inheritdoc />
+    public bool AllowAdministrativeReset { get; set; }
+
+    /// <inheritdoc />
     public string DefaultDomain
     {
         get => _defaultDomain ?? string.Empty;

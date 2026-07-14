@@ -60,6 +60,34 @@ public class LdapDisclosureOptionsTests
             e.Message.Contains("HideUserNotFound", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Construct_AdminResetWithReplaceMechanism_LogsIneffectiveWarning()
+    {
+        var opts = ValidOptions();
+        opts.AllowAdministrativeReset = true;
+        opts.LdapChangePasswordWithDelAdd = false;
+
+        var logger = Construct(opts);
+
+        Assert.Contains(logger.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("AllowAdministrativeReset", StringComparison.Ordinal) &&
+            e.Message.Contains("no effect", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Construct_AdminResetWithDelAddMechanism_DoesNotLogIneffectiveWarning()
+    {
+        var opts = ValidOptions();
+        opts.AllowAdministrativeReset = true;
+        opts.LdapChangePasswordWithDelAdd = true;
+
+        var logger = Construct(opts);
+
+        Assert.DoesNotContain(logger.Entries, e =>
+            e.Message.Contains("AllowAdministrativeReset", StringComparison.Ordinal));
+    }
+
     private sealed class CapturingLogger : ILogger<LdapPasswordChangeProvider>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = new();

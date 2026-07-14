@@ -24,6 +24,29 @@ public interface IAppSettings
     ErrorDisclosureMode ErrorDisclosureMode { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a failed user-context password
+    /// change may fall back to an administrative reset performed with the
+    /// configured service account.
+    /// </summary>
+    /// <remarks>
+    /// Optional, defaults to <see langword="false"/>. When enabled, the reset
+    /// fires only after the user's current password was verified in the same
+    /// request, and only for failures an administrative reset can cure:
+    /// new-password policy rejections (including history and minimum-age,
+    /// which the reset bypasses) and cannot-change-password restrictions.
+    /// Wrong-credential and infrastructure failures always surface unchanged.
+    /// Ignored by the AD provider in automatic-context mode (no service
+    /// account to reset with), and by the LDAP provider when
+    /// <c>LdapChangePasswordWithDelAdd</c> is <see langword="false"/> (the
+    /// Replace mechanism is already an administrative operation). Every reset
+    /// is logged at Warning with the request correlation ID.
+    /// </remarks>
+    /// <value>
+    ///   <c>true</c> to allow the administrative reset fallback; otherwise, <c>false</c>.
+    /// </value>
+    bool AllowAdministrativeReset { get; set; }
+
+    /// <summary>
     /// Gets or sets the default domain.
     /// </summary>
     /// <value>
