@@ -233,14 +233,52 @@ public static class DirectoryErrorTranslator
     /// <param name="exception">The exception raised by the directory operation.</param>
     /// <param name="disclosureMode">The configured disclosure posture.</param>
     /// <returns>The domain exception to throw.</returns>
-    public static Exception TranslateException(Exception exception, ErrorDisclosureMode disclosureMode)
+    public static Exception TranslateException(Exception exception, ErrorDisclosureMode disclosureMode) =>
+        TranslateException(exception, disclosureMode, out _);
+
+    /// <summary>
+    /// Same as <see cref="TranslateException(Exception, ErrorDisclosureMode)"/>
+    /// but also reports the originating <see cref="DirectoryFailureClass"/>, so
+    /// callers that need to make decisions about the failure (e.g. the
+    /// administrative-reset gate) can act on the class rather than the
+    /// exception shape — several classes intentionally share an exception type
+    /// and code on the wire.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="failureClass">The classification of the failure;
+    /// <see cref="DirectoryFailureClass.Infrastructure"/> when no Win32 code
+    /// could be recovered.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception TranslateException(
+        Exception exception,
+        ErrorDisclosureMode disclosureMode,
+        out DirectoryFailureClass failureClass)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
-        return TryGetWin32Code(exception, out var code)
-            ? Translate(code, disclosureMode, exception)
-            : new DirectoryUnavailableException(DirectoryFailureMessage, exception);
+        if (TryGetWin32Code(exception, out var code))
+        {
+            failureClass = Classify(code);
+            return Translate(code, disclosureMode, exception);
+        }
+
+        failureClass = DirectoryFailureClass.Infrastructure;
+        return new DirectoryUnavailableException(DirectoryFailureMessage, exception);
     }
+
+    /// <summary>
+    /// Builds the curated exception for the "this account cannot change its
+    /// own password" condition, for providers that detect the flag directly
+    /// (AD's <c>UserCannotChangePassword</c>, the LDAP security-descriptor
+    /// check) rather than receiving it as an error code. Identical in both
+    /// disclosure modes: the condition is only ever raised after the caller
+    /// proved the current password.
+    /// </summary>
+    /// <param name="innerException">Optional transport exception, preserved for logs.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception CreateChangeNotPermittedError(Exception? innerException = null) =>
+        PolicyViolation(ChangeNotPermittedMessage, ApiErrorCode.ChangeNotPermitted, innerException);
 
     private static InvalidCredentialsException InvalidCredentials(Exception? innerException) =>
         innerException is null

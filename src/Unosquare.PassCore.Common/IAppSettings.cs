@@ -30,16 +30,20 @@ public interface IAppSettings
     /// </summary>
     /// <remarks>
     /// Optional, defaults to <see langword="false"/>. When enabled, the reset
-    /// fires only after the user's current password was verified in the same
-    /// request, and only for failures an administrative reset can cure:
-    /// new-password policy rejections (including history and minimum-age,
-    /// which the reset bypasses) and cannot-change-password restrictions.
-    /// Wrong-credential and infrastructure failures always surface unchanged.
-    /// Ignored by the AD provider in automatic-context mode (no service
-    /// account to reset with), and by the LDAP provider when
-    /// <c>LdapChangePasswordWithDelAdd</c> is <see langword="false"/> (the
-    /// Replace mechanism is already an administrative operation). Every reset
-    /// is logged at Warning with the request correlation ID.
+    /// rescues exactly one condition: the account is flagged so the user
+    /// cannot change their own password (the AD "User cannot change password"
+    /// setting). It fires only after the user's current password was verified
+    /// in the same request. It never rescues password-policy rejections
+    /// (length, complexity, history, minimum age — intentional policy is
+    /// honored), never account-state conditions (locked, disabled,
+    /// hours/workstation restrictions), and never infrastructure failures;
+    /// all of those surface as errors. Ignored by the AD provider in
+    /// automatic-context mode (no service account to reset with), and by the
+    /// LDAP provider when <c>LdapChangePasswordWithDelAdd</c> is
+    /// <see langword="false"/> (the Replace mechanism is already an
+    /// administrative operation). Every reset is logged at Warning with the
+    /// request correlation ID. Note administrative resets are not subject to
+    /// password history or minimum-age policy.
     /// </remarks>
     /// <value>
     ///   <c>true</c> to allow the administrative reset fallback; otherwise, <c>false</c>.
