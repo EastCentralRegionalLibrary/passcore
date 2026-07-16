@@ -81,11 +81,6 @@ namespace Unosquare.PassCore.PasswordProvider
                     throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
                 }
 
-                if (userPrincipal.UserCannotChangePassword) // Check if the UserCannotChangePassword flag is set
-                {
-                    throw new PasswordPolicyViolationException("User cannot change password", ApiErrorCode.ChangeNotPermitted);
-                }
-
                 if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
                 {
                     SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
@@ -96,9 +91,21 @@ namespace Unosquare.PassCore.PasswordProvider
                     throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
                 }
 
-                // The verified flag is derived from control flow: this line is
-                // reachable only after ValidateUserCredentials returned true.
-                UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
+                // The cannot-change check runs strictly AFTER credential
+                // verification: before, it disclosed account existence and flag
+                // state to unauthenticated callers even in hardened mode. The
+                // verified flags below are derived from control flow — these
+                // lines are reachable only after ValidateUserCredentials
+                // returned true.
+                if (userPrincipal.UserCannotChangePassword)
+                {
+                    HandleCannotChangePassword(context, userPrincipal, currentPasswordVerified: true);
+                }
+                else
+                {
+                    UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
+                }
+
                 userPrincipal.Save();
             }
             catch (PasswordChangeException)
@@ -264,23 +271,75 @@ namespace Unosquare.PassCore.PasswordProvider
             }
             catch (Exception ex)
             {
-                var translated = DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
+                var translated = DirectoryErrorTranslator.TranslateException(
+                    ex, _options.ErrorDisclosureMode, out var failureClass);
 
                 // Automatic-context mode never resets administratively (there is
-                // no service account to reset with); otherwise the shared gate
-                // decides. Ineligible failures surface translated.
+                // no service account to reset with); otherwise the shared
+                // class-based gate decides — only ChangeNotPermitted is ever
+                // rescuable. Ineligible failures surface translated.
                 var attemptReset = !_options.UseAutomaticContext
                     && AdministrativeReset.ShouldAttempt(
                         _options.AllowAdministrativeReset,
                         currentPasswordVerified,
-                        translated);
+                        failureClass);
 
                 if (!attemptReset)
                     throw translated;
 
-                userPrincipal.SetPassword(context.NewPassword);
-                AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
+                PerformAdministrativeReset(context, userPrincipal, translated);
             }
+        }
+
+        /// <summary>
+        /// Post-verification handling for accounts whose
+        /// <see cref="AuthenticablePrincipal.UserCannotChangePassword"/> flag is
+        /// set: routes the synthesized
+        /// <see cref="DirectoryFailureClass.ChangeNotPermitted"/> through the
+        /// same shared gate as modify-time failures. Eligible: performs the
+        /// administrative reset directly (the user-context ChangePassword is
+        /// doomed and is not attempted). Not eligible: throws the translator's
+        /// curated ChangeNotPermitted error, identical to the LDAP provider's
+        /// wording. Never resets in automatic-context mode.
+        /// </summary>
+        /// <param name="context">The password change context.</param>
+        /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
+        /// <param name="currentPasswordVerified">Whether the current password was verified in this request.</param>
+        private void HandleCannotChangePassword(
+            PasswordChangeContext context,
+            AuthenticablePrincipal userPrincipal,
+            bool currentPasswordVerified)
+        {
+            var blocked = DirectoryErrorTranslator.CreateChangeNotPermittedError();
+
+            var attemptReset = !_options.UseAutomaticContext
+                && AdministrativeReset.ShouldAttempt(
+                    _options.AllowAdministrativeReset,
+                    currentPasswordVerified,
+                    DirectoryFailureClass.ChangeNotPermitted);
+
+            if (!attemptReset)
+                throw blocked;
+
+            PerformAdministrativeReset(context, userPrincipal, blocked);
+        }
+
+        /// <summary>
+        /// The single reset execution path: administrative SetPassword with the
+        /// service-account-bound principal context, followed by the shared loud
+        /// Warning log. Reached only through the
+        /// <see cref="AdministrativeReset"/> gate.
+        /// </summary>
+        /// <param name="context">The password change context.</param>
+        /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
+        /// <param name="originalFailure">The translated failure or blocking condition that triggered the reset.</param>
+        private void PerformAdministrativeReset(
+            PasswordChangeContext context,
+            AuthenticablePrincipal userPrincipal,
+            Exception originalFailure)
+        {
+            userPrincipal.SetPassword(context.NewPassword);
+            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, originalFailure);
         }
 
         /// <summary>

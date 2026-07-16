@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Novell.Directory.Ldap;
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -356,11 +357,18 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
     /// <summary>
     /// Performs the password change. With the delete/add mechanism (AD-style
-    /// user change, server-enforced old password and full policy), a failure
-    /// may fall back to an administrative <c>unicodePwd</c> replace when
-    /// <see cref="LdapPasswordChangeOptions.AllowAdministrativeReset"/> permits
-    /// it — see <see cref="TranslateAndDecideRescue"/> for the exact gate. The
-    /// Replace mechanism is already administrative, so no fallback applies there.
+    /// user change, server-enforced old password and full policy), an account
+    /// flagged so it cannot change its own password is detected post-verification
+    /// via its security descriptor and either rescued with an administrative
+    /// <c>unicodePwd</c> replace (when
+    /// <see cref="LdapPasswordChangeOptions.AllowAdministrativeReset"/> and the
+    /// shared gate permit it) or reported with the curated ChangeNotPermitted
+    /// error — fixing the previous misreport of flagged accounts as
+    /// infrastructure failures. Modify-time failures route through
+    /// <see cref="TranslateAndDecideRescue"/>: only the
+    /// <see cref="DirectoryFailureClass.ChangeNotPermitted"/> class is ever
+    /// rescuable. The Replace mechanism is already administrative, so neither
+    /// detection nor fallback applies there.
     /// </summary>
     private void ChangePassword(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
@@ -371,6 +379,22 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             ChangePasswordReplace(
                 ldap, userDn,
                 context.NewPassword);
+            return;
+        }
+
+        // Post-verification pre-flight: a del/add by the service account would be
+        // denied for a cannot-change-flagged account and surface as access-denied
+        // (infrastructure). Detect the flag from the DACL instead and route it
+        // through the same decision seam as modify-time failures. Detection runs
+        // only after credential verification, so the flag is never a pre-auth oracle.
+        if (DetectCannotChangePassword(ldap, userDn))
+        {
+            var blocked = DirectoryErrorTranslator.CreateChangeNotPermittedError();
+            if (!ShouldRescue(_options, currentPasswordVerified, DirectoryFailureClass.ChangeNotPermitted))
+                throw blocked;
+
+            AdminResetUnicodePwd(ldap, userDn, context.NewPassword);
+            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, blocked);
             return;
         }
 
@@ -393,11 +417,32 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     }
 
     /// <summary>
-    /// Translates a failed delete/add modification and decides whether the
-    /// administrative-reset fallback may fire: option enabled, current password
-    /// verified in this request, delete/add mechanism in use, and the failure
-    /// is one a reset can cure (new-password policy or cannot-change) — the
-    /// shared <see cref="AdministrativeReset.ShouldAttempt"/> gate.
+    /// The single rescue-eligibility seam for this provider: delete/add
+    /// mechanism in use, plus the shared
+    /// <see cref="AdministrativeReset.ShouldAttempt"/> gate (option enabled,
+    /// current password verified in this request, and the failure class is
+    /// exactly <see cref="DirectoryFailureClass.ChangeNotPermitted"/>). Both
+    /// the post-verification pre-flight (detected flag) and the modify-failure
+    /// catch route through this method, so eligibility cannot drift between
+    /// the two call sites.
+    /// </summary>
+    internal static bool ShouldRescue(
+        LdapPasswordChangeOptions options,
+        bool currentPasswordVerified,
+        DirectoryFailureClass failureClass) =>
+        options.LdapChangePasswordWithDelAdd
+        && AdministrativeReset.ShouldAttempt(
+            options.AllowAdministrativeReset,
+            currentPasswordVerified,
+            failureClass);
+
+    /// <summary>
+    /// Translates a failed delete/add modification and decides — via
+    /// <see cref="ShouldRescue"/> — whether the administrative-reset fallback
+    /// may fire. Only a failure classified as
+    /// <see cref="DirectoryFailureClass.ChangeNotPermitted"/> is rescuable;
+    /// password-policy rejections, account-state conditions (in either
+    /// disclosure mode) and infrastructure failures always surface.
     /// </summary>
     internal static Exception TranslateAndDecideRescue(
         LdapException ex,
@@ -405,13 +450,9 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         bool currentPasswordVerified,
         out bool attemptReset)
     {
-        var translated = TranslateLdapException(ex, options.ErrorDisclosureMode);
+        var translated = TranslateLdapException(ex, options.ErrorDisclosureMode, out var failureClass);
 
-        attemptReset = options.LdapChangePasswordWithDelAdd
-            && AdministrativeReset.ShouldAttempt(
-                options.AllowAdministrativeReset,
-                currentPasswordVerified,
-                translated);
+        attemptReset = ShouldRescue(options, currentPasswordVerified, failureClass);
 
         return translated;
     }
@@ -432,6 +473,192 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
                 LdapModification.Replace,
                 new LdapAttribute("unicodePwd", newBytes)),
         });
+    }
+
+    // ---------------------------------------------------------------------
+    // Cannot-change-password detection (AD security descriptor)
+    // ---------------------------------------------------------------------
+
+    // LDAP_SERVER_SD_FLAGS_OID with a BER value selecting only the DACL
+    // (SEQUENCE { INTEGER 4 } = DACL_SECURITY_INFORMATION), so AD returns
+    // nTSecurityDescriptor without requiring SACL rights.
+    private const string SdFlagsControlOid = "1.2.840.113556.1.4.801";
+    private static readonly byte[] SdFlagsDaclOnly = { 0x30, 0x03, 0x02, 0x01, 0x04 };
+    private static readonly string[] SecurityDescriptorAttributes = { "nTSecurityDescriptor" };
+
+    // The User-Change-Password control-access right (MS documented GUID). The
+    // "user cannot change password" setting is stored as deny ACEs for this
+    // right, granted to Everyone and/or SELF. The distinct
+    // User-Force-Change-Password (reset) right, 00299570-246d-11d0-a768-00aa006e0529,
+    // must NOT match — resets remain permitted for flagged accounts.
+    private static readonly Guid UserChangePasswordRightGuid =
+        new("ab721a53-1e2f-11d0-9819-00aa0040529b");
+
+    private static readonly Action<ILogger, string, Exception?> LogSdDetectionSkipped =
+        LoggerMessage.Define<string>(
+            LogLevel.Debug,
+            new EventId(104, nameof(LogSdDetectionSkipped)),
+            "Could not read or parse the security descriptor for {UserDn}; skipping " +
+            "cannot-change-password detection. This is expected on non-AD servers or when the " +
+            "service account cannot read the DACL. The change proceeds normally and any denial " +
+            "will surface from the modify operation itself.");
+
+    /// <summary>
+    /// Detects the AD "user cannot change password" flag by reading the
+    /// target's DACL (SD-flags control, non-critical) and scanning for deny
+    /// ACEs on the User-Change-Password right. Any failure to read or parse —
+    /// non-AD server, control unsupported, insufficient rights, malformed
+    /// bytes — logs at Debug and reports not-flagged, so behavior degrades to
+    /// exactly what it was before detection existed.
+    /// </summary>
+    private bool DetectCannotChangePassword(LdapConnection ldap, string userDn)
+    {
+        try
+        {
+            var constraints = new LdapSearchConstraints();
+            constraints.SetControls(new LdapControl(SdFlagsControlOid, false, SdFlagsDaclOnly));
+
+            var results = ldap.Search(
+                userDn,
+                LdapConnection.ScopeBase,
+                "(objectClass=*)",
+                SecurityDescriptorAttributes,
+                false,
+                constraints);
+
+            if (!results.HasMore())
+            {
+                LogSdDetectionSkipped(Logger, userDn, null);
+                return false;
+            }
+
+            var attributeSet = results.Next().GetAttributeSet();
+            var sdKey = attributeSet.Keys
+                .FirstOrDefault(k => k.Equals("nTSecurityDescriptor", StringComparison.OrdinalIgnoreCase));
+            var sdBytes = sdKey != null ? attributeSet[sdKey].ByteValue : null;
+
+            var denied = SecurityDescriptorDeniesChangePassword(sdBytes);
+            if (denied is null)
+            {
+                LogSdDetectionSkipped(Logger, userDn, null);
+                return false;
+            }
+
+            return denied.Value;
+        }
+        catch (Exception ex)
+        {
+            // Deliberately broad: detection is best-effort and must never turn
+            // an unreadable descriptor into a failed password change.
+            LogSdDetectionSkipped(Logger, userDn, ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Scans a self-relative Windows security descriptor (MS-DTYP 2.4.6) for a
+    /// deny object-ACE (ACCESS_DENIED_OBJECT_ACE_TYPE, MS-DTYP 2.4.4.11) on the
+    /// User-Change-Password control-access right granted to Everyone (S-1-1-0)
+    /// or SELF (S-1-5-10) — the on-directory representation of the "user cannot
+    /// change password" setting. Implemented by hand because the BCL's
+    /// <c>RawSecurityDescriptor</c> throws <c>PlatformNotSupportedException</c>
+    /// off Windows, and this provider runs cross-platform. Returns
+    /// <see langword="true"/> when the flag is set, <see langword="false"/>
+    /// when the DACL parsed cleanly without such an ACE, and
+    /// <see langword="null"/> when the descriptor is absent or malformed
+    /// (callers treat that as "detection unavailable").
+    /// </summary>
+    internal static bool? SecurityDescriptorDeniesChangePassword(byte[]? securityDescriptor)
+    {
+        const byte accessDeniedObjectAceType = 0x06;
+        const ushort seDaclPresent = 0x0004;
+
+        if (securityDescriptor is null || securityDescriptor.Length < 20)
+            return null;
+
+        ReadOnlySpan<byte> data = securityDescriptor;
+
+        if (data[0] != 1) // SECURITY_DESCRIPTOR revision
+            return null;
+
+        var control = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(2, 2));
+        if ((control & seDaclPresent) == 0)
+            return null;
+
+        var daclOffset = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(16, 4));
+        if (daclOffset <= 0 || daclOffset > data.Length - 8)
+            return null; // no DACL bytes (a "present" but NULL DACL) or truncated
+
+        var acl = data[daclOffset..];
+        var aclSize = BinaryPrimitives.ReadUInt16LittleEndian(acl.Slice(2, 2));
+        var aceCount = BinaryPrimitives.ReadUInt16LittleEndian(acl.Slice(4, 2));
+        if (aclSize < 8 || aclSize > acl.Length)
+            return null;
+
+        var offset = 8;
+        for (var i = 0; i < aceCount; i++)
+        {
+            if (offset + 4 > aclSize)
+                return null; // truncated ACE header
+
+            var aceType = acl[offset];
+            var aceSize = BinaryPrimitives.ReadUInt16LittleEndian(acl.Slice(offset + 2, 2));
+            if (aceSize < 4 || offset + aceSize > aclSize)
+                return null; // malformed ACE size
+
+            if (aceType == accessDeniedObjectAceType
+                && AceDeniesChangePassword(acl.Slice(offset + 4, aceSize - 4)))
+            {
+                return true;
+            }
+
+            offset += aceSize;
+        }
+
+        return false;
+    }
+
+    private static bool AceDeniesChangePassword(ReadOnlySpan<byte> aceBody)
+    {
+        const int adsRightDsControlAccess = 0x100;
+        const int aceObjectTypePresent = 0x1;
+        const int aceInheritedObjectTypePresent = 0x2;
+
+        // Body layout: Mask(4) Flags(4) [ObjectType GUID 16] [InheritedObjectType GUID 16] SID(...)
+        if (aceBody.Length < 4 + 4 + 16)
+            return false;
+
+        var mask = BinaryPrimitives.ReadInt32LittleEndian(aceBody.Slice(0, 4));
+        if ((mask & adsRightDsControlAccess) == 0)
+            return false;
+
+        var flags = BinaryPrimitives.ReadInt32LittleEndian(aceBody.Slice(4, 4));
+        if ((flags & aceObjectTypePresent) == 0)
+            return false; // no specific right named; not the cannot-change representation
+
+        var objectType = new Guid(aceBody.Slice(8, 16));
+        if (objectType != UserChangePasswordRightGuid)
+            return false;
+
+        var sidOffset = 8 + 16 + ((flags & aceInheritedObjectTypePresent) != 0 ? 16 : 0);
+        return aceBody.Length >= sidOffset + 12 && SidIsEveryoneOrSelf(aceBody[sidOffset..]);
+    }
+
+    private static bool SidIsEveryoneOrSelf(ReadOnlySpan<byte> sid)
+    {
+        // Everyone S-1-1-0:  revision 1, 1 sub-authority, authority {0,0,0,0,0,1}, sub 0
+        // SELF     S-1-5-10: revision 1, 1 sub-authority, authority {0,0,0,0,0,5}, sub 10
+        if (sid.Length < 12 || sid[0] != 1 || sid[1] != 1)
+            return false;
+
+        if (sid[2] != 0 || sid[3] != 0 || sid[4] != 0 || sid[5] != 0 || sid[6] != 0)
+            return false;
+
+        var authority = sid[7];
+        var subAuthority = BinaryPrimitives.ReadUInt32LittleEndian(sid.Slice(8, 4));
+
+        return (authority == 1 && subAuthority == 0)
+            || (authority == 5 && subAuthority == 10);
     }
 
     private static void ChangePasswordReplace(
@@ -567,15 +794,26 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// curated string; the server's diagnostic text survives only in the inner
     /// exception, which reaches logs but never the wire.
     /// </summary>
-    internal static Exception TranslateLdapException(LdapException ex, ErrorDisclosureMode disclosureMode)
+    internal static Exception TranslateLdapException(LdapException ex, ErrorDisclosureMode disclosureMode) =>
+        TranslateLdapException(ex, disclosureMode, out _);
+
+    internal static Exception TranslateLdapException(
+        LdapException ex,
+        ErrorDisclosureMode disclosureMode,
+        out DirectoryFailureClass failureClass)
     {
         var known = string.IsNullOrWhiteSpace(ex.LdapErrorMessage)
             ? null
             : ExtractWin32ErrorCode(ex.LdapErrorMessage);
 
-        return known is null
-            ? new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex)
-            : DirectoryErrorTranslator.Translate(known.Code, disclosureMode, ex);
+        if (known is null)
+        {
+            failureClass = DirectoryFailureClass.Infrastructure;
+            return new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex);
+        }
+
+        failureClass = known.FailureClass;
+        return DirectoryErrorTranslator.Translate(known.Code, disclosureMode, ex);
     }
 
     /// <summary>

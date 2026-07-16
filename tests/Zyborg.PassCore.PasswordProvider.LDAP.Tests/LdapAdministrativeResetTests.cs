@@ -6,9 +6,10 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP.Tests;
 
 /// <summary>
 /// Exercises the exact decision code the LDAP provider runs when a delete/add
-/// password change fails: translation of the failure plus the shared
-/// administrative-reset gate. These are the provider-level guarantees for
-/// <c>AllowAdministrativeReset</c> without a live directory.
+/// password change fails or a cannot-change flag is detected: translation of
+/// the failure plus the shared administrative-reset gate. These are the
+/// provider-level guarantees for <c>AllowAdministrativeReset</c> without a
+/// live directory.
 /// </summary>
 public class LdapAdministrativeResetTests
 {
@@ -21,26 +22,62 @@ public class LdapAdministrativeResetTests
     private const string WrongOldPassword =
         "00000056: AtrErr: DSID-03191083, #1:\n\t0: 00000056: DSID-03191083, problem 1005 (CONSTRAINT_ATT_TYPE), data 0, Att 9005a (unicodePwd)";
 
+    // A cannot-change condition reported as an error code (NERR_PasswordCantChange).
+    private const string CannotChangeRejection =
+        "000008C3: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM), data 0";
+
     private static LdapException Ldap(string serverMessage) =>
         new("test", LdapException.UnwillingToPerform, serverMessage);
 
     private static LdapPasswordChangeOptions Options(
         bool allowReset,
-        bool delAdd = true) => new()
+        bool delAdd = true,
+        ErrorDisclosureMode mode = ErrorDisclosureMode.Hardened) => new()
     {
         AllowAdministrativeReset = allowReset,
         LdapChangePasswordWithDelAdd = delAdd,
-        ErrorDisclosureMode = ErrorDisclosureMode.Hardened,
+        ErrorDisclosureMode = mode,
     };
 
     [Fact]
-    public void OptionOff_PolicyRejection_SurfacesAsComplexPassword_NoResetAttempt()
+    public void OptionOff_CannotChange_SurfacesAsCuratedChangeNotPermitted_NoResetAttempt()
     {
-        // The default-off contract: a history/policy rejection is reported to
-        // the user as ComplexPassword — never rescued, never Generic.
+        var translated = LdapPasswordChangeProvider.TranslateAndDecideRescue(
+            Ldap(CannotChangeRejection),
+            Options(allowReset: false),
+            currentPasswordVerified: true,
+            out var attemptReset);
+
+        Assert.False(attemptReset);
+        var policy = Assert.IsType<PasswordPolicyViolationException>(translated);
+        Assert.Equal(ApiErrorCode.ChangeNotPermitted, policy.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.ChangeNotPermittedMessage, policy.Message);
+    }
+
+    [Fact]
+    public void OptionOn_VerifiedCannotChange_AttemptsReset()
+    {
+        // The feature's one rescuable condition.
+        var translated = LdapPasswordChangeProvider.TranslateAndDecideRescue(
+            Ldap(CannotChangeRejection),
+            Options(allowReset: true),
+            currentPasswordVerified: true,
+            out var attemptReset);
+
+        Assert.True(attemptReset);
+        Assert.IsType<PasswordPolicyViolationException>(translated);
+    }
+
+    [Fact]
+    public void OptionOn_PolicyRejection_IsNeverRescued_PolicyIsHonored()
+    {
+        // Expectation reversed deliberately from the first Phase 3 revision:
+        // the original gate rescued policy rejections (history/minimum-age),
+        // which bypasses intentional domain policy. Policy rejections now
+        // always surface as ComplexPassword — never Generic, never rescued.
         var translated = LdapPasswordChangeProvider.TranslateAndDecideRescue(
             Ldap(PolicyRejection),
-            Options(allowReset: false),
+            Options(allowReset: true),
             currentPasswordVerified: true,
             out var attemptReset);
 
@@ -53,26 +90,33 @@ public class LdapAdministrativeResetTests
         Assert.NotEqual(ApiErrorCode.Generic, item.ErrorCode);
     }
 
-    [Fact]
-    public void OptionOn_VerifiedPolicyRejection_AttemptsReset()
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public void OptionOn_AccountStateFailure_IsNeverRescuedInEitherMode(ErrorDisclosureMode mode)
     {
-        var translated = LdapPasswordChangeProvider.TranslateAndDecideRescue(
-            Ldap(PolicyRejection),
-            Options(allowReset: true),
+        // Locked-out at modify time. In informative mode this renders with the
+        // same exception type and ApiErrorCode as cannot-change — the gate must
+        // distinguish them by class, not shape.
+        var lockedOut = new LdapException("test", LdapException.InvalidCredentials,
+            "80090308: LdapErr: DSID-0C0903A9, comment: AcceptSecurityContext error, data 775, v2580");
+
+        _ = LdapPasswordChangeProvider.TranslateAndDecideRescue(
+            lockedOut,
+            Options(allowReset: true, mode: mode),
             currentPasswordVerified: true,
             out var attemptReset);
 
-        Assert.True(attemptReset);
-        Assert.IsType<PasswordPolicyViolationException>(translated);
+        Assert.False(attemptReset);
     }
 
     [Fact]
     public void OptionOn_WithoutVerifiedCredentials_NeverAttemptsReset()
     {
         // The account-takeover invariant at the provider level: even with the
-        // option enabled and a rescuable failure, no verification means no reset.
+        // option enabled and the rescuable condition, no verification means no reset.
         _ = LdapPasswordChangeProvider.TranslateAndDecideRescue(
-            Ldap(PolicyRejection),
+            Ldap(CannotChangeRejection),
             Options(allowReset: true),
             currentPasswordVerified: false,
             out var attemptReset);
@@ -83,8 +127,6 @@ public class LdapAdministrativeResetTests
     [Fact]
     public void OptionOn_WrongOldPasswordAtModifyTime_NeverAttemptsReset()
     {
-        // A credentials-class failure is not rescuable: resetting over it would
-        // change the password of an account whose old password just failed.
         var translated = LdapPasswordChangeProvider.TranslateAndDecideRescue(
             Ldap(WrongOldPassword),
             Options(allowReset: true),
@@ -114,12 +156,54 @@ public class LdapAdministrativeResetTests
         // With LdapChangePasswordWithDelAdd=false the primary operation is
         // already an administrative replace; the fallback adds nothing.
         _ = LdapPasswordChangeProvider.TranslateAndDecideRescue(
-            Ldap(PolicyRejection),
+            Ldap(CannotChangeRejection),
             Options(allowReset: true, delAdd: false),
             currentPasswordVerified: true,
             out var attemptReset);
 
         Assert.False(attemptReset);
+    }
+
+    [Theory]
+    [InlineData(CannotChangeRejection, DirectoryFailureClass.ChangeNotPermitted)]
+    [InlineData(PolicyRejection, DirectoryFailureClass.NewPasswordPolicy)]
+    [InlineData(WrongOldPassword, DirectoryFailureClass.Credentials)]
+    [InlineData("no codes at all", DirectoryFailureClass.Infrastructure)]
+    public void TranslateAndDecideRescue_AgreesWithShouldRescue_SingleDecisionPoint(
+        string serverMessage, DirectoryFailureClass expectedClass)
+    {
+        // Decision-point unification: the modify-failure path
+        // (TranslateAndDecideRescue) and the pre-flight path (which calls
+        // ShouldRescue with a synthesized class) must route through the same
+        // seam, so eligibility cannot drift between the two call sites.
+        foreach (var allowReset in new[] { true, false })
+        {
+            foreach (var verified in new[] { true, false })
+            {
+                var options = Options(allowReset);
+
+                _ = LdapPasswordChangeProvider.TranslateAndDecideRescue(
+                    Ldap(serverMessage), options, verified, out var fromCatchPath);
+
+                var fromSeam = LdapPasswordChangeProvider.ShouldRescue(options, verified, expectedClass);
+
+                Assert.Equal(fromSeam, fromCatchPath);
+            }
+        }
+    }
+
+    [Fact]
+    public void ShouldRescue_SynthesizedChangeNotPermitted_MatchesGateSemantics()
+    {
+        // The pre-flight (detected flag) entry point.
+        Assert.True(LdapPasswordChangeProvider.ShouldRescue(
+            Options(allowReset: true), currentPasswordVerified: true, DirectoryFailureClass.ChangeNotPermitted));
+        Assert.False(LdapPasswordChangeProvider.ShouldRescue(
+            Options(allowReset: false), currentPasswordVerified: true, DirectoryFailureClass.ChangeNotPermitted));
+        Assert.False(LdapPasswordChangeProvider.ShouldRescue(
+            Options(allowReset: true), currentPasswordVerified: false, DirectoryFailureClass.ChangeNotPermitted));
+        Assert.False(LdapPasswordChangeProvider.ShouldRescue(
+            Options(allowReset: true, delAdd: false), currentPasswordVerified: true, DirectoryFailureClass.ChangeNotPermitted));
     }
 
     [Fact]
