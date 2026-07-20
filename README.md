@@ -126,6 +126,8 @@ Here is where Pwned Password API comes into play. Pwned Passwords are more than 
 All server-side settings and client-side settings are stored in the `/appsettings.json` file.
 The most relevant configuration entries are shown below. Make sure you make your changes to the `appsettings.json` file using a regular text editor like [Visual Studio Code](https://code.visualstudio.com)
 
+> **Upgrading from a pre-unified-error-routing build?** See [`docs/UPGRADING-error-routing.md`](docs/UPGRADING-error-routing.md) for the behavior changes and the two situations that need a config change. For how a directory failure maps to what the user sees (and the rules for adding a provider), see [`docs/error-routing-matrix.md`](docs/error-routing-matrix.md).
+
 - To enable reCAPTCHA
   1. Find the `PrivateKey` entry and enter your private key within double quotes (`"`)
   2. Find the `SiteKey` entry and enter your Site Key within double quotes (`"`)

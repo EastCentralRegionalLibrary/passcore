@@ -1,0 +1,164 @@
+# Error routing matrix
+
+The single reference for how PassCore turns a directory failure into something
+the user sees. It is the source of truth for anyone adding or changing a
+password-change provider.
+
+Every row here is machine-verified by
+`RoutingMatrixAuditTests` (in `Zyborg.PassCore.PasswordProvider.LDAP.Tests`).
+If you change a routing decision, change that test and this document together —
+they are meant to disagree only while a change is in progress.
+
+## The one rule for provider authors
+
+**A provider never decides an `ApiErrorCode` itself.** It extracts a Win32/AD
+error code from whatever transport it speaks (an LDAP extended-error string, a
+COM `HResult`, a `LogonUser` last-error) and hands it to the shared
+`DirectoryErrorTranslator`. The translator owns the mapping below. This is why
+the two real providers produce identical results for identical conditions, and
+it is the only way to keep that true as providers are added.
+
+Structural conditions that have no error code (an empty search result, a null
+principal, a detected "cannot change password" flag) use the dedicated
+factories `DirectoryErrorTranslator.CreateUserNotFoundError` /
+`CreateChangeNotPermittedError`, which apply the same table.
+
+## Two message layers (read this before touching messages)
+
+A response carries an `ApiErrorItem { ErrorCode: int, Message: string }`. There
+are two different strings in play and it is easy to confuse them:
+
+1. **The wire `Message`** — a fixed, curated constant set by the translator
+   (the "wire message" column below). It never contains raw exception or
+   server text. For every non-`Generic` code **the browser ignores it.**
+2. **The displayed alert** — the frontend (`ChangePassword.tsx`) maps the
+   **integer** `ErrorCode` to an admin-configured string from
+   `ClientSettings.Alerts` (the "UI alert" column below) and shows that. The
+   wire `Message` is shown to the user **only** for `Generic` (code `0`), which
+   is why `Generic` must never carry raw text (it now carries
+   `"An unexpected error occurred (ref: …)"`).
+
+Consequence: the frontend map is keyed by the raw enum integer. That is the
+reason for the append-only rule further down.
+
+## Win32 / AD code → failure class
+
+The catalog lives in `Unosquare.PassCore.Common/Win32ErrorCode.cs`. Uncataloged
+codes classify as `Infrastructure` (safe default). AD emits these codes in two
+extended-error shapes (leading code for modify-time `WILL_NOT_PERFORM`; `data`
+sub-code for bind-time errors) and as `FACILITY_WIN32` HRESULTs; all three
+reduce to the same code.
+
+| Code | Name | Failure class |
+|------|------|---------------|
+| `0x05` | ERROR_ACCESS_DENIED | Infrastructure |
+| `0x56` | ERROR_INVALID_PASSWORD | Credentials |
+| `0x523` | ERROR_INVALID_ACCOUNT_NAME | Existence |
+| `0x524` | ERROR_USER_EXISTS | Infrastructure |
+| `0x525` | ERROR_NO_SUCH_USER | Existence |
+| `0x52B` | ERROR_WRONG_PASSWORD | Credentials |
+| `0x52C` | ERROR_ILL_FORMED_PASSWORD | NewPasswordPolicy |
+| `0x52D` | ERROR_PASSWORD_RESTRICTION | NewPasswordPolicy |
+| `0x52E` | ERROR_LOGON_FAILURE | Credentials |
+| `0x52F` | ERROR_ACCOUNT_RESTRICTION | AccountState |
+| `0x530` | ERROR_INVALID_LOGON_HOURS | AccountState |
+| `0x531` | ERROR_INVALID_WORKSTATION | AccountState |
+| `0x532` | ERROR_PASSWORD_EXPIRED | PasswordExpiredOrMustChange |
+| `0x533` | ERROR_ACCOUNT_DISABLED | AccountState |
+| `0x701` | ERROR_ACCOUNT_EXPIRED | AccountState |
+| `0x773` | ERROR_PASSWORD_MUST_CHANGE | PasswordExpiredOrMustChange |
+| `0x774` | ERROR_DOMAIN_CONTROLLER_NOT_FOUND | Infrastructure |
+| `0x775` | ERROR_ACCOUNT_LOCKED_OUT | AccountState |
+| `0x8C3` | NERR_PasswordCantChange | ChangeNotPermitted |
+| `0x8C4` | NERR_PasswordHistConflict | NewPasswordPolicy |
+| `0x8C5` | NERR_PasswordTooShort | NewPasswordPolicy |
+| `0x8C6` | NERR_PasswordTooRecent | NewPasswordPolicy |
+
+## The routing matrix: failure class × disclosure mode
+
+`ErrorDisclosureMode` (server-side only, default `Hardened`) is the only knob
+that changes the outcome for a given class. `PasswordExpiredOrMustChange` never
+reaches this table during a change — it is consumed at credential-verification
+time as *proof of the current password* and the change proceeds (both
+providers, via `DirectoryErrorTranslator.IsPasswordExpiredOrMustChange`); it is
+shown only for completeness.
+
+| Failure class | Mode | ApiErrorCode (int) | Wire message | UI alert (`Alerts.*`) |
+|---------------|------|--------------------|--------------|-----------------------|
+| Credentials | both | InvalidCredentials (4) | `InvalidCredentialsMessage` | `ErrorInvalidCredentials` |
+| Existence | Hardened | InvalidCredentials (4) | `InvalidCredentialsMessage` | `ErrorInvalidCredentials` |
+| Existence | Informative | UserNotFound (3) | `UserNotFoundMessage` | `ErrorInvalidUser` |
+| AccountState | Hardened | InvalidCredentials (4) | `InvalidCredentialsMessage` | `ErrorInvalidCredentials` |
+| AccountState | Informative | ChangeNotPermitted (6) | `AccountStateMessage` | `ErrorPasswordChangeNotAllowed` |
+| NewPasswordPolicy | both | ComplexPassword (9) | `NewPasswordPolicyMessage` | `ErrorComplexPassword` |
+| ChangeNotPermitted | both | ChangeNotPermitted (6) | `ChangeNotPermittedMessage` | `ErrorPasswordChangeNotAllowed` |
+| Infrastructure | both | LdapProblem (8) | `DirectoryFailureMessage` | `ErrorConnectionLdap` |
+| PasswordExpiredOrMustChange | both | *(allowed through — change proceeds)* | — | — |
+
+The wire-message constants live on `DirectoryErrorTranslator`. In **Hardened**
+mode the Credentials / Existence / AccountState rows are byte-identical on the
+wire (same code, same message), so an unauthenticated caller gets no
+account-existence or account-state oracle. **Informative** mode trades that
+oracle for actionable help-desk guidance.
+
+## The administrative-reset fallback dimension
+
+`AllowAdministrativeReset` (server-side, default off) adds a second dimension,
+but it changes the outcome for **exactly one** class:
+
+| Failure class | Reset off (default) | Reset on (+ current password verified) |
+|---------------|---------------------|-----------------------------------------|
+| ChangeNotPermitted | surfaces as the table row above | **rescued**: password set administratively, logged at Warning |
+| every other class | surfaces as the table row above | **unchanged** — surfaces identically |
+
+Eligibility is decided in one place, `AdministrativeReset.ShouldAttempt`, which
+returns true only for `ChangeNotPermitted` with the option enabled **and** the
+user's current credentials verified in the same request. It never rescues
+password-policy rejections (intentional policy is honored), account-state
+conditions, or infrastructure failures, and never runs before verification.
+
+## `ApiErrorCode` is append-only
+
+Because the frontend maps the **integer** value of `ApiErrorCode` to alert
+strings (see "Two message layers"), the wire numbers are a contract with the
+client:
+
+- **Never** renumber, reorder, or remove a member.
+- New members may only be **appended** (next unused integer), and adding one
+  requires a matching entry in the frontend `errorMessages` map and a new
+  `Alerts.*` string — otherwise the UI falls back to *"An unknown error
+  occurred."*
+- Prefer reusing an existing code with a curated message over adding a member.
+  The whole series added **zero** members: `0x52C`/`0x52D` deliberately collapse
+  into `ComplexPassword`, and account-state in informative mode reuses
+  `ChangeNotPermitted`.
+
+## Where the decisions live (choke points)
+
+| Concern | Single location |
+|---------|-----------------|
+| Code → failure class | `Win32ErrorCode.Codes` catalog |
+| Class × mode → domain exception | `DirectoryErrorTranslator.Translate` |
+| Exception → `ApiErrorCode` | `ApiErrorMapper.Map` |
+| Expired/must-change "allow through" | `DirectoryErrorTranslator.IsPasswordExpiredOrMustChange` |
+| Reset-fallback eligibility | `AdministrativeReset.ShouldAttempt` |
+| Disclosure mode / reset options | `IAppSettings` (bound from `AppSettings`, server-side only) |
+
+A provider supplies only transport-specific extraction and calls into these.
+
+## Known follow-up: Debug provider fidelity
+
+The Debug provider (`DebugPasswordChangeProvider`, the E2E reference) forces a
+final `ApiErrorCode` directly and **does not** route through
+`DirectoryErrorTranslator`. It therefore cannot simulate the two dimensions the
+series introduced:
+
+- the same underlying condition rendering differently under
+  `Hardened` vs `Informative` (it emits a fixed code regardless of mode), and
+- the administrative-reset fallback (cannot-change → reset vs. `ChangeNotPermitted`).
+
+This is acceptable for its current role (it still forces every terminal
+`ApiErrorCode`, including `UserNotFound`, `ChangeNotPermitted`, and
+`ComplexPassword`), but a future change could let it opt into translator-backed
+behavior so E2E can exercise mode/fallback end-to-end. Filed as a follow-up
+rather than expanded here, per the Phase 4 scope.
