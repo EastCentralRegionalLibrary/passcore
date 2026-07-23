@@ -189,6 +189,53 @@ public class RoutingMatrixAuditTests
         Assert.True(DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(code));
     }
 
+    // ------------------------------------------------------------------
+    // 5. Actor dimension: same code, different actor, different class.
+    //    A service-account failure produces one identical infrastructure
+    //    result on both providers, in both modes — never a credential signal.
+    // ------------------------------------------------------------------
+
+    public static TheoryData<int, ErrorDisclosureMode> ServiceAccountSignalCodes
+    {
+        get
+        {
+            var data = new TheoryData<int, ErrorDisclosureMode>();
+            // The codes a service-account bind/resolve can plausibly carry — all
+            // end-user-account signals as the user, all infrastructure as the svc acct.
+            foreach (var code in new[] { 0x56, 0x52B, 0x52E, 0x523, 0x525, 0x52F, 0x530, 0x531, 0x532, 0x533, 0x701, 0x773, 0x775 })
+            {
+                data.Add(code, ErrorDisclosureMode.Hardened);
+                data.Add(code, ErrorDisclosureMode.Informative);
+            }
+
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ServiceAccountSignalCodes))]
+    public void ServiceAccountActor_BothProviders_ConvergeOnInfrastructure(int code, ErrorDisclosureMode mode)
+    {
+        // LDAP transport, service-account bind (the BindAsServiceAccount path).
+        var ldap = Wire.Of(LdapPasswordChangeProvider.TranslateLdapException(
+            new LdapException("t", LdapException.InvalidCredentials,
+                $"80090308: LdapErr: DSID-0C090439, comment: AcceptSecurityContext error, data {code:x}, v3839"),
+            mode, DirectoryActor.ServiceAccount));
+
+        // AD transport, service-account op (the RunAsServiceAccount path).
+        var ad = Wire.Of(DirectoryErrorTranslator.TranslateException(
+            new HResultException(unchecked((int)0x80070000 | code)), mode, DirectoryActor.ServiceAccount));
+
+        var expected = new Wire(ApiErrorCode.LdapProblem, DirectoryErrorTranslator.DirectoryFailureMessage);
+        Assert.Equal(expected, ldap);
+        Assert.Equal(expected, ad);
+
+        // And as the USER the same code stays an end-user signal — proving the
+        // actor, not the code, is what changed the outcome.
+        var asUser = Wire.Of(DirectoryErrorTranslator.Translate(code, mode, DirectoryActor.User));
+        Assert.NotEqual(ApiErrorCode.LdapProblem, asUser.Code);
+    }
+
     private static Wire ExpectedWire(DirectoryFailureClass failureClass, ErrorDisclosureMode mode)
     {
         // Drive an exception of the given class through the translator by using

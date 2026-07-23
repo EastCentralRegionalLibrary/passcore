@@ -72,8 +72,18 @@ namespace Unosquare.PassCore.PasswordProvider
             {
                 var fixedUsername = FixUsernameWithDomain(context.Username);
 
-                using var principalContext = AcquirePrincipalContext(); // Acquire PrincipalContext for AD operations, using 'using' for automatic disposal
-                var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername); // Find the UserPrincipal object
+                // Acquiring the context and resolving the user are SERVICE-ACCOUNT
+                // operations: a failure here (bad bind credentials, unreachable DC)
+                // describes the application's own connection, never the end user's
+                // password. RunAsServiceAccount guarantees it surfaces as an
+                // infrastructure failure, so it can't be misreported as invalid
+                // credentials. A *successful* lookup that finds no user still
+                // returns null (not an exception) and remains UserNotFound below.
+                using var principalContext = RunAsServiceAccount(
+                    "acquire principal context", context.CorrelationId, AcquirePrincipalContext);
+                var userPrincipal = RunAsServiceAccount(
+                    "resolve user by identity", context.CorrelationId,
+                    () => UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername));
 
                 if (userPrincipal == null) // Check if UserPrincipal is null
                 {
@@ -134,10 +144,18 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <inheritdoc />
         public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
         {
+            // Every operation in this method is a service-account directory read
+            // (context, resolve, group enumeration); a failure is infrastructure,
+            // never an end-user credential signal. There is no request context
+            // here, so the correlation ID is unavailable — the base class logs the
+            // propagated failure with the correlation ID as a backstop.
             try
             {
-                using var principalContext = AcquirePrincipalContext();
-                var userPrincipal = UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username));
+                using var principalContext = RunAsServiceAccount(
+                    "acquire principal context", correlationId: null, AcquirePrincipalContext);
+                var userPrincipal = RunAsServiceAccount(
+                    "resolve user by identity", correlationId: null,
+                    () => UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username)));
                 if (userPrincipal == null) return Task.FromResult(false);
 
                 try
@@ -161,9 +179,11 @@ namespace Unosquare.PassCore.PasswordProvider
             }
             catch (Exception ex)
             {
-                // Group lookups run inside policy evaluation; without this wrap a raw
-                // AccountManagement exception would surface as Generic + raw text.
-                throw DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
+                // Group enumeration failed: a service-account directory read, so
+                // translate as ServiceAccount — never as end-user credentials.
+                ServiceAccountFailure.Log(Logger, correlationId: null, "read group membership", ServiceAccountHost(), ex);
+                throw DirectoryErrorTranslator.TranslateException(
+                    ex, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
             }
         }
 
@@ -359,6 +379,50 @@ namespace Unosquare.PassCore.PasswordProvider
                 _ => IdentityType.UserPrincipalName // Default to UserPrincipalName if no match or invalid input
             };
         }
+
+        /// <summary>
+        /// Runs a service-account directory operation, guaranteeing that any
+        /// failure surfaces as an infrastructure error rather than an end-user
+        /// credential/existence/account-state error. This is the AD provider's
+        /// counterpart to the LDAP provider's <c>BindAsServiceAccount</c>: both
+        /// route through the shared <see cref="DirectoryErrorTranslator"/> with
+        /// <see cref="DirectoryActor.ServiceAccount"/>, which is the single point
+        /// enforcing "a service-account failure can never be reported as invalid
+        /// credentials." Every service-account operation in this provider goes
+        /// through this method, so a future maintainer adding one inherits the
+        /// guarantee. Domain exceptions (should any arise) pass through unchanged.
+        /// </summary>
+        /// <typeparam name="T">The operation's result type.</typeparam>
+        /// <param name="operation">A short label used for diagnostics logging.</param>
+        /// <param name="correlationId">The request correlation ID, or null when unavailable.</param>
+        /// <param name="action">The service-account operation to run.</param>
+        /// <returns>The operation's result.</returns>
+        private T RunAsServiceAccount<T>(string operation, string? correlationId, Func<T> action)
+        {
+            try
+            {
+                return action();
+            }
+            catch (PasswordChangeException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                ServiceAccountFailure.Log(Logger, correlationId, operation, ServiceAccountHost(), ex);
+                throw DirectoryErrorTranslator.TranslateException(
+                    ex, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
+            }
+        }
+
+        /// <summary>
+        /// Describes the directory host used for service-account operations,
+        /// for diagnostics logging only.
+        /// </summary>
+        private string ServiceAccountHost() =>
+            _options.UseAutomaticContext
+                ? "automatic domain context"
+                : _options.LdapHostnames.FirstOrDefault() ?? "n/a";
 
         /// <summary>
         /// Acquires a PrincipalContext object for Active Directory operations.

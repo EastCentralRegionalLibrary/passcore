@@ -101,6 +101,43 @@ wire (same code, same message), so an unauthenticated caller gets no
 account-existence or account-state oracle. **Informative** mode trades that
 oracle for actionable help-desk guidance.
 
+## The actor dimension: same code, different actor, different class
+
+The Win32 code alone does not say **whose** credentials failed. A bind that
+fails with `0x52E` (ERROR_LOGON_FAILURE) is the **end user** proving their
+current password when it comes from the credential-verification step, but the
+application's own **service account** when it comes from connecting to or
+resolving against the directory. Reporting the latter as "invalid username or
+password" tells an end user their password is wrong when the real fault is a
+misconfigured service account.
+
+So every translation carries a `DirectoryActor`, and the class is computed by
+`ClassifyForActor(code, actor)`:
+
+| Actor | Effect on classification |
+|-------|--------------------------|
+| `User` (default) | Classified normally per the catalog. Every pre-existing caller gets this. |
+| `ServiceAccount` | The end-user-account signals — `Credentials`, `Existence`, `AccountState`, `PasswordExpiredOrMustChange` — collapse to `Infrastructure`. A service-account or connectivity failure can therefore **never** produce `InvalidCredentials` / `UserNotFound`; it is always `LdapProblem` + `DirectoryFailureMessage`, in both disclosure modes. `NewPasswordPolicy` / `ChangeNotPermitted` are left untouched (a connect/resolve step cannot raise them). |
+
+This is the single enforcement point for "a service-account failure is never an
+end-user credential failure." Providers pick the actor at the call site:
+
+- **LDAP** — `BindAsServiceAccount` translates with `ServiceAccount`;
+  `VerifyUserCredentials` and the modify path stay `User`. The distinction is by
+  call site, the reference behavior since the unified-routing work.
+- **AD** — `RunAsServiceAccount` wraps the service-account operations
+  (`AcquirePrincipalContext`, `FindByIdentity`, group reads) and translates
+  their failures with `ServiceAccount`; the modify path stays `User`, and the
+  end user's own wrong password is the explicit `InvalidCredentialsException`
+  from `ValidateUserCredentials`, unaffected.
+
+A `ServiceAccount` failure is also logged at Warning by `ServiceAccountFailure`
+(correlation ID when available, operation, host, underlying code) — the operator
+gets the diagnosis while the wire response stays curated. `0x532`
+(ERROR_PASSWORD_EXPIRED) is worth noting: as the **user** it is "proceed, the
+password is correct but expired"; as the **service account** it must never
+proceed — the actor coercion makes it `Infrastructure`.
+
 ## The administrative-reset fallback dimension
 
 `AllowAdministrativeReset` (server-side, default off) adds a second dimension,
@@ -138,13 +175,16 @@ client:
 | Concern | Single location |
 |---------|-----------------|
 | Code → failure class | `Win32ErrorCode.Codes` catalog |
+| Code + actor → failure class | `DirectoryErrorTranslator.ClassifyForActor` |
 | Class × mode → domain exception | `DirectoryErrorTranslator.Translate` |
 | Exception → `ApiErrorCode` | `ApiErrorMapper.Map` |
 | Expired/must-change "allow through" | `DirectoryErrorTranslator.IsPasswordExpiredOrMustChange` |
+| Service-account failure diagnostics | `ServiceAccountFailure.Log` |
 | Reset-fallback eligibility | `AdministrativeReset.ShouldAttempt` |
 | Disclosure mode / reset options | `IAppSettings` (bound from `AppSettings`, server-side only) |
 
-A provider supplies only transport-specific extraction and calls into these.
+A provider supplies only transport-specific extraction, **chooses the actor for
+each operation**, and calls into these.
 
 ## Known follow-up: Debug provider fidelity
 

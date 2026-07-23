@@ -228,8 +228,8 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         try
         {
-            // 1. Resolve user DN
-            var user = FindUser(context.Username);
+            // 1. Resolve user DN (service-account bind + search)
+            var user = FindUser(context.Username, context.CorrelationId);
 
             // 2. Verify current credentials (portable across LDAP servers)
             VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
@@ -246,10 +246,22 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (LdapException ex)
         {
+            // Operation errors (search/modify) carry their Win32 code in the
+            // extended message; TranslateLdapException extracts and routes it.
             throw TranslateLdapException(ex, _options.ErrorDisclosureMode);
         }
         catch (Exception ex)
         {
+            // Intentionally does NOT attempt TryGetWin32Code, unlike the AD
+            // provider's generic catch. That is a legitimate difference: here the
+            // typed catch above already handles every LdapException (the only
+            // carrier of a Win32 code on this transport), plus service-account
+            // bind failures are converted at BindAsServiceAccount. Anything
+            // reaching this block is a non-LDAP, unexpected failure with no
+            // meaningful directory code, so it is infrastructure. The AD provider
+            // must extract in its generic catch because AccountManagement wraps
+            // its codes in assorted COM/Principal exception types with no single
+            // typed carrier.
             throw new DirectoryUnavailableException(
                 DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }
@@ -261,13 +273,13 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // User resolution
     // ---------------------------------------------------------------------
 
-    private LdapUser FindUser(string username)
+    private LdapUser FindUser(string username, string? correlationId = null)
     {
         var safeUsername = SanitizeUsername(username);
         var filter = _options.LdapSearchFilter.Replace(
             "{Username}", safeUsername, StringComparison.Ordinal);
 
-        using var ldap = BindAsServiceAccount();
+        using var ldap = BindAsServiceAccount(correlationId);
 
         var search = ldap.Search(
             _options.LdapSearchBase,
@@ -372,7 +384,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// </summary>
     private void ChangePassword(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
-        using var ldap = BindAsServiceAccount();
+        using var ldap = BindAsServiceAccount(context.CorrelationId);
 
         if (!_options.LdapChangePasswordWithDelAdd)
         {
@@ -695,11 +707,18 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Binds as the configured service account. A bind failure here is treated
-    /// as an infrastructure error (the operator misconfigured the bind credentials),
-    /// never as an end-user authentication error.
+    /// Binds as the configured service account. A bind or connect failure here
+    /// is a SERVICE-ACCOUNT failure and is routed through the shared
+    /// <see cref="DirectoryErrorTranslator"/> with
+    /// <see cref="DirectoryActor.ServiceAccount"/> — the same enforcement point
+    /// the AD provider uses — so it always surfaces as an infrastructure error
+    /// and can never be reported to the end user as invalid credentials. The
+    /// underlying diagnosis is logged at Warning via
+    /// <see cref="ServiceAccountFailure"/>; the wire response carries no server
+    /// detail.
     /// </summary>
-    private LdapConnection BindAsServiceAccount()
+    /// <param name="correlationId">The request correlation ID, when available.</param>
+    private LdapConnection BindAsServiceAccount(string? correlationId = null)
     {
         try
         {
@@ -707,10 +726,26 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (LdapBindException ex)
         {
-            throw new DirectoryUnavailableException(
-                "Failed to bind as the configured LDAP service account.", ex);
+            // Bind rejected (wrong service-account credentials, the service
+            // account locked/expired, etc.). Under ServiceAccount actor every
+            // such end-user-account signal collapses to infrastructure.
+            ServiceAccountFailure.Log(Logger, correlationId, "service-account bind", ServiceAccountHost(), ex);
+            throw TranslateLdapException(
+                (LdapException)ex.InnerException!, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
+        }
+        catch (DirectoryUnavailableException ex)
+        {
+            // No configured host could be reached: already infrastructure; add
+            // the service-account diagnostic and rethrow unchanged.
+            ServiceAccountFailure.Log(Logger, correlationId, "service-account connect", ServiceAccountHost(), ex);
+            throw;
         }
     }
+
+    private string ServiceAccountHost() =>
+        _options.LdapHostnames.Length > 0
+            ? string.Join(", ", _options.LdapHostnames)
+            : "n/a";
 
     /// <summary>
     /// Connects to one of the configured hosts and binds with the supplied
@@ -795,11 +830,24 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// exception, which reaches logs but never the wire.
     /// </summary>
     internal static Exception TranslateLdapException(LdapException ex, ErrorDisclosureMode disclosureMode) =>
-        TranslateLdapException(ex, disclosureMode, out _);
+        TranslateLdapException(ex, disclosureMode, DirectoryActor.User, out _);
 
     internal static Exception TranslateLdapException(
         LdapException ex,
         ErrorDisclosureMode disclosureMode,
+        DirectoryActor actor) =>
+        TranslateLdapException(ex, disclosureMode, actor, out _);
+
+    internal static Exception TranslateLdapException(
+        LdapException ex,
+        ErrorDisclosureMode disclosureMode,
+        out DirectoryFailureClass failureClass) =>
+        TranslateLdapException(ex, disclosureMode, DirectoryActor.User, out failureClass);
+
+    internal static Exception TranslateLdapException(
+        LdapException ex,
+        ErrorDisclosureMode disclosureMode,
+        DirectoryActor actor,
         out DirectoryFailureClass failureClass)
     {
         var known = string.IsNullOrWhiteSpace(ex.LdapErrorMessage)
@@ -812,8 +860,8 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             return new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }
 
-        failureClass = known.FailureClass;
-        return DirectoryErrorTranslator.Translate(known.Code, disclosureMode, ex);
+        failureClass = DirectoryErrorTranslator.ClassifyForActor(known.Code, actor);
+        return DirectoryErrorTranslator.Translate(known.Code, disclosureMode, actor, ex);
     }
 
     /// <summary>

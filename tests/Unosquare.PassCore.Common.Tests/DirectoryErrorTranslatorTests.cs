@@ -291,6 +291,106 @@ public class DirectoryErrorTranslatorTests
         Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, item.Message);
     }
 
+    // ------------------------------------------------------------------
+    // Actor dimension: same code, different actor, different class.
+    // A service-account failure can never surface as an end-user credential,
+    // existence, or account-state result.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(0x52E)] // ERROR_LOGON_FAILURE (Credentials)
+    [InlineData(0x56)]  // ERROR_INVALID_PASSWORD (Credentials)
+    [InlineData(0x52B)] // ERROR_WRONG_PASSWORD (Credentials)
+    [InlineData(0x525)] // ERROR_NO_SUCH_USER (Existence)
+    [InlineData(0x523)] // ERROR_INVALID_ACCOUNT_NAME (Existence)
+    [InlineData(0x775)] // ERROR_ACCOUNT_LOCKED_OUT (AccountState)
+    [InlineData(0x533)] // ERROR_ACCOUNT_DISABLED (AccountState)
+    [InlineData(0x532)] // ERROR_PASSWORD_EXPIRED (PasswordExpiredOrMustChange — must NOT "proceed" for the service account)
+    [InlineData(0x773)] // ERROR_PASSWORD_MUST_CHANGE (PasswordExpiredOrMustChange)
+    public void ClassifyForActor_ServiceAccount_CoercesEndUserSignalsToInfrastructure(int code)
+    {
+        // As the user, these are genuine end-user account signals...
+        Assert.NotEqual(DirectoryFailureClass.Infrastructure,
+            DirectoryErrorTranslator.ClassifyForActor(code, DirectoryActor.User));
+        // ...but as the service account they are meaningless to the caller.
+        Assert.Equal(DirectoryFailureClass.Infrastructure,
+            DirectoryErrorTranslator.ClassifyForActor(code, DirectoryActor.ServiceAccount));
+    }
+
+    [Theory]
+    [InlineData(0x52D, DirectoryFailureClass.NewPasswordPolicy)]
+    [InlineData(0x8C3, DirectoryFailureClass.ChangeNotPermitted)]
+    [InlineData(0x5, DirectoryFailureClass.Infrastructure)]
+    public void ClassifyForActor_ServiceAccount_LeavesNonEndUserSignalClassesUntouched(
+        int code, DirectoryFailureClass expected)
+    {
+        Assert.Equal(expected, DirectoryErrorTranslator.ClassifyForActor(code, DirectoryActor.ServiceAccount));
+        Assert.Equal(expected, DirectoryErrorTranslator.ClassifyForActor(code, DirectoryActor.User));
+    }
+
+    [Theory]
+    [InlineData(0x52E, ErrorDisclosureMode.Hardened)]
+    [InlineData(0x52E, ErrorDisclosureMode.Informative)]
+    [InlineData(0x775, ErrorDisclosureMode.Hardened)]
+    [InlineData(0x775, ErrorDisclosureMode.Informative)]
+    [InlineData(0x532, ErrorDisclosureMode.Hardened)]  // the expired case: never "proceed" for the service account
+    [InlineData(0x532, ErrorDisclosureMode.Informative)]
+    [InlineData(0x525, ErrorDisclosureMode.Hardened)]
+    [InlineData(0x525, ErrorDisclosureMode.Informative)]
+    public void Translate_ServiceAccount_YieldsInfrastructure_NeverCredentials(int code, ErrorDisclosureMode mode)
+    {
+        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(code, mode, DirectoryActor.ServiceAccount));
+
+        Assert.Equal(ApiErrorCode.LdapProblem, item.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, item.Message);
+    }
+
+    [Fact]
+    public void Translate_ServiceAccount_NoCatalogCodeEverProducesCredentialsOrUserNotFound()
+    {
+        // The core invariant, exhaustively: whatever a service-account operation
+        // fails with, the end user never sees an account-existence or credential
+        // signal.
+        foreach (var entry in Win32ErrorCode.Codes)
+        {
+            foreach (var mode in new[] { ErrorDisclosureMode.Hardened, ErrorDisclosureMode.Informative })
+            {
+                var item = ApiErrorMapper.Map(
+                    DirectoryErrorTranslator.Translate(entry.Code, mode, DirectoryActor.ServiceAccount));
+
+                Assert.NotEqual(ApiErrorCode.InvalidCredentials, item.ErrorCode);
+                Assert.NotEqual(ApiErrorCode.UserNotFound, item.ErrorCode);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public void Translate_User_StillYieldsInvalidCredentials_RegressionGuard(ErrorDisclosureMode mode)
+    {
+        // The fix must not over-correct: the end user's own wrong password is
+        // still invalid credentials.
+        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.Translate(0x52E, mode, DirectoryActor.User));
+        Assert.Equal(ApiErrorCode.InvalidCredentials, item.ErrorCode);
+    }
+
+    [Fact]
+    public void TranslateException_ServiceAccountHResult_MapsToInfrastructure()
+    {
+        // The exact call the AD provider's RunAsServiceAccount makes: a
+        // FACILITY_WIN32 logon-failure HRESULT from AccountManagement.
+        var raw = new HResultException(unchecked((int)0x8007052E), "raw AccountManagement text");
+
+        var item = ApiErrorMapper.Map(DirectoryErrorTranslator.TranslateException(
+            raw, ErrorDisclosureMode.Hardened, DirectoryActor.ServiceAccount, out var failureClass));
+
+        Assert.Equal(DirectoryFailureClass.Infrastructure, failureClass);
+        Assert.Equal(ApiErrorCode.LdapProblem, item.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, item.Message);
+        Assert.DoesNotContain("raw AccountManagement text", item.Message, StringComparison.Ordinal);
+    }
+
     private sealed class HResultException : Exception
     {
         public HResultException(int hresult, string message = "test", Exception? inner = null)
