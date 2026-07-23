@@ -54,6 +54,37 @@ public enum DirectoryFailureClass
 }
 
 /// <summary>
+/// Identifies whose failure a directory error describes, so the same Win32
+/// code can route differently depending on the operation that raised it. The
+/// Win32 code alone cannot tell these apart: a bind that fails with
+/// <c>0x52E</c> is the end user proving their current password when it comes
+/// from the credential-verification step, but the application's own
+/// misconfigured service account when it comes from connecting to or resolving
+/// against the directory.
+/// </summary>
+public enum DirectoryActor
+{
+    /// <summary>
+    /// The failure describes the end user's request — their credential proof or
+    /// their password-change operation. Classified normally (the default; every
+    /// pre-existing caller gets this).
+    /// </summary>
+    User = 0,
+
+    /// <summary>
+    /// The failure arose while the application was acting as its own service
+    /// account (connecting, binding, or resolving a user). The failure
+    /// describes the service account, not the caller, so end-user-account
+    /// signals (wrong credentials, unknown user, unusable account,
+    /// expired/must-change) are meaningless to the end user and are collapsed
+    /// to <see cref="DirectoryFailureClass.Infrastructure"/> — a
+    /// service-account or connectivity failure can never surface as an end-user
+    /// credential error.
+    /// </summary>
+    ServiceAccount,
+}
+
+/// <summary>
 /// The single translation point from Win32/AD error semantics to the domain
 /// exceptions that <see cref="ApiErrorMapper"/> turns into wire-level
 /// <see cref="ApiErrorItem"/>s. Providers own only transport-specific
@@ -150,6 +181,38 @@ public static class DirectoryErrorTranslator
         Win32ErrorCode.ByCode(win32Code)?.FailureClass ?? DirectoryFailureClass.Infrastructure;
 
     /// <summary>
+    /// Classifies a Win32 code for a specific <see cref="DirectoryActor"/>.
+    /// Identical to <see cref="Classify(int)"/> for <see cref="DirectoryActor.User"/>;
+    /// for <see cref="DirectoryActor.ServiceAccount"/> the end-user-account
+    /// signals (<see cref="DirectoryFailureClass.Credentials"/>,
+    /// <see cref="DirectoryFailureClass.Existence"/>,
+    /// <see cref="DirectoryFailureClass.AccountState"/>,
+    /// <see cref="DirectoryFailureClass.PasswordExpiredOrMustChange"/>) collapse
+    /// to <see cref="DirectoryFailureClass.Infrastructure"/>, so a
+    /// service-account failure can never be reported as an end-user credential,
+    /// existence, or account-state condition. This is the single enforcement
+    /// point for that invariant; providers select the actor at the call site.
+    /// </summary>
+    /// <param name="win32Code">The Win32 error code.</param>
+    /// <param name="actor">Whose failure the code describes.</param>
+    /// <returns>The actor-adjusted failure classification.</returns>
+    public static DirectoryFailureClass ClassifyForActor(int win32Code, DirectoryActor actor)
+    {
+        var failureClass = Classify(win32Code);
+
+        if (actor == DirectoryActor.ServiceAccount && IsEndUserAccountSignal(failureClass))
+            return DirectoryFailureClass.Infrastructure;
+
+        return failureClass;
+    }
+
+    private static bool IsEndUserAccountSignal(DirectoryFailureClass failureClass) =>
+        failureClass is DirectoryFailureClass.Credentials
+            or DirectoryFailureClass.Existence
+            or DirectoryFailureClass.AccountState
+            or DirectoryFailureClass.PasswordExpiredOrMustChange;
+
+    /// <summary>
     /// Indicates whether the code means the current password was correct but
     /// expired (0x532) or must change at next logon (0x773) — the shared
     /// definition of the "allow the change to proceed" verification outcome,
@@ -172,9 +235,29 @@ public static class DirectoryErrorTranslator
     public static Exception Translate(
         int win32Code,
         ErrorDisclosureMode disclosureMode,
+        Exception? innerException = null) =>
+        Translate(win32Code, disclosureMode, DirectoryActor.User, innerException);
+
+    /// <summary>
+    /// Translates a Win32 error code to the domain exception described in the
+    /// class-level routing table, applying the configured disclosure posture
+    /// and the <see cref="DirectoryActor"/>. A
+    /// <see cref="DirectoryActor.ServiceAccount"/> failure can never produce an
+    /// end-user credential/existence/account-state result — see
+    /// <see cref="ClassifyForActor"/>.
+    /// </summary>
+    /// <param name="win32Code">The Win32 error code.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="actor">Whose failure the code describes.</param>
+    /// <param name="innerException">The transport exception, preserved for logs.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception Translate(
+        int win32Code,
+        ErrorDisclosureMode disclosureMode,
+        DirectoryActor actor,
         Exception? innerException = null)
     {
-        return Classify(win32Code) switch
+        return ClassifyForActor(win32Code, actor) switch
         {
             DirectoryFailureClass.Credentials or
             DirectoryFailureClass.PasswordExpiredOrMustChange =>
@@ -234,7 +317,23 @@ public static class DirectoryErrorTranslator
     /// <param name="disclosureMode">The configured disclosure posture.</param>
     /// <returns>The domain exception to throw.</returns>
     public static Exception TranslateException(Exception exception, ErrorDisclosureMode disclosureMode) =>
-        TranslateException(exception, disclosureMode, out _);
+        TranslateException(exception, disclosureMode, DirectoryActor.User, out _);
+
+    /// <summary>
+    /// Actor-aware overload of
+    /// <see cref="TranslateException(Exception, ErrorDisclosureMode)"/>. A
+    /// <see cref="DirectoryActor.ServiceAccount"/> failure is coerced to an
+    /// infrastructure result regardless of the code it carries, so
+    /// service-account and connectivity failures never surface as end-user
+    /// credential errors.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="actor">Whose failure the exception describes.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception TranslateException(
+        Exception exception, ErrorDisclosureMode disclosureMode, DirectoryActor actor) =>
+        TranslateException(exception, disclosureMode, actor, out _);
 
     /// <summary>
     /// Same as <see cref="TranslateException(Exception, ErrorDisclosureMode)"/>
@@ -253,14 +352,37 @@ public static class DirectoryErrorTranslator
     public static Exception TranslateException(
         Exception exception,
         ErrorDisclosureMode disclosureMode,
+        out DirectoryFailureClass failureClass) =>
+        TranslateException(exception, disclosureMode, DirectoryActor.User, out failureClass);
+
+    /// <summary>
+    /// Actor-aware overload of
+    /// <see cref="TranslateException(Exception, ErrorDisclosureMode, out DirectoryFailureClass)"/>.
+    /// The reported <paramref name="failureClass"/> is the actor-adjusted class,
+    /// so a <see cref="DirectoryActor.ServiceAccount"/> failure reports
+    /// <see cref="DirectoryFailureClass.Infrastructure"/> and can never drive an
+    /// end-user-facing decision (e.g. the administrative-reset gate) as a
+    /// credential or account-state condition.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="actor">Whose failure the exception describes.</param>
+    /// <param name="failureClass">The actor-adjusted classification;
+    /// <see cref="DirectoryFailureClass.Infrastructure"/> when no Win32 code
+    /// could be recovered.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception TranslateException(
+        Exception exception,
+        ErrorDisclosureMode disclosureMode,
+        DirectoryActor actor,
         out DirectoryFailureClass failureClass)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
         if (TryGetWin32Code(exception, out var code))
         {
-            failureClass = Classify(code);
-            return Translate(code, disclosureMode, exception);
+            failureClass = ClassifyForActor(code, actor);
+            return Translate(code, disclosureMode, actor, exception);
         }
 
         failureClass = DirectoryFailureClass.Infrastructure;

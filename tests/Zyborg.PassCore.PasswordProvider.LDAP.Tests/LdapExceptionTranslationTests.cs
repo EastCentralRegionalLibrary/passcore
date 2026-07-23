@@ -183,4 +183,43 @@ public class LdapExceptionTranslationTests
 
         Assert.False(LdapPasswordChangeProvider.IsPasswordExpiredOrMustChange(ex));
     }
+
+    // ------------------------------------------------------------------
+    // Actor dimension: the exact translation BindAsServiceAccount performs.
+    // The same bind rejection that means "wrong current password" for the end
+    // user means "misconfigured/unusable service account" — infrastructure —
+    // when it happens on the service-account bind.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(BindLogonFailure, ErrorDisclosureMode.Hardened)]      // 0x52E
+    [InlineData(BindLogonFailure, ErrorDisclosureMode.Informative)]
+    [InlineData(BindPasswordExpired, ErrorDisclosureMode.Hardened)]   // 0x532 — must NOT "proceed" for the service account
+    [InlineData(BindPasswordExpired, ErrorDisclosureMode.Informative)]
+    public void TranslateLdapException_ServiceAccountActor_MapsBindFailureToInfrastructure(
+        string serverMessage, ErrorDisclosureMode mode)
+    {
+        var result = LdapPasswordChangeProvider.TranslateLdapException(
+            Ldap(serverMessage, LdapException.InvalidCredentials), mode, DirectoryActor.ServiceAccount);
+
+        var dir = Assert.IsType<DirectoryUnavailableException>(result);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, dir.Message);
+        Assert.Equal(ApiErrorCode.LdapProblem, ApiErrorMapper.Map(dir).ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(BindLogonFailure)]
+    [InlineData(BindPasswordExpired)]
+    public void TranslateLdapException_UserActor_SameBindFailureStillInvalidCredentials_RegressionGuard(
+        string serverMessage)
+    {
+        // The user-verification bind keeps its existing meaning: proof failed.
+        var result = LdapPasswordChangeProvider.TranslateLdapException(
+            Ldap(serverMessage, LdapException.InvalidCredentials),
+            ErrorDisclosureMode.Hardened, DirectoryActor.User);
+
+        // 0x532 is allowed through elsewhere as "proceed"; here (translation, not
+        // verification) it is InvalidCredentials — either way, never LdapProblem.
+        Assert.IsType<InvalidCredentialsException>(result);
+    }
 }
