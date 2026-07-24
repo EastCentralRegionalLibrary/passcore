@@ -138,6 +138,24 @@ gets the diagnosis while the wire response stays curated. `0x532`
 password is correct but expired"; as the **service account** it must never
 proceed — the actor coercion makes it `Infrastructure`.
 
+## Terminal catch
+
+Both providers end `ChangePasswordCore` with the same last-resort
+`catch (Exception ex)`: **construct `DirectoryUnavailableException(
+DirectoryFailureMessage, ex)` directly — do not re-scan the chain for a Win32
+code.** Every failure that carries a meaningful directory code is already
+handled at its stage (typed `LdapException` / `TryGetWin32Code` extraction for
+the transport, service-account operations via `BindAsServiceAccount` /
+`RunAsServiceAccount`, the modify itself in the LDAP `ChangePasswordDelAdd`
+catch and the AD `UpdatePassword` catch). An exception reaching the terminal
+catch is therefore an unexpected, non-directory-typed fault with no reliable
+code, so speculative extraction there is inappropriate — it could only
+mislabel a non-directory fault. Classifying it as infrastructure is correct and
+identical on both providers. (Earlier the AD provider re-scanned via
+`TranslateException` here while the LDAP provider did not; standardized on the
+LDAP behavior.) The raw detail stays in the inner exception for logs, never on
+the wire.
+
 ## The administrative-reset fallback dimension
 
 `AllowAdministrativeReset` (server-side, default off) adds a second dimension,

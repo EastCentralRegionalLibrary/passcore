@@ -252,16 +252,14 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         }
         catch (Exception ex)
         {
-            // Intentionally does NOT attempt TryGetWin32Code, unlike the AD
-            // provider's generic catch. That is a legitimate difference: here the
-            // typed catch above already handles every LdapException (the only
-            // carrier of a Win32 code on this transport), plus service-account
-            // bind failures are converted at BindAsServiceAccount. Anything
-            // reaching this block is a non-LDAP, unexpected failure with no
-            // meaningful directory code, so it is infrastructure. The AD provider
-            // must extract in its generic catch because AccountManagement wraps
-            // its codes in assorted COM/Principal exception types with no single
-            // typed carrier.
+            // Terminal backstop, consistent with the AD provider (see the
+            // routing-matrix doc, "Terminal catch"). Every failure carrying a
+            // meaningful directory code is already handled at its stage — the
+            // typed LdapException catch above, and service-account bind failures
+            // at BindAsServiceAccount. An exception reaching HERE is an
+            // unexpected, non-LDAP fault with no reliable Win32 code, so it is
+            // classified as infrastructure directly rather than by speculatively
+            // scanning the chain. Raw text stays in the inner exception.
             throw new DirectoryUnavailableException(
                 DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }

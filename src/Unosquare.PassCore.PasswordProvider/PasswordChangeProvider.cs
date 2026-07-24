@@ -40,6 +40,14 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
+        private static readonly Action<ILogger, Exception?> LogGroupEnumerationFallback =
+            LoggerMessage.Define(
+                LogLevel.Debug,
+                new EventId(104, nameof(LogGroupEnumerationFallback)),
+                "GetGroups() failed; falling back to GetAuthorizationGroups(). The two behave " +
+                "differently across environments so the fallback is expected, but a persistent " +
+                "GetGroups failure indicates a misconfiguration worth investigating.");
+
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
@@ -124,12 +132,19 @@ namespace Unosquare.PassCore.PasswordProvider
             }
             catch (Exception ex)
             {
-                // Never let raw AccountManagement/COM exception text reach the wire:
-                // recover the Win32 code from the exception chain when present (e.g.
-                // COMException 0x800708C5 for a policy rejection) and route it through
-                // the shared translator; anything unrecognizable degrades to a
-                // curated directory-failure message with the detail preserved for logs.
-                throw DirectoryErrorTranslator.TranslateException(ex, _options.ErrorDisclosureMode);
+                // Terminal backstop. Every failure that carries a meaningful
+                // directory code is already handled at its stage — service-account
+                // operations via RunAsServiceAccount, the modify itself via
+                // UpdatePassword's catch, the cannot-change flag pre-flight. An
+                // exception reaching HERE is an unexpected, non-directory-typed
+                // fault (e.g. a Save() failure) with no reliable Win32 code, so
+                // it is classified as infrastructure directly rather than by
+                // speculatively re-scanning the chain. This matches the LDAP
+                // provider's terminal catch (see the routing-matrix doc, "Terminal
+                // catch"). Raw exception text stays in the inner exception (logs),
+                // never on the wire.
+                throw new DirectoryUnavailableException(
+                    DirectoryErrorTranslator.DirectoryFailureMessage, ex);
             }
 
             return Task.CompletedTask;
@@ -164,8 +179,13 @@ namespace Unosquare.PassCore.PasswordProvider
                     if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
                         return Task.FromResult(true);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // The fallback is expected (the two calls fail in different
+                    // environments), but leave a trace so a persistent GetGroups
+                    // misconfiguration is not invisible.
+                    LogGroupEnumerationFallback(Logger, ex);
+
                     var groups = userPrincipal.GetAuthorizationGroups();
                     if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
                         return Task.FromResult(true);
@@ -269,9 +289,12 @@ namespace Unosquare.PassCore.PasswordProvider
         /// ChangePassword. On failure, an administrative SetPassword fallback
         /// may fire — but only when <see cref="PasswordChangeOptions.AllowAdministrativeReset"/>
         /// is enabled (default off), the user's current password was verified in
-        /// this request, the failure is one a reset can cure (new-password
-        /// policy or cannot-change; the shared <see cref="AdministrativeReset"/>
-        /// gate), and the provider is bound with service-account credentials
+        /// this request, the failure is the cannot-change-password condition
+        /// (<see cref="DirectoryFailureClass.ChangeNotPermitted"/> — the only
+        /// class the shared <see cref="AdministrativeReset"/> gate rescues;
+        /// new-password policy rejections such as history or minimum age are
+        /// deliberately excluded so intentional domain policy is never bypassed),
+        /// and the provider is bound with service-account credentials
         /// (automatic-context mode never resets). Every reset is logged at
         /// Warning with the request correlation ID. With the fallback disabled
         /// or ineligible, the failure surfaces through
@@ -462,32 +485,33 @@ namespace Unosquare.PassCore.PasswordProvider
         }
 
         /// <summary>
-        /// Retrieves the minimum password length policy from Active Directory.
-        /// Uses either automatic domain context or specified LDAP connection details based on 'UseAutomaticContext' option.
-        /// Returns a default value of 6 if retrieval fails.
+        /// Retrieves the minimum password length policy from Active Directory,
+        /// falling back — visibly, via a logged Warning — to
+        /// <see cref="DomainPasswordPolicy.DefaultMinimumLength"/> when the domain
+        /// policy cannot be read. The fallback/log decision lives in the shared,
+        /// testable <see cref="DomainPasswordPolicy.ResolveMinimumLength"/>; this
+        /// method supplies only the AccountManagement-specific lookup.
         /// </summary>
         /// <returns>The minimum password length as an integer.</returns>
-        private int AcquireDomainPasswordLength()
+        private int AcquireDomainPasswordLength() =>
+            DomainPasswordPolicy.ResolveMinimumLength(Logger, ReadMinPwdLength);
+
+        /// <summary>
+        /// Reads <c>minPwdLength</c> from the domain. Returns <see langword="null"/>
+        /// when the value is absent; throws when the directory cannot be reached
+        /// or read — both are turned into the logged fallback by
+        /// <see cref="DomainPasswordPolicy.ResolveMinimumLength"/>.
+        /// </summary>
+        private int? ReadMinPwdLength()
         {
-            DirectoryEntry? entry = null; // Initialize to null for try-finally and error handling
+            DirectoryEntry? entry = null; // Initialize to null for try-finally
             try
             {
                 entry = _options.UseAutomaticContext
                     ? Domain.GetCurrentDomain().GetDirectoryEntry()
                     : GetDirectoryEntry();
 
-                if (entry?.Properties["minPwdLength"]?.Value is int minLength) // Null-conditional checks and type check
-                {
-                    return minLength;
-                }
-                else
-                {
-                    return 6; // Default minimum password length
-                }
-            }
-            catch (Exception)
-            {
-                return 6; // Default minimum password length in case of exception
+                return entry?.Properties["minPwdLength"]?.Value is int minLength ? minLength : null;
             }
             finally
             {
@@ -498,10 +522,10 @@ namespace Unosquare.PassCore.PasswordProvider
 
         /// <summary>
         /// Creates and returns a DirectoryEntry object using LDAP connection details from options.
-        /// This method is extracted for better readability and reusability.
-        /// Returns null and logs a warning if LDAP Hostnames are not configured.
+        /// Returns <see langword="null"/> only when no LDAP hostnames are configured; a construction
+        /// failure is allowed to propagate so the caller can log it (rather than being swallowed here).
         /// </summary>
-        /// <returns>A <see cref="DirectoryEntry"/> object configured with LDAP credentials, or null if configuration is missing.</returns>
+        /// <returns>A <see cref="DirectoryEntry"/> object configured with LDAP credentials, or null if no hostnames are configured.</returns>
         private DirectoryEntry? GetDirectoryEntry()
         {
             if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty
@@ -510,17 +534,14 @@ namespace Unosquare.PassCore.PasswordProvider
             }
 
             var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string
-            try
-            {
-                return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
-                    domain,
-                    _options.LdapUsername,
-                    _options.LdapPassword);
-            }
-            catch (Exception)
-            {
-                return null; // Return null if DirectoryEntry creation fails
-            }
+
+            // No local catch: a construction failure propagates to
+            // ResolveMinimumLength, which logs it and returns the fallback. This
+            // removes the previous silent swallow that hid the real reason.
+            return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
+                domain,
+                _options.LdapUsername,
+                _options.LdapPassword);
         }
     }
 }
