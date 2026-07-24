@@ -391,6 +391,39 @@ public class DirectoryErrorTranslatorTests
         Assert.DoesNotContain("raw AccountManagement text", item.Message, StringComparison.Ordinal);
     }
 
+    // ------------------------------------------------------------------
+    // C-4: terminal-catch consistency. Both providers' last-resort
+    // catch (Exception) now constructs DirectoryUnavailableException directly.
+    // For the non-directory exceptions that actually reach it, that produces
+    // the same wire result the former AD-side TranslateException did — so the
+    // standardization is behavior-preserving for the expected input, and both
+    // providers land on the same infrastructure result.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public void TerminalCatch_NonDirectoryException_YieldsInfrastructureIdenticallyToFormerAdBehavior(
+        ErrorDisclosureMode mode)
+    {
+        var nonDirectory = new InvalidOperationException("unexpected non-directory fault");
+
+        // What both providers' terminal catch now does (direct construction).
+        var standardized = ApiErrorMapper.Map(
+            new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, nonDirectory));
+
+        // What the AD provider's terminal catch used to do (chain re-scan). For a
+        // non-directory exception there is no Win32 code to find, so it degrades
+        // to the same infrastructure result — proving the change is safe.
+        var formerAd = ApiErrorMapper.Map(
+            DirectoryErrorTranslator.TranslateException(nonDirectory, mode));
+
+        Assert.Equal(ApiErrorCode.LdapProblem, standardized.ErrorCode);
+        Assert.Equal(standardized.ErrorCode, formerAd.ErrorCode);
+        Assert.Equal(standardized.Message, formerAd.Message);
+        Assert.DoesNotContain("non-directory fault", standardized.Message!, StringComparison.Ordinal);
+    }
+
     private sealed class HResultException : Exception
     {
         public HResultException(int hresult, string message = "test", Exception? inner = null)
