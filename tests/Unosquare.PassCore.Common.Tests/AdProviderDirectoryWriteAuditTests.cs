@@ -7,11 +7,11 @@ using System.Text.RegularExpressions;
 namespace Unosquare.PassCore.Common.Tests;
 
 /// <summary>
-/// Guards two properties of the Active Directory provider that cannot be
-/// asserted at runtime here: it performs no directory write before the
-/// caller's current password has been verified, and it never decides an
-/// <see cref="ApiErrorCode"/> itself (the one rule in
-/// <c>docs/error-routing-matrix.md</c>).
+/// Guards properties of the Active Directory provider that cannot be asserted
+/// at runtime here: it performs no directory write before the caller's current
+/// password has been verified, it never decides an <see cref="ApiErrorCode"/>
+/// itself (the one rule in <c>docs/error-routing-matrix.md</c>), and a failed
+/// credential verification still hands the reason to the log.
 ///
 /// <para><b>Why a source audit and not a behavioral test.</b> The AD provider
 /// targets <c>net8.0-windows</c>, its whole implementation is inside
@@ -103,6 +103,46 @@ public class AdProviderDirectoryWriteAuditTests
                 "call runs for a caller who supplied only a username, so a directory write there " +
                 "is an unauthenticated modification. See docs/UPGRADING-error-routing.md.");
         }
+    }
+
+    [Fact]
+    public void ChangePasswordCore_AttachesTheVerificationFailureReasonAsAnInnerException()
+    {
+        // The runtime behavior — that an operator can read the Win32 code back
+        // out of the logged chain — is covered by CredentialFailureDetailTests
+        // against the shared factory. What cannot be covered there is whether
+        // this provider actually calls it, so that wiring is asserted here.
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "Task ChangePasswordCore(");
+
+        Assert.True(
+            body.Contains("CredentialFailureDetail.ForWin32Code(", StringComparison.Ordinal),
+            "ChangePasswordCore no longer builds a CredentialFailureDetail for a failed credential " +
+            "verification. Hardened mode collapses every credential and account-state condition " +
+            "into one response, so dropping this detail leaves the operator with no way to tell a " +
+            "lockout from a mistyped password. See docs/error-routing-matrix.md, 'Diagnostics'.");
+
+        // The detail must be an argument to the exception, never part of the
+        // message that ApiErrorMapper puts on the wire.
+        var throwAt = body.IndexOf("new InvalidCredentialsException(", StringComparison.Ordinal);
+        Assert.True(throwAt >= 0, "ChangePasswordCore no longer throws InvalidCredentialsException on verification failure.");
+    }
+
+    [Fact]
+    public void ValidateUserCredentials_StillDelegatesTheProceedDecisionToTheSharedPredicate()
+    {
+        // 0x532 / 0x773 must keep meaning "the user proved the current password,
+        // let the change proceed", and that decision must stay shared with the
+        // LDAP provider rather than being re-derived here.
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "bool ValidateUserCredentials(");
+
+        Assert.Contains(
+            "DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(",
+            body,
+            StringComparison.Ordinal);
     }
 
     [Fact]

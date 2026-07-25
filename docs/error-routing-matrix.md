@@ -101,6 +101,61 @@ wire (same code, same message), so an unauthenticated caller gets no
 account-existence or account-state oracle. **Informative** mode trades that
 oracle for actionable help-desk guidance.
 
+### Reachability caveat: `AccountState | Informative`
+
+That row describes what the translator produces when it is *asked* to translate
+an account-state code. It is **not** what a locked-out, disabled, or
+logon-hours-restricted user sees when they try to change their password —
+in the ordinary case they get `InvalidCredentials` in *both* modes.
+
+The reason is that account state is discovered at **credential-verification**
+time, and neither provider routes that step through the translator; both
+hardcode `InvalidCredentialsException` for anything that is not
+expired/must-change:
+
+- **AD** — `ValidateUserCredentials` returns `false` for every code except
+  `0x532` / `0x773`, and the caller throws `InvalidCredentialsException`. (The
+  code itself is not lost: it is attached as the inner exception and reaches
+  the log — see "Diagnostics" below.)
+- **LDAP** — `VerifyUserCredentials` catches `LdapBindException`, checks
+  expired/must-change, and otherwise throws `InvalidCredentialsException` with
+  the bind failure as the inner exception.
+
+So the `AccountState | Informative` row is reachable only from **modify-time**
+account-state errors — a lockout that occurs mid-request, or a logon-hours
+boundary crossed between verification and modify — which is a narrow window,
+not the everyday case.
+
+Two facts worth having straight, because they are the inputs to a pending
+decision about whether verification-time failures should route through
+`Translate(code, mode, DirectoryActor.User)` (that decision has **not** been
+made; nothing here advocates either way):
+
+- **Existence and account state are treated differently within Informative
+  mode.** Both providers call `CreateUserNotFoundError(mode)` when the lookup
+  finds nobody — before any credential check — so in Informative mode a
+  nonexistent user *is* disclosed pre-verification, while a locked or disabled
+  one is not disclosed at all. As far as the audit could establish this is an
+  inconsistency rather than a deliberate distinction.
+- **In Hardened mode the question is moot.** The translator collapses
+  account-state to `InvalidCredentials` regardless, so only Informative-mode
+  deployments would see any difference from such a change.
+
+### Diagnostics: what the wire hides, the log keeps
+
+Hardened mode's collapse is deliberate, which makes the server log the
+compensating control for the conditions it hides. Both providers attach the
+underlying failure to the thrown `InvalidCredentialsException` as an **inner
+exception** — AD via `CredentialFailureDetail.ForWin32Code` (a
+`Win32Exception` carrying the code, plus the catalog name and curated
+description when the code is cataloged), LDAP via the original
+`LdapBindException`. The base class logs it at Warning with the correlation ID
+(EventId 4), so an operator can distinguish a lockout from a mistyped password.
+
+`ApiErrorMapper.Map` reads only `Exception.Message` and never walks
+`InnerException`, so none of this detail can reach `ApiErrorItem.Message` or
+any other wire field, in either mode.
+
 ## The actor dimension: same code, different actor, different class
 
 The Win32 code alone does not say **whose** credentials failed. A bind that

@@ -43,7 +43,7 @@ namespace Unosquare.PassCore.PasswordProvider
         private static readonly Action<ILogger, Exception?> LogGroupEnumerationFallback =
             LoggerMessage.Define(
                 LogLevel.Debug,
-                new EventId(104, nameof(LogGroupEnumerationFallback)),
+                new EventId(105, nameof(LogGroupEnumerationFallback)),
                 "GetGroups() failed; falling back to GetAuthorizationGroups(). The two behave " +
                 "differently across environments so the fallback is expected, but a persistent " +
                 "GetGroups failure indicates a misconfiguration worth investigating.");
@@ -105,9 +105,21 @@ namespace Unosquare.PassCore.PasswordProvider
                 // pre-flight 'pwdLastSet' write used to sit exactly here; see
                 // docs/UPGRADING-error-routing.md.) Directory writes belong
                 // after verification: ChangePassword / SetPassword / Save below.
-                if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext)) // Validate provided current password
+                if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext, out var verificationCode)) // Validate provided current password
                 {
-                    throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
+                    // The wire message is unchanged and carries no detail. The
+                    // reason travels as the INNER exception only, so the base
+                    // class's existing failure log (EventId 4) records it with
+                    // the correlation ID while the caller still learns nothing
+                    // — the compensating control for hardened mode collapsing
+                    // every credential/account-state condition into one
+                    // response. This mirrors the LDAP provider, which passes
+                    // its LdapBindException the same way.
+                    var detail = CredentialFailureDetail.ForWin32Code(verificationCode);
+
+                    throw detail == null
+                        ? new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage)
+                        : new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage, detail);
                 }
 
                 // The cannot-change check runs strictly AFTER credential
@@ -215,12 +227,19 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="upn">The User Principal Name of the user.</param>
         /// <param name="currentPassword">The current password provided by the user.</param>
         /// <param name="principalContext">The PrincipalContext to use for validation.</param>
+        /// <param name="win32Code">Receives the Win32 code reported by the failed
+        /// logon, or <c>0</c> when the credentials validated without one. It exists
+        /// purely so the caller can attach the reason to the log; it takes no part
+        /// in the decision this method returns.</param>
         /// <returns>True if credentials are valid, or if the error code indicates password must be changed or is expired, otherwise false.</returns>
         private bool ValidateUserCredentials(
             string upn,
             string currentPassword,
-            PrincipalContext principalContext)
+            PrincipalContext principalContext,
+            out int win32Code)
         {
+            win32Code = 0;
+
             if (principalContext.ValidateCredentials(upn, currentPassword)) // First attempt: Validate credentials using PrincipalContext
             {
                 return true; // Credentials validated successfully
@@ -236,12 +255,12 @@ namespace Unosquare.PassCore.PasswordProvider
             }
 
             // Check for specific error codes indicating password expiration or must change scenarios
-            var errorCode = System.Runtime.InteropServices.Marshal.GetLastWin32Error(); // Get the last Win32 error code
+            win32Code = System.Runtime.InteropServices.Marshal.GetLastWin32Error(); // Get the last Win32 error code
 
             // Expired / must-change-at-next-logon still proves the user knows the current
             // password; the shared classification keeps this decision identical to the
             // LDAP provider's bind handling.
-            return DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(errorCode);
+            return DirectoryErrorTranslator.IsPasswordExpiredOrMustChange(win32Code);
         }
 
         /// <summary>
