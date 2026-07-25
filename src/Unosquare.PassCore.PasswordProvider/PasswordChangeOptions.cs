@@ -28,14 +28,6 @@ public class PasswordChangeOptions : IAppSettings
     /// </summary>
     public string? IdTypeForUser { get; set; }
 
-    /// <summary>
-    /// Gets or sets a value indicating whether [update last password].
-    /// </summary>
-    /// <value>
-    ///   <c>true</c> if [update last password]; otherwise, <c>false</c>.
-    /// </value>
-    public bool UpdateLastPassword { get; set; }
-
     /// <inheritdoc />
     public ErrorDisclosureMode ErrorDisclosureMode { get; set; } = ErrorDisclosureMode.Hardened;
 
