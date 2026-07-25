@@ -9,7 +9,8 @@ default behaviors. Nothing about the wire contract changed — see
 **Bottom line:** most deployments need no config change. Two situations do:
 LDAP sites that relied on `HideUserNotFound: false`, and AD service-account
 sites that relied on the old silent administrative reset. Both are covered
-below.
+below. One AD setting — `UpdateLastPassword` — was **removed**; leaving it in
+your config is harmless, and the removal is also covered below.
 
 ## New settings (both under `AppSettings`, server-side only)
 
@@ -19,6 +20,62 @@ Neither is ever sent to the browser.
 |---------|---------|--------|
 | `ErrorDisclosureMode` | `Hardened` | `Hardened`: unknown users and locked/disabled/restricted accounts are indistinguishable from a wrong password (no account oracle). `Informative`: unknown users get "user not found" and unusable accounts get "contact IT" guidance. |
 | `AllowAdministrativeReset` | `false` | When on, an account flagged "user cannot change password" completes its change as an administrative reset by the service account (after the current password is verified). This is the **only** condition it rescues. |
+
+## Removed setting: `UpdateLastPassword` (AD provider)
+
+**No action needed.** It is documented here because it was found during this
+series' audit and because it interacts with the administrative-reset change
+below.
+
+The AD provider had an `UpdateLastPassword` option that, when enabled, wrote
+`pwdLastSet = -1` to the user's directory entry **before** the caller's current
+password had been verified. The option, the write, and the `SetLastPassword`
+method that performed it are gone. `PasswordChangeOptions` no longer has the
+property, and the key is no longer in the shipped `appsettings.json`.
+
+Why it went away:
+
+- **It ran before authentication.** Everything preceding credential
+  verification runs for a caller who has supplied nothing but a username. Per
+  Microsoft's ADSI documentation, `pwdLastSet = 0` means "user must change
+  password at next logon" and `-1` *removes* that requirement (no other value
+  can be written by anything but the system). The old code's comment claimed
+  it forced a change at next logon; it did the opposite. So a caller who knew
+  a valid username — and no password — could clear the must-change flag, and a
+  help-desk-issued temporary password would silently stop being temporary.
+- **AD maintains `pwdLastSet` itself.** The schema defines it as the time the
+  password was last changed, its update privilege is "set by the system", and
+  it is stamped on every successful password change or administrative reset.
+  There was nothing for PassCore to maintain.
+- **It defeated the change it was trying to enable.** The `pwdLastSet == 0`
+  state is what exempts an account from the domain's *minimum password age*.
+  Writing `-1` destroyed that exemption and started the minimum-age clock, so
+  the change attempted moments later was rejected by AD (`0x52D`). The default
+  domain policy sets a minimum password age of 1 day, so this was the default
+  configuration, not an edge case. It used to be masked by the old always-on
+  administrative `SetPassword` fallback (resets bypass minimum age); now that
+  the fallback is opt-in and off by default, the failure had become visible —
+  reported as `ComplexPassword`, which is misleading for a minimum-age
+  rejection.
+
+What changes for you:
+
+- **You never set it (the default, `false`)** → nothing changes at all.
+- **You set `"UpdateLastPassword": true`** → accounts flagged "user must change
+  password at next logon" should now work *better*. Their flag is left alone,
+  they keep their minimum-age exemption, credential verification recognises the
+  must-change state as proof of the current password and proceeds, and the
+  change succeeds. Nothing that worked before stops working.
+- **A stale key is harmless.** Configuration binding ignores unknown keys, so a
+  deployment whose `appsettings.json` still contains `"UpdateLastPassword"`
+  starts normally. Delete the line at your convenience. (Unlike
+  `HideUserNotFound` below, there is no startup warning for it: detecting the
+  stale key would require keeping a property for it, which is exactly the shim
+  the removal set out to avoid.)
+
+Forcing a must-change *after* a successful administrative reset — writing
+`pwdLastSet = 0`, the opposite operation — is a separate feature that has not
+been built and is not implied by this removal.
 
 ## Action may be required
 
@@ -107,4 +164,8 @@ before rollout if they matter to you:
 
 The Windows-only AD provider is not compiled by the cross-platform CI; its
 edits were compile-verified separately and it delegates to the same shared,
-fully-tested translator as the LDAP provider.
+fully-tested translator as the LDAP provider. Because it cannot be loaded or
+exercised from the cross-platform suite at all, the two properties that have no
+shared-code equivalent — no directory write before credential verification, and
+no `ApiErrorCode` decided inside the provider — are held by a source audit,
+`AdProviderDirectoryWriteAuditTests`.

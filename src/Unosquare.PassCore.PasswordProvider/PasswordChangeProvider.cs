@@ -99,11 +99,12 @@ namespace Unosquare.PassCore.PasswordProvider
                     throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
                 }
 
-                if (_options.UpdateLastPassword && userPrincipal.LastPasswordSet == null) // Check if 'UpdateLastPassword' option is enabled and LastPasswordSet is null
-                {
-                    SetLastPassword(userPrincipal); // Update the 'pwdLastSet' attribute if conditions are met
-                }
-
+                // NOTHING may write to the directory above this line. Everything
+                // before it runs for a caller who has supplied only a username,
+                // so a write here would be an unauthenticated modification. (A
+                // pre-flight 'pwdLastSet' write used to sit exactly here; see
+                // docs/UPGRADING-error-routing.md.) Directory writes belong
+                // after verification: ChangePassword / SetPassword / Save below.
                 if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext)) // Validate provided current password
                 {
                     throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
@@ -256,32 +257,6 @@ namespace Unosquare.PassCore.PasswordProvider
 
             // Append domain to username if no domain part is present and default domain is configured
             return parts.Length > 1 || string.IsNullOrWhiteSpace(_options.DefaultDomain) ? username : $"{username}@{_options.DefaultDomain}";
-        }
-
-        /// <summary>
-        /// Sets the 'pwdLastSet' attribute to -1 to force password change at next logon.
-        /// This is used when the 'UpdateLastPassword' option is enabled and the LastPasswordSet is null.
-        /// </summary>
-        /// <param name="userPrincipal">The UserPrincipal object for which to set the 'pwdLastSet' attribute.</param>
-        private void SetLastPassword(Principal userPrincipal)
-        {
-            var directoryEntry = (DirectoryEntry)userPrincipal.GetUnderlyingObject(); // Get the underlying DirectoryEntry object
-            var pwdLastSetProperty = directoryEntry.Properties["pwdLastSet"]; // Get the 'pwdLastSet' property
-
-            if (pwdLastSetProperty == null) // Check if 'pwdLastSet' property exists
-            {
-                throw new PasswordPolicyViolationException("The 'pwdLastSet' property is missing on the user principal.", ApiErrorCode.Generic);
-            }
-
-            try
-            {
-                pwdLastSetProperty.Value = -1; // Set 'pwdLastSet' to -1 to force password change at next logon
-                directoryEntry.CommitChanges(); // Commit changes to Active Directory
-            }
-            catch (Exception) // Catch exceptions during attribute update
-            {
-                throw new PasswordPolicyViolationException("Failed to update 'pwdLastSet' attribute.", ApiErrorCode.ChangeNotPermitted);
-            }
         }
 
         /// <summary>
