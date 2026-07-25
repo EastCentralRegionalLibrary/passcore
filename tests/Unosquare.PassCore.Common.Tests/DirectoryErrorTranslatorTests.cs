@@ -129,7 +129,25 @@ public class DirectoryErrorTranslatorTests
         var structuralNotFound = ApiErrorMapper.Map(
             DirectoryErrorTranslator.CreateUserNotFoundError(ErrorDisclosureMode.Hardened));
 
-        foreach (var item in new[] { unknownUser, lockedOut, disabled, structuralNotFound })
+        // Credential-verification failures do not go through the translator:
+        // both providers throw InvalidCredentialsException directly, with the
+        // underlying failure attached as a diagnostic inner exception. Those
+        // must land on the wire byte-identically too, or the inner exception
+        // would have reintroduced the oracle the rest of this test rules out.
+        var verificationLockedOut = ApiErrorMapper.Map(new InvalidCredentialsException(
+            DirectoryErrorTranslator.InvalidCredentialsMessage,
+            CredentialFailureDetail.ForWin32Code(0x775)!));
+        var verificationWrongPassword = ApiErrorMapper.Map(new InvalidCredentialsException(
+            DirectoryErrorTranslator.InvalidCredentialsMessage,
+            CredentialFailureDetail.ForWin32Code(0x52E)!));
+        var verificationNoDetail = ApiErrorMapper.Map(new InvalidCredentialsException(
+            DirectoryErrorTranslator.InvalidCredentialsMessage));
+
+        foreach (var item in new[]
+                 {
+                     unknownUser, lockedOut, disabled, structuralNotFound,
+                     verificationLockedOut, verificationWrongPassword, verificationNoDetail,
+                 })
         {
             Assert.Equal(wrongPassword.ErrorCode, item.ErrorCode);
             Assert.Equal(wrongPassword.Message, item.Message);

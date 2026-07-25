@@ -29,6 +29,19 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
         Policies = policies ?? Array.Empty<IPasswordPolicy>();
     }
 
+    // EventId allocation across the solution. Provider selection is build-time,
+    // so an AD-built and an LDAP-built instance never share a process — but their
+    // logs are routinely aggregated together, so an ID must mean one thing
+    // everywhere. Ranges, and the next free number in each:
+    //
+    //   1-9      this base class (password-change and policy lifecycle)   next: 10
+    //   100-105  provider-specific events (LDAP 100-102, 104; AD 103, 105) next: 106
+    //   110-112  shared helpers (AdministrativeReset, ServiceAccountFailure,
+    //            DomainPasswordPolicy)                                     next: 113
+    //   300-304  PwnedPasswordsSearch                                      next: 305
+    //
+    // Take the next free number in the appropriate range; never reuse or
+    // renumber one that has shipped.
     private static readonly Action<ILogger, string?, string, Exception?> LogStartingPasswordChange =
         LoggerMessage.Define<string?, string>(
             LogLevel.Information,
