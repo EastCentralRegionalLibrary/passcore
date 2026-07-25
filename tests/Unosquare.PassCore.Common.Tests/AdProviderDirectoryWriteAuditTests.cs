@@ -169,7 +169,9 @@ public class AdProviderDirectoryWriteAuditTests
 
     private static string ReadRepoFile(string relativePath)
     {
-        var path = Path.Combine(RepositoryRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        // Path.Join, not Path.Combine: Join always concatenates, where Combine
+        // discards everything before a segment it considers rooted.
+        var path = Path.Join(RepositoryRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
         Assert.True(File.Exists(path), $"Expected to find '{relativePath}' at '{path}'.");
 
         return File.ReadAllText(path);
@@ -183,7 +185,7 @@ public class AdProviderDirectoryWriteAuditTests
         while (directory != null)
         {
             visited.Add(directory.FullName);
-            if (File.Exists(Path.Combine(directory.FullName, "Unosquare.PassCore.sln")))
+            if (File.Exists(Path.Join(directory.FullName, "Unosquare.PassCore.sln")))
                 return directory.FullName;
 
             directory = directory.Parent;
