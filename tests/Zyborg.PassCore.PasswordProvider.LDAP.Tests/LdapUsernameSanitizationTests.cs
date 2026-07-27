@@ -5,13 +5,26 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP.Tests;
 public class LdapUsernameSanitizationTests
 {
     [Theory]
-    [InlineData("jdoe", "jdoe")]
-    [InlineData("j.doe", "j.doe")]
-    [InlineData("jdoe@example.com", "jdoe")]
-    [InlineData("j-doe_2@example.com", "j-doe_2")]
-    public void SanitizeUsername_ValidInput_ReturnsLocalPart(string input, string expected)
+    [InlineData("jdoe", "jdoe", null)]
+    [InlineData("j.doe", "j.doe", null)]
+    [InlineData("jdoe@example.com", "jdoe@example.com", "example.com")]
+    [InlineData("j-doe_2@example.com", "j-doe_2@example.com", "example.com")]
+    [InlineData("jdoe", "jdoe@example.com", "example.com")]
+    [InlineData("EXAMPLE\\jdoe", "jdoe@example.com", "example.com")]
+    public void SanitizeUsername_ValidInput_ReturnsExpected(string input, string expected, string? defaultDomain)
     {
-        Assert.Equal(expected, LdapPasswordChangeProvider.SanitizeUsername(input));
+        Assert.Equal(expected, LdapPasswordChangeProvider.SanitizeUsername(input, defaultDomain));
+    }
+
+    [Theory]
+    [InlineData("jdoe@wrongdomain.com", "example.com")]
+    [InlineData("WRONGDOMAIN\\jdoe", "example.com")]
+    [InlineData("jdoe@example.com", null)]
+    [InlineData("EXAMPLE\\jdoe", null)]
+    public void SanitizeUsername_InvalidDomain_Throws(string input, string? defaultDomain)
+    {
+        Assert.Throws<InvalidCredentialsException>(
+            () => LdapPasswordChangeProvider.SanitizeUsername(input, defaultDomain));
     }
 
     [Theory]

@@ -60,10 +60,29 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             ArgumentNullException.ThrowIfNull(options);
             _options = options.Value;
+            ValidateOptions(_options);
             SetIdType();
 
             if (_options.AllowAdministrativeReset && _options.UseAutomaticContext)
                 LogAdminResetIgnoredInAutomaticContext(Logger, null);
+        }
+
+        private static void ValidateOptions(PasswordChangeOptions opts)
+        {
+            if (opts == null)
+                throw new ArgumentNullException(nameof(opts));
+
+            if (!opts.UseAutomaticContext)
+            {
+                if (opts.LdapHostnames == null || opts.LdapHostnames.Length == 0)
+                    throw new ArgumentException("LDAP Hostnames are not configured.");
+
+                if (string.IsNullOrWhiteSpace(opts.LdapUsername))
+                    throw new ArgumentException("LDAP Username is not configured.");
+
+                if (string.IsNullOrWhiteSpace(opts.LdapPassword))
+                    throw new ArgumentException("LDAP Password is not configured.");
+            }
         }
 
         /// <inheritdoc />
@@ -108,7 +127,8 @@ namespace Unosquare.PassCore.PasswordProvider
                 // pre-flight 'pwdLastSet' write used to sit exactly here; see
                 // docs/UPGRADING-error-routing.md.) Directory writes belong
                 // after verification: ChangePassword / SetPassword / Save below.
-                if (!ValidateUserCredentials(userPrincipal.UserPrincipalName, context.CurrentPassword, principalContext, out var verificationCode)) // Validate provided current password
+                var verificationIdentifier = userPrincipal.UserPrincipalName ?? userPrincipal.SamAccountName ?? fixedUsername;
+                if (!ValidateUserCredentials(verificationIdentifier, context.CurrentPassword, principalContext, out var verificationCode)) // Validate provided current password
                 {
                     // The wire message is unchanged and carries no detail. The
                     // reason travels as the INNER exception only, so the base
@@ -248,6 +268,12 @@ namespace Unosquare.PassCore.PasswordProvider
             out int win32Code)
         {
             win32Code = 0;
+
+            if (string.IsNullOrEmpty(upn))
+            {
+                win32Code = 1326; // ERROR_LOGON_FAILURE
+                return false;
+            }
 
             if (principalContext.ValidateCredentials(upn, currentPassword)) // First attempt: Validate credentials using PrincipalContext
             {

@@ -12,7 +12,7 @@ public class LengthPasswordPolicy : IPasswordPolicy
             var minLength = await requirement.GetMinimumLengthAsync();
             if (context.NewPassword.Length < minLength)
             {
-                throw new PasswordPolicyViolationException($"The new password does not meet the Active Directory domain minimum password length requirement of {minLength} characters.", ApiErrorCode.ComplexPassword);
+                throw new PasswordPolicyViolationException($"The new password does not meet the domain minimum password length requirement of {minLength} characters.", ApiErrorCode.ComplexPassword);
             }
         }
     }

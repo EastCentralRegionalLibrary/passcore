@@ -42,7 +42,7 @@ public class PasswordChangeOptions : IAppSettings
     }
 
     /// <inheritdoc />
-    public int LdapPort { get; set; }
+    public int LdapPort { get; set; } = 389;
 
     /// <inheritdoc />
     public string[] LdapHostnames
