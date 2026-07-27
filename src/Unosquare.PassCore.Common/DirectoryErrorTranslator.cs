@@ -390,6 +390,26 @@ public static class DirectoryErrorTranslator
     }
 
     /// <summary>
+    /// Builds the exception for a group membership policy rejection.
+    /// In hardened mode, this returns an indistinguishable wrong-password response.
+    /// In informative mode, it returns a policy violation indicating change is not permitted.
+    /// </summary>
+    /// <param name="disclosureMode">The configured disclosure posture.</param>
+    /// <param name="innerException">Optional inner exception, preserved for logs.</param>
+    /// <returns>The domain exception to throw.</returns>
+    public static Exception CreateGroupRejectionError(
+        ErrorDisclosureMode disclosureMode,
+        Exception? innerException = null)
+    {
+        if (disclosureMode == ErrorDisclosureMode.Informative)
+        {
+            return PolicyViolation(AccountStateMessage, ApiErrorCode.ChangeNotPermitted, innerException);
+        }
+
+        return InvalidCredentials(innerException);
+    }
+
+    /// <summary>
     /// Builds the curated exception for the "this account cannot change its
     /// own password" condition, for providers that detect the flag directly
     /// (AD's <c>UserCannotChangePassword</c>, the LDAP security-descriptor

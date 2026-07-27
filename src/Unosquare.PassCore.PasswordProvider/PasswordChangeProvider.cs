@@ -28,6 +28,9 @@ namespace Unosquare.PassCore.PasswordProvider
     [SupportedOSPlatform("windows")]
     public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester
     {
+        /// <inheritdoc />
+        public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
+
         private readonly PasswordChangeOptions _options;
         private IdentityType _idType = IdentityType.UserPrincipalName;
 
