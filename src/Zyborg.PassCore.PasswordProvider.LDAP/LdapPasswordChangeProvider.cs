@@ -33,7 +33,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// - User-supplied input cannot alter the structure of the LDAP search filter
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
 {
     /// <inheritdoc />
     public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
@@ -89,7 +89,10 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         "distinguishedName",
         "sAMAccountName",
         "memberOf",
+        "primaryGroupID",
     };
+
+    internal Func<LdapConnection> LdapConnectionFactory { get; set; } = () => new LdapConnection();
 
     public LdapPasswordChangeProvider(
         ILogger<LdapPasswordChangeProvider> logger,
@@ -139,13 +142,80 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         {
             var user = FindUser(username);
 
+            // 1. Direct membership check
             // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
             // Compare against the group's RDN value or its full DN, never as a substring,
             // so that "Admins" cannot accidentally match "AdminsExtra".
             var isMember = user.Groups.Any(dn =>
                 DnMatchesGroup(dn, groupName));
 
-            return Task.FromResult(isMember);
+            if (isMember)
+                return Task.FromResult(true);
+
+            // 2. Primary Group Resolution (both well-known fallback and dynamic search)
+            if (!string.IsNullOrEmpty(user.PrimaryGroupId))
+            {
+                // Robust check for well-known RIDs:
+                if (user.PrimaryGroupId == "513" && groupName.Equals("Domain Users", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(true);
+                if (user.PrimaryGroupId == "512" && groupName.Equals("Domain Admins", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(true);
+                if (user.PrimaryGroupId == "519" && groupName.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(true);
+
+                try
+                {
+                    using var ldap = BindAsServiceAccount();
+                    var primaryFilter = $"(primaryGroupToken={user.PrimaryGroupId})";
+                    var primarySearch = SearchLdap(
+                        ldap,
+                        _options.LdapSearchBase,
+                        LdapConnection.ScopeSub,
+                        primaryFilter,
+                        new[] { "distinguishedName" },
+                        false,
+                        _searchConstraints);
+
+                    if (primarySearch.HasMore())
+                    {
+                        var primaryDn = primarySearch.Next().Dn;
+                        if (DnMatchesGroup(primaryDn, groupName))
+                            return Task.FromResult(true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Failed to resolve primary group DN via primaryGroupToken search. Falling back to default evaluation.");
+                }
+            }
+
+            // 3. Transitive/Nested Group Resolution via LDAP_MATCHING_RULE_IN_CHAIN OID (Active Directory specific)
+            try
+            {
+                using var ldap = BindAsServiceAccount();
+                var chainFilter = $"(member:1.2.840.113556.1.4.1941:={user.DistinguishedName})";
+                var chainSearch = SearchLdap(
+                    ldap,
+                    _options.LdapSearchBase,
+                    LdapConnection.ScopeSub,
+                    chainFilter,
+                    new[] { "distinguishedName" },
+                    false,
+                    _searchConstraints);
+
+                while (chainSearch.HasMore())
+                {
+                    var entry = chainSearch.Next();
+                    if (DnMatchesGroup(entry.Dn, groupName))
+                        return Task.FromResult(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to resolve transitive groups using LDAP_MATCHING_RULE_IN_CHAIN. Falling back to default evaluation.");
+            }
+
+            return Task.FromResult(false);
         }
         catch (PasswordChangeException)
         {
@@ -282,7 +352,8 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         using var ldap = BindAsServiceAccount(correlationId);
 
-        var search = ldap.Search(
+        var search = SearchLdap(
+            ldap,
             _options.LdapSearchBase,
             LdapConnection.ScopeSub,
             filter,
@@ -308,7 +379,14 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             ? attributeSet[memberOfKey].StringValueArray ?? Array.Empty<string>()
             : Array.Empty<string>();
 
-        return new LdapUser(entry.Dn, groups);
+        var primaryGroupIdKey = attributeSet.Keys
+            .FirstOrDefault(k => k.Equals("primaryGroupID", StringComparison.OrdinalIgnoreCase));
+
+        var primaryGroupId = primaryGroupIdKey != null
+            ? attributeSet[primaryGroupIdKey].StringValue
+            : null;
+
+        return new LdapUser(entry.Dn, groups, primaryGroupId);
     }
 
     // ---------------------------------------------------------------------
@@ -531,7 +609,8 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
             var constraints = new LdapSearchConstraints();
             constraints.SetControls(new LdapControl(SdFlagsControlOid, false, SdFlagsDaclOnly));
 
-            var results = ldap.Search(
+            var results = SearchLdap(
+                ldap,
                 userDn,
                 LdapConnection.ScopeBase,
                 "(objectClass=*)",
@@ -719,7 +798,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
     /// detail.
     /// </summary>
     /// <param name="correlationId">The request correlation ID, when available.</param>
-    private LdapConnection BindAsServiceAccount(string? correlationId = null)
+    internal virtual LdapConnection BindAsServiceAccount(string? correlationId = null)
     {
         try
         {
@@ -760,7 +839,7 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
 
         foreach (var host in _options.LdapHostnames)
         {
-            var ldap = new LdapConnection();
+            var ldap = LdapConnectionFactory();
             if (_certValidator != null)
                 ldap.UserDefinedServerCertValidationDelegate += _certValidator;
 
@@ -993,7 +1072,20 @@ public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGr
         return errors == System.Net.Security.SslPolicyErrors.None;
     }
 
+    internal virtual ILdapSearchResults SearchLdap(
+        LdapConnection ldap,
+        string @base,
+        int scope,
+        string filter,
+        string[] attrs,
+        bool typesOnly,
+        LdapSearchConstraints cons)
+    {
+        return ldap.Search(@base, scope, filter, attrs, typesOnly, cons);
+    }
+
     private sealed record LdapUser(
         string DistinguishedName,
-        IReadOnlyCollection<string> Groups);
+        IReadOnlyCollection<string> Groups,
+        string? PrimaryGroupId);
 }
