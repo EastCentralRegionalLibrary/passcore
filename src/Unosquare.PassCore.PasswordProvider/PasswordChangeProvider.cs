@@ -189,22 +189,28 @@ namespace Unosquare.PassCore.PasswordProvider
                     () => UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username)));
                 if (userPrincipal == null) return Task.FromResult(false);
 
+                // Deterministically check GetAuthorizationGroups first to resolve transitive/recursive and primary security groups.
                 try
                 {
-                    var groups = userPrincipal.GetGroups();
-                    if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                    using var authGroups = userPrincipal.GetAuthorizationGroups();
+                    if (authGroups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
                         return Task.FromResult(true);
                 }
                 catch (Exception ex)
                 {
-                    // The fallback is expected (the two calls fail in different
-                    // environments), but leave a trace so a persistent GetGroups
-                    // misconfiguration is not invisible.
                     LogGroupEnumerationFallback(Logger, ex);
+                }
 
-                    var groups = userPrincipal.GetAuthorizationGroups();
-                    if (groups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
+                // Complement with GetGroups to cover distribution or direct groups that might not be in authorization groups.
+                try
+                {
+                    using var directGroups = userPrincipal.GetGroups();
+                    if (directGroups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
                         return Task.FromResult(true);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to retrieve direct groups via GetGroups().");
                 }
 
                 return Task.FromResult(false);
