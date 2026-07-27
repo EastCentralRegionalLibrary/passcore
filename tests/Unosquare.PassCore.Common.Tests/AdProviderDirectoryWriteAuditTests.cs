@@ -207,6 +207,40 @@ public class AdProviderDirectoryWriteAuditTests
         throw new InvalidOperationException($"Unbalanced braces while reading the body of '{signatureFragment}'.");
     }
 
+    [Fact]
+    public void AdProvider_DefaultLdapPortIs389()
+    {
+        var optionsContent = ReadRepoFile(OptionsRelativePath);
+        Assert.Contains("public int LdapPort { get; set; } = 389;", optionsContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdProvider_ValidateOptionsCalledInConstructor()
+    {
+        var providerContent = ReadRepoFile(ProviderRelativePath);
+        var body = ExtractMethodBody(CodeSkeleton(providerContent), "PasswordChangeProvider(");
+        Assert.Contains("ValidateOptions(_options)", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdProvider_ValidateOptionsChecksLdapSettings()
+    {
+        var providerContent = ReadRepoFile(ProviderRelativePath);
+        var body = ExtractMethodBody(CodeSkeleton(providerContent), "void ValidateOptions(");
+
+        Assert.Contains("opts.LdapHostnames", body, StringComparison.Ordinal);
+        Assert.Contains("opts.LdapUsername", body, StringComparison.Ordinal);
+        Assert.Contains("opts.LdapPassword", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WebStartup_EagerlyResolvesPasswordChangeProvider()
+    {
+        var programPath = "src/Unosquare.PassCore.Web/Program.cs";
+        var programContent = ReadRepoFile(programPath);
+        Assert.Contains("app.Services.GetRequiredService<IPasswordChangeProvider>()", programContent, StringComparison.Ordinal);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         // Path.Join, not Path.Combine: Join always concatenates, where Combine

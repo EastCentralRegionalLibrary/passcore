@@ -74,6 +74,9 @@ builder.Services.AddControllers();
 
 var app = builder.Build();
 
+// Eagerly resolve the password change provider to validate options at startup (fail-fast)
+app.Services.GetRequiredService<IPasswordChangeProvider>();
+
 var settings = app.Services.GetRequiredService<IOptions<WebSettings>>().Value;
 if (settings.EnableHttpsRedirect)
     app.UseHttpsRedirection();

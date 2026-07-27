@@ -89,4 +89,14 @@ public class LdapPasswordChangeProviderOptionsTests
 
         Assert.Throws<ArgumentException>(() => Construct(opts));
     }
+
+    [Fact]
+    public void Construct_MutuallyExclusiveSslAndStartTls_Throws()
+    {
+        var opts = ValidOptions();
+        opts.LdapSecureSocketLayer = true;
+        opts.LdapStartTls = true;
+
+        Assert.Throws<ArgumentException>(() => Construct(opts));
+    }
 }

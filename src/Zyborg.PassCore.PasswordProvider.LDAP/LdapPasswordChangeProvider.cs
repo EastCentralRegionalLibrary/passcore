@@ -33,7 +33,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// - User-supplied input cannot alter the structure of the LDAP search filter
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IPasswordLengthRequirement
 {
     /// <inheritdoc />
     public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
@@ -236,6 +236,88 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         }
     }
 
+    /// <inheritdoc />
+    public Task<int> GetMinimumLengthAsync()
+    {
+        return Task.FromResult(DomainPasswordPolicy.ResolveMinimumLength(Logger, ReadMinPwdLength));
+    }
+
+    private int? ReadMinPwdLength()
+    {
+        using var ldap = BindAsServiceAccount();
+
+        string domainNcRootDn = "";
+        try
+        {
+            var rootDseSearch = SearchLdap(
+                ldap,
+                "",
+                LdapConnection.ScopeBase,
+                "(objectClass=*)",
+                new[] { "defaultNamingContext" },
+                false,
+                _searchConstraints);
+
+            if (rootDseSearch.HasMore())
+            {
+                var entry = rootDseSearch.Next();
+                var attributeSet = entry.GetAttributeSet();
+                var defaultNamingContextKey = attributeSet.Keys
+                    .FirstOrDefault(k => k.Equals("defaultNamingContext", StringComparison.OrdinalIgnoreCase));
+                if (defaultNamingContextKey != null)
+                {
+                    domainNcRootDn = attributeSet[defaultNamingContextKey].StringValue;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Failed to query defaultNamingContext from rootDSE. Falling back to search base extraction.");
+        }
+
+        if (string.IsNullOrEmpty(domainNcRootDn))
+        {
+            domainNcRootDn = GetDomainNcRootFallback();
+        }
+
+        if (string.IsNullOrEmpty(domainNcRootDn))
+            return null;
+
+        var ncSearch = SearchLdap(
+            ldap,
+            domainNcRootDn,
+            LdapConnection.ScopeBase,
+            "(objectClass=*)",
+            new[] { "minPwdLength" },
+            false,
+            _searchConstraints);
+
+        if (ncSearch.HasMore())
+        {
+            var entry = ncSearch.Next();
+            var attributeSet = entry.GetAttributeSet();
+            var minPwdLengthKey = attributeSet.Keys
+                .FirstOrDefault(k => k.Equals("minPwdLength", StringComparison.OrdinalIgnoreCase));
+            if (minPwdLengthKey != null)
+            {
+                var valueStr = attributeSet[minPwdLengthKey].StringValue;
+                if (int.TryParse(valueStr, out var minLength))
+                    return minLength;
+            }
+        }
+
+        return null;
+    }
+
+    private string GetDomainNcRootFallback()
+    {
+        var searchBase = _options.LdapSearchBase;
+        if (string.IsNullOrEmpty(searchBase))
+            return "";
+        var dcIndex = searchBase.IndexOf("dc=", StringComparison.OrdinalIgnoreCase);
+        return dcIndex >= 0 ? searchBase[dcIndex..] : searchBase;
+    }
+
     internal static bool DnMatchesGroup(string dn, string groupName)
     {
         if (string.Equals(dn, groupName, StringComparison.OrdinalIgnoreCase))
@@ -346,9 +428,18 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     private LdapUser FindUser(string username, string? correlationId = null)
     {
-        var safeUsername = SanitizeUsername(username);
+        var safeUsername = SanitizeUsername(username, _options.DefaultDomain);
+
+        var searchUsername = safeUsername;
+        if (_options.LdapSearchFilter.Contains("sAMAccountName", StringComparison.OrdinalIgnoreCase))
+        {
+            var atIdx = safeUsername.IndexOf('@', StringComparison.Ordinal);
+            if (atIdx >= 0)
+                searchUsername = safeUsername[..atIdx];
+        }
+
         var filter = _options.LdapSearchFilter.Replace(
-            "{Username}", safeUsername, StringComparison.Ordinal);
+            "{Username}", searchUsername, StringComparison.Ordinal);
 
         using var ldap = BindAsServiceAccount(correlationId);
 
@@ -1000,26 +1091,72 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 "expects TLS from the first byte. Enable at most one of them.");
     }
 
+    private static bool IsDomainMatching(string domainPart, string defaultDomain)
+    {
+        if (string.Equals(domainPart, defaultDomain, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var dotIndex = defaultDomain.IndexOf('.', StringComparison.Ordinal);
+        if (dotIndex > 0)
+        {
+            var prefix = defaultDomain[..dotIndex];
+            if (string.Equals(domainPart, prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Produces a value safe to substitute into <see cref="LdapPasswordChangeOptions.LdapSearchFilter"/>:
-    /// takes the local part of the username, rejects characters that are never
-    /// valid in a sAMAccountName (including control characters and the empty
-    /// string), then escapes the remaining RFC 4515 filter metacharacters so the
-    /// substituted value cannot alter the structure of the search filter.
+    /// parses the domain and local parts explicitly, rejects invalid qualifiers and format/credentials,
+    /// and returns the escaped expanded/qualified username.
     /// </summary>
-    internal static string SanitizeUsername(string username)
+    internal static string SanitizeUsername(string username, string? defaultDomain = null)
     {
-        var clean = username.Split('@')[0];
+        string localPart = username;
+        string? domainPart = null;
 
-        if (clean.Length == 0
-            || clean.Any(char.IsControl)
-            || InvalidAccountNameCharsRegex.IsMatch(clean))
+        var backslashIndex = username.IndexOf('\\', StringComparison.Ordinal);
+        if (backslashIndex >= 0)
+        {
+            domainPart = username[..backslashIndex];
+            localPart = username[(backslashIndex + 1)..];
+        }
+        else
+        {
+            var atIndex = username.IndexOf('@', StringComparison.Ordinal);
+            if (atIndex >= 0)
+            {
+                domainPart = username[(atIndex + 1)..];
+                localPart = username[..atIndex];
+            }
+        }
+
+        if (string.IsNullOrEmpty(domainPart) && !string.IsNullOrEmpty(defaultDomain))
+        {
+            domainPart = defaultDomain;
+        }
+
+        if (!string.IsNullOrEmpty(domainPart))
+        {
+            if (string.IsNullOrEmpty(defaultDomain) || !IsDomainMatching(domainPart, defaultDomain))
+            {
+                throw new InvalidCredentialsException("Invalid username format");
+            }
+            domainPart = defaultDomain;
+        }
+
+        if (localPart.Length == 0
+            || localPart.Any(char.IsControl)
+            || InvalidAccountNameCharsRegex.IsMatch(localPart))
         {
             throw new InvalidCredentialsException(
                 "Invalid username format");
         }
 
-        return EscapeLdapSearchFilterValue(clean);
+        var escapedLocalPart = EscapeLdapSearchFilterValue(localPart);
+        return !string.IsNullOrEmpty(domainPart) ? $"{escapedLocalPart}@{domainPart}" : escapedLocalPart;
     }
 
     /// <summary>
