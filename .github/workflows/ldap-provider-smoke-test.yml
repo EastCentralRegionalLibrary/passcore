@@ -109,8 +109,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          # With HideUserNotFound=true (default), it returns InvalidCredentials (4)
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
+          # With "ErrorDisclosureMode": "Hardened" (default), it returns InvalidCredentials (4)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 3)'
 
           echo "Test 4: User in restricted group"
           # restricteduser is in RestrictedGroup
