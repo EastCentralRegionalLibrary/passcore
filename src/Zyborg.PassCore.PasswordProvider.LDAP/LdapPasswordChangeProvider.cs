@@ -183,7 +183,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                             return Task.FromResult(true);
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
                 {
                     Logger.LogDebug(ex, "Failed to resolve primary group DN via primaryGroupToken search. Falling back to default evaluation.");
                 }
@@ -210,7 +210,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                         return Task.FromResult(true);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
             {
                 Logger.LogDebug(ex, "Failed to resolve transitive groups using LDAP_MATCHING_RULE_IN_CHAIN. Falling back to default evaluation.");
             }
