@@ -42,11 +42,13 @@ public class GroupMembershipPolicyTests
         await policy.ValidateAsync(context, provider);
     }
 
-    [Fact]
-    public async Task ValidateAsync_UserInRestrictedGroup_Throws()
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public async Task ValidateAsync_UserInRestrictedGroup_Throws(ErrorDisclosureMode mode)
     {
         var policy = new GroupMembershipPolicy();
-        var provider = MockTester(group => group == "Admins");
+        var provider = MockTester(group => group == "Admins", mode);
         var settings = new ClientSettings
         {
             PasswordProviderOptions = new PasswordProviderOptions
@@ -56,17 +58,28 @@ public class GroupMembershipPolicyTests
         };
         var context = new PasswordChangeContext("u", "old", "new", settings);
 
-        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
-            () => policy.ValidateAsync(context, provider));
-
-        Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+        if (mode == ErrorDisclosureMode.Hardened)
+        {
+            var ex = await Assert.ThrowsAsync<InvalidCredentialsException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, ex.Message);
+        }
+        else
+        {
+            var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+            Assert.Equal(DirectoryErrorTranslator.AccountStateMessage, ex.Message);
+        }
     }
 
-    [Fact]
-    public async Task ValidateAsync_UserNotInAllowedGroups_Throws()
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public async Task ValidateAsync_UserNotInAllowedGroups_Throws(ErrorDisclosureMode mode)
     {
         var policy = new GroupMembershipPolicy();
-        var provider = MockTester(_ => false);
+        var provider = MockTester(_ => false, mode);
         var settings = new ClientSettings
         {
             PasswordProviderOptions = new PasswordProviderOptions
@@ -76,10 +89,19 @@ public class GroupMembershipPolicyTests
         };
         var context = new PasswordChangeContext("u", "old", "new", settings);
 
-        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
-            () => policy.ValidateAsync(context, provider));
-
-        Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+        if (mode == ErrorDisclosureMode.Hardened)
+        {
+            var ex = await Assert.ThrowsAsync<InvalidCredentialsException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, ex.Message);
+        }
+        else
+        {
+            var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+            Assert.Equal(DirectoryErrorTranslator.AccountStateMessage, ex.Message);
+        }
     }
 
     [Fact]
@@ -99,11 +121,13 @@ public class GroupMembershipPolicyTests
         await policy.ValidateAsync(context, provider);
     }
 
-    [Fact]
-    public async Task ValidateAsync_RestrictedIsCheckedBeforeAllowed()
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened)]
+    [InlineData(ErrorDisclosureMode.Informative)]
+    public async Task ValidateAsync_RestrictedIsCheckedBeforeAllowed(ErrorDisclosureMode mode)
     {
         var policy = new GroupMembershipPolicy();
-        var provider = MockTester(group => group is "Admins" or "PasswordResetUsers");
+        var provider = MockTester(group => group is "Admins" or "PasswordResetUsers", mode);
         var settings = new ClientSettings
         {
             PasswordProviderOptions = new PasswordProviderOptions
@@ -114,18 +138,30 @@ public class GroupMembershipPolicyTests
         };
         var context = new PasswordChangeContext("u", "old", "new", settings);
 
-        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
-            () => policy.ValidateAsync(context, provider));
-
-        Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+        if (mode == ErrorDisclosureMode.Hardened)
+        {
+            var ex = await Assert.ThrowsAsync<InvalidCredentialsException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(DirectoryErrorTranslator.InvalidCredentialsMessage, ex.Message);
+        }
+        else
+        {
+            var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
+                () => policy.ValidateAsync(context, provider));
+            Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
+            Assert.Equal(DirectoryErrorTranslator.AccountStateMessage, ex.Message);
+        }
     }
 
-    private static IPasswordChangeProvider MockTester(System.Func<string, bool> isMember)
+    private static IPasswordChangeProvider MockTester(System.Func<string, bool> isMember, ErrorDisclosureMode disclosureMode = ErrorDisclosureMode.Hardened)
     {
         var mock = new Mock<IPasswordChangeProvider>();
         mock.As<IGroupMembershipTester>()
             .Setup(t => t.IsMemberOfGroupAsync(It.IsAny<string>(), It.IsAny<string>()))
             .Returns<string, string>((_, group) => Task.FromResult(isMember(group)));
+        mock.As<IDisclosurePosture>()
+            .Setup(p => p.ErrorDisclosureMode)
+            .Returns(disclosureMode);
         return mock.Object;
     }
 }

@@ -19,9 +19,9 @@ the two real providers produce identical results for identical conditions, and
 it is the only way to keep that true as providers are added.
 
 Structural conditions that have no error code (an empty search result, a null
-principal, a detected "cannot change password" flag) use the dedicated
+principal, a detected "cannot change password" flag, a group membership restriction/rejection) use the dedicated
 factories `DirectoryErrorTranslator.CreateUserNotFoundError` /
-`CreateChangeNotPermittedError`, which apply the same table.
+`CreateChangeNotPermittedError` / `CreateGroupRejectionError`, which apply the same table.
 
 ## Two message layers (read this before touching messages)
 
@@ -90,13 +90,15 @@ shown only for completeness.
 | Existence | Informative | UserNotFound (3) | `UserNotFoundMessage` | `ErrorInvalidUser` |
 | AccountState | Hardened | InvalidCredentials (4) | `InvalidCredentialsMessage` | `ErrorInvalidCredentials` |
 | AccountState | Informative | ChangeNotPermitted (6) | `AccountStateMessage` | `ErrorPasswordChangeNotAllowed` |
+| Group Rejection | Hardened | InvalidCredentials (4) | `InvalidCredentialsMessage` | `ErrorInvalidCredentials` |
+| Group Rejection | Informative | ChangeNotPermitted (6) | `AccountStateMessage` | `ErrorPasswordChangeNotAllowed` |
 | NewPasswordPolicy | both | ComplexPassword (9) | `NewPasswordPolicyMessage` | `ErrorComplexPassword` |
 | ChangeNotPermitted | both | ChangeNotPermitted (6) | `ChangeNotPermittedMessage` | `ErrorPasswordChangeNotAllowed` |
 | Infrastructure | both | LdapProblem (8) | `DirectoryFailureMessage` | `ErrorConnectionLdap` |
 | PasswordExpiredOrMustChange | both | *(allowed through — change proceeds)* | — | — |
 
 The wire-message constants live on `DirectoryErrorTranslator`. In **Hardened**
-mode the Credentials / Existence / AccountState rows are byte-identical on the
+mode the Credentials / Existence / AccountState / Group Rejection rows are byte-identical on the
 wire (same code, same message), so an unauthenticated caller gets no
 account-existence or account-state oracle. **Informative** mode trades that
 oracle for actionable help-desk guidance.

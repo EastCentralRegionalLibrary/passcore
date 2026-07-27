@@ -35,6 +35,9 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// </summary>
 public sealed class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester
 {
+    /// <inheritdoc />
+    public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
+
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;

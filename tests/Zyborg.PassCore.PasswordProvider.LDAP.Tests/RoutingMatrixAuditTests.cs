@@ -49,6 +49,23 @@ public class RoutingMatrixAuditTests
             new HResultException(unchecked((int)0x80070000 | code)), mode));
 
     // ------------------------------------------------------------------
+    // 0. Posture-Aware Group Rejection (F1 & F2 Hardened)
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(ErrorDisclosureMode.Hardened, ApiErrorCode.InvalidCredentials, DirectoryErrorTranslator.InvalidCredentialsMessage)]
+    [InlineData(ErrorDisclosureMode.Informative, ApiErrorCode.ChangeNotPermitted, DirectoryErrorTranslator.AccountStateMessage)]
+    public void GroupMembershipFailure_RoutesCorrectlyAcrossDisclosureModes(
+        ErrorDisclosureMode mode, ApiErrorCode expectedCode, string expectedMessage)
+    {
+        var exception = DirectoryErrorTranslator.CreateGroupRejectionError(mode);
+        var wire = Wire.Of(exception);
+
+        Assert.Equal(expectedCode, wire.Code);
+        Assert.Equal(expectedMessage, wire.Message);
+    }
+
+    // ------------------------------------------------------------------
     // 1. Full catalog: every code, every transport, every mode converges.
     // ------------------------------------------------------------------
 

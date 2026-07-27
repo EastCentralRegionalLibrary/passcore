@@ -13,8 +13,11 @@ namespace Unosquare.PassCore.Common;
 /// validation and exception-to-error mapping so concrete providers only need to
 /// implement <see cref="ChangePasswordCore"/>.
 /// </summary>
-public abstract class PasswordChangeProviderBase : IPasswordChangeProvider
+public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDisclosurePosture
 {
+    /// <inheritdoc />
+    public virtual ErrorDisclosureMode ErrorDisclosureMode => ErrorDisclosureMode.Hardened;
+
     protected ILogger Logger { get; }
     protected IEnumerable<IPasswordPolicy> Policies { get; }
     protected ClientSettings ClientSettings { get; }

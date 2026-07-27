@@ -1,6 +1,5 @@
 using System.Linq;
 using System.Threading.Tasks;
-using Unosquare.PassCore.Common.Exceptions;
 
 namespace Unosquare.PassCore.Common.Policies;
 
@@ -10,6 +9,8 @@ public class GroupMembershipPolicy : IPasswordPolicy
     {
         if (provider is not IGroupMembershipTester tester)
             return;
+
+        var disclosureMode = provider is IDisclosurePosture posture ? posture.ErrorDisclosureMode : ErrorDisclosureMode.Hardened;
 
         var restrictedGroups = context.ClientSettings.PasswordProviderOptions?.RestrictedAdGroups;
         if (restrictedGroups != null && restrictedGroups.Count != 0)
@@ -23,7 +24,7 @@ public class GroupMembershipPolicy : IPasswordPolicy
 
             if (restrictedMembershipResults.Any(x => x.IsMember))
             {
-                throw new PasswordPolicyViolationException("User is a member of a restricted group and password change is not permitted.", ApiErrorCode.ChangeNotPermitted);
+                throw DirectoryErrorTranslator.CreateGroupRejectionError(disclosureMode);
             }
         }
 
@@ -41,7 +42,7 @@ public class GroupMembershipPolicy : IPasswordPolicy
 
             if (!isMemberOfAnyAllowed)
             {
-                throw new PasswordPolicyViolationException("User is not a member of any allowed group and password change is not permitted.", ApiErrorCode.ChangeNotPermitted);
+                throw DirectoryErrorTranslator.CreateGroupRejectionError(disclosureMode);
             }
         }
     }
