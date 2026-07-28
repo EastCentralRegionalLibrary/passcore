@@ -36,8 +36,7 @@ jobs:
 
       - name: Start SMB LDS
         run: |
-          docker run -d \
-            --name smblds-ad \
+          docker run -d --name smblds-ad \
             -p 389:389 \
             -p 636:636 \
             -e REALM="EXAMPLE.COM" \
