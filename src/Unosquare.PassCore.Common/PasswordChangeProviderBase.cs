@@ -38,7 +38,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     // everywhere. Ranges, and the next free number in each:
     //
     //   1-9      this base class (password-change and policy lifecycle)   next: 10
-    //   100-105  provider-specific events (LDAP 100-102, 104; AD 103)     next: 106
+    //   100-106  provider-specific events (LDAP 100-102, 104, 106; AD 103) next: 107
     //            105 is retired: it logged a group-enumeration failure as an
     //            expected Debug-level fallback, which no longer exists. Such a
     //            failure now leaves membership undetermined and is reported via
