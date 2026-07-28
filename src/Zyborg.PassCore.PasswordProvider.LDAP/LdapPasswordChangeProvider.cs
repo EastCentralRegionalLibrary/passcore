@@ -137,6 +137,30 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
     // Group membership lookup
     // ---------------------------------------------------------------------
 
+    /// <summary>
+    /// Reports whether <paramref name="username"/> is a member of
+    /// <paramref name="groupName"/>, directly, by primary group, or transitively.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>A negative answer means "determined not to be a member", never "could
+    /// not tell".</b> A positive match is definitive the moment it is found, so every
+    /// lookup below returns immediately on a hit and no later failure can affect it. A
+    /// negative answer is only trustworthy if every lookup that could still have
+    /// produced a match actually completed, so any lookup that fails is recorded and
+    /// the method ends by throwing the shared infrastructure failure instead of
+    /// returning <see langword="false"/>.</para>
+    /// <para>This matters because the caller cannot distinguish the two outcomes from a
+    /// <see langword="bool"/>. <c>GroupMembershipPolicy</c> evaluates
+    /// <c>RestrictedAdGroups</c> as a deny list, so reporting "not a member" for a
+    /// membership that could not be determined makes the deny list <em>fail open</em>:
+    /// during a partial directory failure, a service-account permissions problem, or a
+    /// cross-domain timeout, a member of <c>Domain Admins</c> would be allowed to change
+    /// their password through this utility. Failing closed is the whole point of the
+    /// deny list.</para>
+    /// <para>Ordinary non-membership is unaffected and stays a plain
+    /// <see langword="false"/>: a lookup that ran and matched nothing is a completed
+    /// determination, and an empty result set is not a failure.</para>
+    /// </remarks>
     public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
     {
         ArgumentNullException.ThrowIfNull(username);
@@ -145,6 +169,11 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         try
         {
             var user = FindUser(username);
+
+            // Records the first lookup that could not complete. Every match path
+            // returns before reaching the end of the method, so a value here always
+            // means "could not determine", never "determined not to be a member".
+            Exception? undetermined = null;
 
             // 1. Direct membership check
             // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
@@ -189,7 +218,12 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 }
                 catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
                 {
-                    Logger.LogDebug(ex, "Failed to resolve primary group DN via primaryGroupToken search. Falling back to default evaluation.");
+                    // Not a fallback: the user's primary group is now unknown, so a
+                    // "not a member" answer can no longer be justified.
+                    undetermined ??= ex;
+                    ServiceAccountFailure.Log(
+                        Logger, correlationId: null, "resolve primary group by primaryGroupToken",
+                        ServiceAccountHost(), ex);
                 }
             }
 
@@ -216,7 +250,23 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             }
             catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
             {
-                Logger.LogDebug(ex, "Failed to resolve transitive groups using LDAP_MATCHING_RULE_IN_CHAIN. Falling back to default evaluation.");
+                // Nested membership is now unknown. Direct `memberOf` having
+                // succeeded is not enough: it does not cover nesting, so it cannot
+                // rule out a match this search would have found.
+                undetermined ??= ex;
+                ServiceAccountFailure.Log(
+                    Logger, correlationId: null, "resolve transitive groups via LDAP_MATCHING_RULE_IN_CHAIN",
+                    ServiceAccountHost(), ex);
+            }
+
+            // Nothing matched. That is only an answer if everything that could have
+            // matched actually ran; otherwise this is "could not determine", and the
+            // shared translator turns it into the infrastructure response rather than
+            // letting it read as "not a member".
+            if (undetermined is not null)
+            {
+                throw DirectoryErrorTranslator.TranslateException(
+                    undetermined, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
             }
 
             return Task.FromResult(false);

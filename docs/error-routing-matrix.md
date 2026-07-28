@@ -195,6 +195,40 @@ gets the diagnosis while the wire response stays curated. `0x532`
 password is correct but expired"; as the **service account** it must never
 proceed — the actor coercion makes it `Infrastructure`.
 
+### Undetermined group membership
+
+`IsMemberOfGroupAsync` answers `true`/`false` only when the answer is known. A
+lookup that **could not complete** is a third outcome, and it is not reported as
+"not a member": the provider throws, the failure routes as
+`DirectoryActor.ServiceAccount` → `Infrastructure`, and the caller gets
+`LdapProblem (8)` / `DirectoryFailureMessage` in both modes — the `Infrastructure`
+row above, not the `Group Rejection` row.
+
+This is why the distinction is load-bearing rather than pedantic.
+`GroupMembershipPolicy` reads the result as a `bool`, so conflating the two makes
+`RestrictedAdGroups` **fail open**: during a partial directory failure, a
+service-account permissions problem, or a cross-domain timeout, a member of a
+restricted group would be handed a password change. (`AllowedAdGroups` fails the
+other way — every user refused, with no operator signal.) Failing closed is the
+point of a deny list, so an unknown answer blocks the request.
+
+A match is definitive the moment it is found, so a later lookup failing never
+turns a confirmed membership into code 8 — a restricted-group member still gets
+the `Group Rejection` row. Only a *negative* answer requires that every lookup
+which could still have matched actually ran:
+
+- **LDAP** — direct `memberOf`, the `primaryGroupToken` search, and the
+  `LDAP_MATCHING_RULE_IN_CHAIN` search. `memberOf` succeeding does not cover
+  nesting or the primary group, so it cannot rescue either search's failure.
+- **AD** — `GetAuthorizationGroups` (transitive plus primary security groups) and
+  `GetGroups` (direct, including distribution groups). They cover different
+  ground, so neither rescues the other's failure.
+
+An empty result set is a completed lookup, not a failure: ordinary
+non-membership stays an ordinary `false` and the request proceeds. Each failed
+lookup is logged at Warning through `ServiceAccountFailure` with the operation
+that failed, so the operator can see why requests started being refused.
+
 ## Terminal catch
 
 Both providers end `ChangePasswordCore` with the same last-resort

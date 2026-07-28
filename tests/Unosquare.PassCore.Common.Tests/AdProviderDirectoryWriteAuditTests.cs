@@ -208,6 +208,85 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     /// <summary>
+    /// The AD half of "could not determine membership is not the same as not a
+    /// member". The LDAP provider's behavior is exercised for real in
+    /// <c>GroupMembershipUndeterminedTests</c>; this provider cannot be loaded here
+    /// (see the class summary), so its shape is audited instead.
+    ///
+    /// <para>What must hold: both group enumerations record their failure rather
+    /// than swallowing it, and a negative result is only returned when neither
+    /// recorded anything. Swallowing either one makes <c>RestrictedAdGroups</c> fail
+    /// open — a <c>Domain Admins</c> member gets a password change during a partial
+    /// directory failure.</para>
+    /// </summary>
+    [Fact]
+    public void IsMemberOfGroupAsync_FailsClosedWhenMembershipCannotBeDetermined()
+    {
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "Task<bool> IsMemberOfGroupAsync(");
+
+        // Both enumerations (GetAuthorizationGroups and GetGroups) must record a
+        // failure. They cover different ground — transitive plus primary security
+        // groups versus direct and distribution groups — so neither succeeding
+        // rescues the other's failure.
+        Assert.Equal(2, CountOccurrences(body, "undetermined ??= ex;"));
+
+        // A recorded failure must block the negative answer, not merely be logged.
+        var guardAt = body.IndexOf("if (undetermined is not null)", StringComparison.Ordinal);
+        var notAMemberAt = body.LastIndexOf("return Task.FromResult(false);", StringComparison.Ordinal);
+
+        Assert.True(
+            guardAt >= 0,
+            "IsMemberOfGroupAsync no longer guards its negative answer on whether every enumeration " +
+            "completed. Without that guard a failed enumeration reads as 'not a member' and the " +
+            "restricted-group deny list fails open. See docs/error-routing-matrix.md.");
+        Assert.True(
+            guardAt < notAMemberAt,
+            "The 'could not determine' guard no longer precedes the final 'not a member' return, so a " +
+            "failed enumeration can still reach it.");
+
+        // The outcome is the shared infrastructure response, decided by the
+        // translator rather than by this provider.
+        Assert.Contains("DirectoryErrorTranslator.TranslateException(", body, StringComparison.Ordinal);
+        Assert.Contains("DirectoryActor.ServiceAccount", body, StringComparison.Ordinal);
+
+        // ... and it is reported to the operator, not swallowed.
+        Assert.Contains("ServiceAccountFailure.Log(", body, StringComparison.Ordinal);
+
+        // A match stays definitive: both enumerations return true on a hit before
+        // any of the undetermined handling can affect the result.
+        Assert.Equal(2, CountOccurrences(body, "return Task.FromResult(true);"));
+    }
+
+    /// <summary>
+    /// EventId 105 described a group-enumeration failure as an expected fallback,
+    /// logged at Debug. That is no longer what happens, so the delegate is gone —
+    /// and the ID must stay retired rather than being recycled for something else.
+    /// </summary>
+    [Fact]
+    public void RetiredGroupEnumerationFallbackEvent_IsNotReintroducedOrReused()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+
+        Assert.DoesNotContain("LogGroupEnumerationFallback", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("EventId(105", code, StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+             i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// The AD half of the cross-provider claim that a stock deployment accepts the
     /// username form its own UI asks for. <c>appsettings.json</c> ships
     /// <c>DefaultDomain: ""</c> next to <c>UseEmail: true</c>, so an unmodified

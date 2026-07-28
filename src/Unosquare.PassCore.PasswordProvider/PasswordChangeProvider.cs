@@ -43,13 +43,13 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
-        private static readonly Action<ILogger, Exception?> LogGroupEnumerationFallback =
-            LoggerMessage.Define(
-                LogLevel.Debug,
-                new EventId(105, nameof(LogGroupEnumerationFallback)),
-                "GetGroups() failed; falling back to GetAuthorizationGroups(). The two behave " +
-                "differently across environments so the fallback is expected, but a persistent " +
-                "GetGroups failure indicates a misconfiguration worth investigating.");
+        // EventId 105 (LogGroupEnumerationFallback) is retired, not reused. It
+        // described a group-enumeration failure as an expected fallback logged at
+        // Debug, which is no longer true in either direction: a failed enumeration
+        // now leaves membership undetermined and fails the request closed, and it is
+        // reported through ServiceAccountFailure (EventId 111) at Warning, like every
+        // other service-account directory failure. Its message had also inverted
+        // during an earlier refactor, naming the wrong call as the one that failed.
 
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
@@ -192,7 +192,29 @@ namespace Unosquare.PassCore.PasswordProvider
             return Task.FromResult(AcquireDomainPasswordLength());
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Reports whether <paramref name="username"/> is a member of
+        /// <paramref name="groupName"/>, directly, by primary group, or transitively.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>A negative answer means "determined not to be a member", never
+        /// "could not tell".</b> A positive match is definitive the moment it is found,
+        /// so each enumeration returns immediately on a hit and no later failure can
+        /// affect it. A negative answer is only trustworthy if every enumeration that
+        /// could still have produced a match completed, so a failed enumeration is
+        /// recorded and the method throws the shared infrastructure failure instead of
+        /// returning <see langword="false"/>.</para>
+        /// <para>The two enumerations do not cover the same ground, which is why
+        /// neither one succeeding rescues the other's failure:
+        /// <c>GetAuthorizationGroups</c> resolves transitive and primary security
+        /// groups, while <c>GetGroups</c> covers direct groups including distribution
+        /// groups. A match found by either is real; a miss is only conclusive when both
+        /// ran.</para>
+        /// <para>Reporting "not a member" for a membership that could not be determined
+        /// makes <c>RestrictedAdGroups</c> <em>fail open</em>, letting a member of
+        /// <c>Domain Admins</c> through during a partial directory failure. This keeps
+        /// it failing closed, matching the LDAP provider for the same condition.</para>
+        /// </remarks>
         public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
         {
             // Every operation in this method is a service-account directory read
@@ -209,6 +231,11 @@ namespace Unosquare.PassCore.PasswordProvider
                     () => UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username)));
                 if (userPrincipal == null) return Task.FromResult(false);
 
+                // Records the first enumeration that could not complete. Both match
+                // paths return before the end of the method, so a value here always
+                // means "could not determine", never "determined not to be a member".
+                Exception? undetermined = null;
+
                 // Deterministically check GetAuthorizationGroups first to resolve transitive/recursive and primary security groups.
                 try
                 {
@@ -218,7 +245,12 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 catch (Exception ex)
                 {
-                    LogGroupEnumerationFallback(Logger, ex);
+                    // Transitive and primary membership are now unknown; GetGroups
+                    // below covers neither, so it cannot stand in for this.
+                    undetermined ??= ex;
+                    ServiceAccountFailure.Log(
+                        Logger, correlationId: null, "enumerate authorization groups",
+                        ServiceAccountHost(), ex);
                 }
 
                 // Complement with GetGroups to cover distribution or direct groups that might not be in authorization groups.
@@ -230,7 +262,18 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "Failed to retrieve direct groups via GetGroups().");
+                    // Direct and distribution-group membership are now unknown.
+                    undetermined ??= ex;
+                    ServiceAccountFailure.Log(
+                        Logger, correlationId: null, "enumerate direct groups",
+                        ServiceAccountHost(), ex);
+                }
+
+                // Nothing matched. That is only an answer if both enumerations ran.
+                if (undetermined is not null)
+                {
+                    throw DirectoryErrorTranslator.TranslateException(
+                        undetermined, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
                 }
 
                 return Task.FromResult(false);
