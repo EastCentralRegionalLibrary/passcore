@@ -207,6 +207,40 @@ public class AdProviderDirectoryWriteAuditTests
         throw new InvalidOperationException($"Unbalanced braces while reading the body of '{signatureFragment}'.");
     }
 
+    /// <summary>
+    /// The AD half of the cross-provider claim that a stock deployment accepts the
+    /// username form its own UI asks for. <c>appsettings.json</c> ships
+    /// <c>DefaultDomain: ""</c> next to <c>UseEmail: true</c>, so an unmodified
+    /// install prompts for <c>user@domain</c>; the AD provider must hand that
+    /// straight to <c>FindByIdentity</c>, which resolves it as a UPN, rather than
+    /// rejecting it as malformed. The LDAP provider's matching behavior is asserted
+    /// for real in <c>ShippedConfigurationUsernameFormTests</c> — this side can only
+    /// be audited, for the reasons in the class summary above.
+    /// </summary>
+    [Fact]
+    public void AdProvider_AcceptsAQualifiedUsernameWhenNoDefaultDomainIsConfigured()
+    {
+        Assert.Contains(
+            "\"DefaultDomain\": \"\"",
+            ReadRepoFile(AppSettingsRelativePath),
+            StringComparison.Ordinal);
+
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "string FixUsernameWithDomain(");
+
+        // Two branches return the supplied name untouched: it already carries a
+        // domain, or there is no configured domain to qualify it with.
+        Assert.Contains("parts.Length > 1", body, StringComparison.Ordinal);
+        Assert.Contains("string.IsNullOrWhiteSpace(_options.DefaultDomain)", body, StringComparison.Ordinal);
+
+        // And neither branch rejects. A format rejection here would surface as
+        // InvalidCredentials — indistinguishable from a wrong password, with nothing
+        // logged to point at configuration — which is exactly the divergence the LDAP
+        // provider carried until its qualifier handling was corrected.
+        Assert.DoesNotContain("throw", body, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AdProvider_DefaultLdapPortIs389()
     {
