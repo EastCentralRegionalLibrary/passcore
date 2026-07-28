@@ -57,6 +57,10 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
     private static readonly Regex InvalidAccountNameCharsRegex =
         new(@"[""/\\\[\]:;|=,+*?<>]", RegexOptions.CultureInvariant);
 
+    // Single wording for every way SanitizeUsername can reject its input, so the
+    // rejections stay indistinguishable from one another on the wire.
+    private const string InvalidUsernameFormatMessage = "Invalid username format";
+
     private static readonly Action<ILogger, Exception?> LogNoTransportSecurity =
         LoggerMessage.Define(
             LogLevel.Warning,
@@ -428,18 +432,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     private LdapUser FindUser(string username, string? correlationId = null)
     {
-        var safeUsername = SanitizeUsername(username, _options.DefaultDomain);
-
-        var searchUsername = safeUsername;
-        if (_options.LdapSearchFilter.Contains("sAMAccountName", StringComparison.OrdinalIgnoreCase))
-        {
-            var atIdx = safeUsername.IndexOf('@', StringComparison.Ordinal);
-            if (atIdx >= 0)
-                searchUsername = safeUsername[..atIdx];
-        }
-
-        var filter = _options.LdapSearchFilter.Replace(
-            "{Username}", searchUsername, StringComparison.Ordinal);
+        var filter = BuildUserSearchFilter(username, _options.DefaultDomain, _options.LdapSearchFilter);
 
         using var ldap = BindAsServiceAccount(correlationId);
 
@@ -478,6 +471,33 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             : null;
 
         return new LdapUser(entry.Dn, groups, primaryGroupId);
+    }
+
+    /// <summary>
+    /// Sanitizes <paramref name="username"/> and substitutes the result into the
+    /// <c>{Username}</c> placeholder of <paramref name="searchFilterTemplate"/>.
+    /// </summary>
+    /// <remarks>
+    /// A <c>sAMAccountName</c>-shaped filter matches the bare account name, never a
+    /// qualified one, so a domain qualifier the sanitizer kept is dropped before
+    /// substitution; a <c>userPrincipalName</c>-shaped filter keeps it. Split out from
+    /// <see cref="FindUser"/> so the filter a given username and configuration produce
+    /// can be asserted without a directory.
+    /// </remarks>
+    internal static string BuildUserSearchFilter(
+        string username, string? defaultDomain, string searchFilterTemplate)
+    {
+        var safeUsername = SanitizeUsername(username, defaultDomain);
+
+        var searchUsername = safeUsername;
+        if (searchFilterTemplate.Contains("sAMAccountName", StringComparison.OrdinalIgnoreCase))
+        {
+            var atIdx = safeUsername.IndexOf('@', StringComparison.Ordinal);
+            if (atIdx >= 0)
+                searchUsername = safeUsername[..atIdx];
+        }
+
+        return searchFilterTemplate.Replace("{Username}", searchUsername, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------------
@@ -1109,41 +1129,86 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     /// <summary>
     /// Produces a value safe to substitute into <see cref="LdapPasswordChangeOptions.LdapSearchFilter"/>:
-    /// parses the domain and local parts explicitly, rejects invalid qualifiers and format/credentials,
-    /// and returns the escaped expanded/qualified username.
+    /// parses the domain and local parts explicitly, validates the qualifier against the configured
+    /// <see cref="LdapPasswordChangeOptions.DefaultDomain"/>, and returns the escaped, canonicalized
+    /// username.
     /// </summary>
+    /// <remarks>
+    /// <para>A configured <paramref name="defaultDomain"/> is authoritative: a bare name is qualified
+    /// with it, a qualifier that matches it (the domain itself or its NetBIOS prefix) is canonicalized
+    /// to it, and any other qualifier is rejected — a user of <c>other.com</c> must not be searched for
+    /// in the configured domain.</para>
+    /// <para>An empty <paramref name="defaultDomain"/> means there is no configured domain to validate a
+    /// qualifier <em>against</em>, so a qualified name is accepted rather than rejected. Rejecting it
+    /// makes the shipped configuration self-contradictory: it ships <c>DefaultDomain: ""</c> together
+    /// with <c>UseEmail: true</c> and a username help block asking for an email address, so the exact
+    /// input form the UI requests would come back as <c>InvalidCredentials</c> — indistinguishable from
+    /// a wrong password, with nothing pointing at configuration. It would also diverge from the AD
+    /// provider, whose <c>FixUsernameWithDomain</c> returns the supplied name unchanged when no default
+    /// domain is configured and lets <c>FindByIdentity</c> resolve the UPN.</para>
+    /// <para>In that unconfigured case a UPN suffix (<c>user@suffix</c>) is preserved, because it is
+    /// meaningful to a <c>userPrincipalName</c>-shaped filter; a NetBIOS qualifier
+    /// (<c>DOMAIN\user</c>) is dropped, because a NetBIOS name is not a UPN suffix and there is no
+    /// configured domain to map it onto. Either way the account name itself still carries the full
+    /// local-part validation below, and the returned value — including any preserved domain, which is
+    /// user-supplied in this case — is escaped, so it stays inert in the filter.</para>
+    /// <para>A backslash is a qualifier separator here, never part of an account name (the local-part
+    /// rules reject one, since a <c>sAMAccountName</c> cannot contain it). So with no configured domain
+    /// to check the qualifier against, any single-backslash input is read as <c>DOMAIN\account</c> —
+    /// <c>a\b</c> resolves to account <c>b</c>. That is the only available reading: nothing
+    /// distinguishes it from a genuine NetBIOS qualifier, and the account name it yields is still fully
+    /// validated. With a <c>DefaultDomain</c> configured the qualifier must match it, so the same input
+    /// is rejected.</para>
+    /// </remarks>
     internal static string SanitizeUsername(string username, string? defaultDomain = null)
     {
         string localPart = username;
         string? domainPart = null;
+        var netbiosQualified = false;
 
         var backslashIndex = username.IndexOf('\\', StringComparison.Ordinal);
+        var atIndex = username.IndexOf('@', StringComparison.Ordinal);
+
+        // A username is qualified in one syntax or the other. Something carrying
+        // both separators is well-formed in neither, and would otherwise be split
+        // on the backslash into two halves that are each meaningless — so it is
+        // rejected outright, as it was in every configuration state before an
+        // unvalidated qualifier could be accepted.
+        if (backslashIndex >= 0 && atIndex >= 0)
+            throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
+
         if (backslashIndex >= 0)
         {
             domainPart = username[..backslashIndex];
             localPart = username[(backslashIndex + 1)..];
+            netbiosQualified = true;
+        }
+        else if (atIndex >= 0)
+        {
+            domainPart = username[(atIndex + 1)..];
+            localPart = username[..atIndex];
+        }
+
+        // The supplied qualifier is user input. Escaping (below) neutralizes the
+        // RFC 4515 metacharacters; control characters are rejected outright, as
+        // they are for the local part.
+        if (!string.IsNullOrEmpty(domainPart) && domainPart.Any(char.IsControl))
+            throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
+
+        if (string.IsNullOrEmpty(defaultDomain))
+        {
+            // Nothing is configured to validate the qualifier against, so it is
+            // accepted: a UPN suffix is kept, a NetBIOS name is dropped.
+            if (netbiosQualified)
+                domainPart = null;
         }
         else
         {
-            var atIndex = username.IndexOf('@', StringComparison.Ordinal);
-            if (atIndex >= 0)
-            {
-                domainPart = username[(atIndex + 1)..];
-                localPart = username[..atIndex];
-            }
-        }
+            if (!string.IsNullOrEmpty(domainPart) && !IsDomainMatching(domainPart, defaultDomain))
+                throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
 
-        if (string.IsNullOrEmpty(domainPart) && !string.IsNullOrEmpty(defaultDomain))
-        {
-            domainPart = defaultDomain;
-        }
-
-        if (!string.IsNullOrEmpty(domainPart))
-        {
-            if (string.IsNullOrEmpty(defaultDomain) || !IsDomainMatching(domainPart, defaultDomain))
-            {
-                throw new InvalidCredentialsException("Invalid username format");
-            }
+            // The configured domain is authoritative: it qualifies a bare name and
+            // canonicalizes a matching NetBIOS prefix to the full domain.
             domainPart = defaultDomain;
         }
 
@@ -1151,12 +1216,13 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             || localPart.Any(char.IsControl)
             || InvalidAccountNameCharsRegex.IsMatch(localPart))
         {
-            throw new InvalidCredentialsException(
-                "Invalid username format");
+            throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
         }
 
         var escapedLocalPart = EscapeLdapSearchFilterValue(localPart);
-        return !string.IsNullOrEmpty(domainPart) ? $"{escapedLocalPart}@{domainPart}" : escapedLocalPart;
+        return !string.IsNullOrEmpty(domainPart)
+            ? $"{escapedLocalPart}@{EscapeLdapSearchFilterValue(domainPart)}"
+            : escapedLocalPart;
     }
 
     /// <summary>
