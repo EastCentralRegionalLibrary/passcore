@@ -39,5 +39,5 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /app ./
 
-EXPOSE 80
+EXPOSE 8080
 ENTRYPOINT ["dotnet", "Unosquare.PassCore.Web.dll"]
