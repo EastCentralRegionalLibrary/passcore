@@ -58,15 +58,15 @@ builder.Services.AddSingleton<IPasswordPolicy, PwnedPasswordPolicy>();
 if (builder.Environment.IsProduction())
     throw new InvalidOperationException("The debug password change provider cannot be used in Production.");
 
-Environment.SetEnvironmentVariable("PASSCORE_PROVIDER", "DEBUG");
+
 builder.Services.Configure<DebugProviderOptions>(builder.Configuration.GetSection(nameof(DebugProviderOptions)));
 builder.Services.AddSingleton<IPasswordChangeProvider, DebugPasswordChangeProvider>();
 #elif PASSCORE_LDAP_PROVIDER
-Environment.SetEnvironmentVariable("PASSCORE_PROVIDER", "LDAP");
+
 builder.Services.Configure<LdapPasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));
 builder.Services.AddSingleton<IPasswordChangeProvider, LdapPasswordChangeProvider>();
 #elif PASSCORE_AD_PROVIDER
-Environment.SetEnvironmentVariable("PASSCORE_PROVIDER", "AD");
+
 builder.Services.Configure<PasswordChangeOptions>(builder.Configuration.GetSection("AppSettings"));
 builder.Services.AddSingleton<IPasswordChangeProvider, PasswordChangeProvider>();
 #else

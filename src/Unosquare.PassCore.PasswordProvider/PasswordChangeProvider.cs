@@ -72,12 +72,6 @@ namespace Unosquare.PassCore.PasswordProvider
             if (opts == null)
                 throw new ArgumentNullException(nameof(opts));
 
-            var activeProvider = Environment.GetEnvironmentVariable("PASSCORE_PROVIDER");
-            if (activeProvider != null && !activeProvider.Equals("AD", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
             if (!opts.UseAutomaticContext)
             {
                 if (opts.LdapHostnames == null || opts.LdapHostnames.Length == 0)
