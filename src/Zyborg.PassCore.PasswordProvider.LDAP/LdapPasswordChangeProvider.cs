@@ -30,7 +30,14 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 /// - User existence is checked before authorization
 /// - User must prove knowledge of current password (on Active Directory,
 ///   expired / must-change-at-next-logon passwords still count as proof)
-/// - User-supplied input cannot alter the structure of the LDAP search filter
+/// - No value interpolated into an LDAP search filter can alter that filter's
+///   structure. This covers more than the submitted username: values read back
+///   from the directory are not inert either, because RFC 4514 DN string form
+///   escapes none of '(', ')' or '*'. Every filter value is therefore either
+///   RFC 4515-escaped through <c>EscapeLdapSearchFilterValue</c> or validated to
+///   a type that has no metacharacters to escape. (Search bases and modify
+///   targets are deliberately not escaped this way — those are RFC 4514 DN
+///   syntax, not RFC 4515 filter syntax.)
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
 public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IPasswordLengthRequirement
@@ -87,6 +94,16 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             "has no effect: the Replace change mechanism is already an administrative operation " +
             "performed by the service account. Remove AllowAdministrativeReset or switch to the " +
             "delete/add mechanism if a fallback from a user-style change is what you want.");
+
+    private static readonly Action<ILogger, string?, string, Exception?> LogNonNumericPrimaryGroupId =
+        LoggerMessage.Define<string?, string>(
+            LogLevel.Warning,
+            new EventId(106, nameof(LogNonNumericPrimaryGroupId)),
+            "primaryGroupID '{PrimaryGroupId}' on '{UserDn}' is not an integer RID, so the " +
+            "account's primary group cannot be resolved. Group membership is therefore treated " +
+            "as undetermined and the request is refused rather than being answered from an " +
+            "incomplete picture. This is a directory-data problem: check the account's " +
+            "primaryGroupID attribute.");
 
     private static readonly string[] RequiredAttributes =
     {
@@ -196,34 +213,57 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 if (user.PrimaryGroupId == "519" && groupName.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(true);
 
-                try
+                // primaryGroupID is a RID, read back from the directory as a string.
+                // Validating it as an integer is what keeps it inert in the filter
+                // below: an integer has no RFC 4515 metacharacter to escape, so the
+                // filter's structure cannot depend on the attribute's contents.
+                if (int.TryParse(
+                        user.PrimaryGroupId, NumberStyles.None, CultureInfo.InvariantCulture,
+                        out var primaryGroupToken))
                 {
-                    using var ldap = BindAsServiceAccount();
-                    var primaryFilter = $"(primaryGroupToken={user.PrimaryGroupId})";
-                    var primarySearch = SearchLdap(
-                        ldap,
-                        _options.LdapSearchBase,
-                        LdapConnection.ScopeSub,
-                        primaryFilter,
-                        new[] { "distinguishedName" },
-                        false,
-                        _searchConstraints);
-
-                    if (primarySearch.HasMore())
+                    try
                     {
-                        var primaryDn = primarySearch.Next().Dn;
-                        if (DnMatchesGroup(primaryDn, groupName))
-                            return Task.FromResult(true);
+                        using var ldap = BindAsServiceAccount();
+                        var primaryFilter = FormattableString.Invariant(
+                            $"(primaryGroupToken={primaryGroupToken})");
+                        var primarySearch = SearchLdap(
+                            ldap,
+                            _options.LdapSearchBase,
+                            LdapConnection.ScopeSub,
+                            primaryFilter,
+                            new[] { "distinguishedName" },
+                            false,
+                            _searchConstraints);
+
+                        if (primarySearch.HasMore())
+                        {
+                            var primaryDn = primarySearch.Next().Dn;
+                            if (DnMatchesGroup(primaryDn, groupName))
+                                return Task.FromResult(true);
+                        }
+                    }
+                    catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
+                    {
+                        // Not a fallback: the user's primary group is now unknown, so a
+                        // "not a member" answer can no longer be justified.
+                        undetermined ??= ex;
+                        ServiceAccountFailure.Log(
+                            Logger, correlationId: null, "resolve primary group by primaryGroupToken",
+                            ServiceAccountHost(), ex);
                     }
                 }
-                catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
+                else
                 {
-                    // Not a fallback: the user's primary group is now unknown, so a
-                    // "not a member" answer can no longer be justified.
-                    undetermined ??= ex;
-                    ServiceAccountFailure.Log(
-                        Logger, correlationId: null, "resolve primary group by primaryGroupToken",
-                        ServiceAccountHost(), ex);
+                    // The RID is unusable, so the primary group cannot be resolved for
+                    // this account at all. That is the same outcome as a failed search —
+                    // membership through the primary group is unknown, not absent.
+                    // Treating it as absent would let a malformed attribute reopen the
+                    // deny-list hole that the undetermined handling exists to close.
+                    undetermined ??= new FormatException(
+                        FormattableString.Invariant(
+                            $"primaryGroupID '{user.PrimaryGroupId}' is not an integer RID."));
+                    LogNonNumericPrimaryGroupId(
+                        Logger, user.PrimaryGroupId, user.DistinguishedName, null);
                 }
             }
 
@@ -231,7 +271,13 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             try
             {
                 using var ldap = BindAsServiceAccount();
-                var chainFilter = $"(member:1.2.840.113556.1.4.1941:={user.DistinguishedName})";
+                // The DN comes back from the directory, but it is not inert: RFC 4514
+                // DN string form escapes none of '(', ')' or '*', so an account named
+                // e.g. "CN=Smith (Contractor),OU=..." would otherwise produce a
+                // malformed or structurally altered filter — and for a deny-list check
+                // that means a wrong answer rather than a clean error.
+                var chainFilter =
+                    $"(member:1.2.840.113556.1.4.1941:={EscapeLdapSearchFilterValue(user.DistinguishedName)})";
                 var chainSearch = SearchLdap(
                     ldap,
                     _options.LdapSearchBase,
