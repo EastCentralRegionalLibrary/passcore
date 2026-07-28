@@ -270,7 +270,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
         {
             Logger.LogDebug(ex, "Failed to query defaultNamingContext from rootDSE. Falling back to search base extraction.");
         }
