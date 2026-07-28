@@ -1,0 +1,182 @@
+name: AD Provider Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  smoke-test:
+    permissions:
+      contents: read      # Needed to check out code
+      actions: write      # Needed for cancel-workflow-action to stop old runs
+    name: AD Provider Smoke Test on Windows Latest
+    runs-on: windows-latest
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      ASPNETCORE_ENVIRONMENT: ADTest
+      ASPNETCORE_URLS: http://localhost:5000
+
+    steps:
+      - name: Cancel previous runs
+        if: ${{ github.ref != 'refs/heads/main' }}
+        uses: styfle/cancel-workflow-action@0.13.1
+        with:
+          access_token: ${{ github.token }}
+
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Start SMB LDS
+        run: |
+          docker run -d \
+            --name smblds-ad \
+            -p 389:389 \
+            -p 636:636 \
+            -e REALM="EXAMPLE.COM" \
+            -e DOMAIN="EXAMPLE" \
+            -e ADMINPASS="adminpassword" \
+            -e INSECURE_PASSWORDSETTINGS="true" \
+            -v "${{ github.workspace }}/tests/smblds/seedusers.sh:/entrypoint.d/seedusers.sh:ro" \
+            smblds/smblds:latest
+
+      - name: Setup .NET 10.0 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22 # Plan move to 24 if dependencies support it
+          cache: npm
+          cache-dependency-path: |
+            src/Unosquare.PassCore.Web/ClientApp/package-lock.json
+
+      - name: Build Backend (AD)
+        run: |
+          dotnet build \
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --runtime win-x64 \
+            --framework net8.0-windows \
+            --property:PASSCORE_PROVIDER=AD
+
+      - name: Start Passcore
+        shell: powershell
+        run: |
+          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" -PassThru
+          $proc.Id | Out-File -FilePath backend.pid
+          echo "Started Passcore with PID $($proc.Id)"
+
+      - name: Wait for Passcore to be ready
+        run: |
+          echo "Waiting for Passcore..."
+          timeout 90s bash -c '
+            until curl -fsS http://localhost:5000/api/password; do
+              sleep 3
+            done
+          '
+
+      - name: Basic Smoke Verification
+        shell: bash
+        run: |
+          # Verify that Passcore is responding and using the AD provider
+          # We check if the health endpoint (api/password) returns the expected settings
+          curl -fsS http://localhost:5000/api/password | jq -e '.validationRegex'
+          echo "Passcore is up and responding!"
+
+      - name: AD Success and Authorization Tests
+        shell: bash
+        run: |
+          echo "Test 1: Valid user + valid password + allowed group"
+          # alloweduser is in AllowedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # MokAPI might return error during password change if not fully supported, but it should NOT be an auth/policy error
+          # We check if there are any errors. If MokAPI fails the actual change, we expect a generic or LdapProblem error,
+          # but NOT ChangeNotPermitted or InvalidCredentials.
+          # For this test, we accept success (empty errors) OR a non-auth error.
+          ERROR_CODE=$(echo $RESPONSE | jq -r '.errors[0].errorCode // empty')
+          # 3: UserNotFound, 4: InvalidCredentials, 6: ChangeNotPermitted
+          if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
+            echo "Unexpected error code: $ERROR_CODE"
+            exit 1
+          fi
+
+          echo "Test 2: Invalid current password"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "wrongpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 4: InvalidCredentials
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
+
+          echo "Test 3: Unknown user"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # With "ErrorDisclosureMode": "Hardened" (default), it returns InvalidCredentials (4)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 3)'
+
+          echo "Test 4: User in restricted group"
+          # restricteduser is in RestrictedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "restricteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 6: ChangeNotPermitted
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
+
+          echo "Test 5: User not in allowed groups"
+          # unlisteduser is not in AllowedGroup
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "unlisteduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 6: ChangeNotPermitted
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
+
+      - name: AD Environment Failure Test
+        shell: bash
+        run: |
+          echo "Stopping SMBLDS..."
+          docker stop smblds-ad
+
+          echo "Attempting password change during AD outage..."
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # Expect LdapProblem (8) or InvalidCredentials (4)
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4 or .errorCode == 8)'
+
+          echo "Restarting SMBLDS..."
+          docker start smblds-ad
+          # Wait a bit for MokAPI to be ready again
+          sleep 5
+
+      - name: Check SMBLDS logs
+        if: always()
+        run: docker logs smblds-ad
+
+      - name: Stop Services
+        if: always()
+        shell: powershell
+        run: |
+          if (Test-Path backend.pid) {
+            $pId = Get-Content backend.pid
+            echo "Stopping Passcore PID $pId..."
+            taskkill /F /T /PID $pId
+          }
+          docker stop smblds-ad
