@@ -65,10 +65,27 @@ jobs:
             tests/PwnedPasswordsSearch.Tests/PwnedPasswordsSearch.Tests.csproj
           do
             echo "==> Testing $proj"
-            dotnet test "$proj" \
+            # `dotnet test` exits 0 when it discovers nothing -- it just prints
+            # "No test is available" -- so a project/SDK configuration slip can
+            # reduce this whole step to a green no-op. That is exactly what
+            # happened: the test projects set TargetFramework while
+            # Directory.Build.props set TargetFrameworks, the package .props
+            # imports were skipped, the xunit VSTest adapter never reached the
+            # output directory, and CI reported success while running zero
+            # assertions. Capture the output and fail loudly if it recurs.
+            output=$(dotnet test "$proj" \
               --configuration Debug \
               --logger "trx;LogFileName=test-results.trx" \
-              --logger "console;verbosity=normal"
+              --logger "console;verbosity=normal" 2>&1) || {
+                echo "$output"
+                exit 1
+              }
+            echo "$output"
+
+            if grep -qF 'No test is available' <<<"$output"; then
+              echo "::error file=$proj::No tests were discovered in $proj, so this run passed vacuously. Usually the xunit VSTest adapter did not reach the output directory: check that the project declares TargetFrameworks (plural), so that the package .props imports apply."
+              exit 1
+            fi
           done
 
       - name: Upload .NET Test Results
