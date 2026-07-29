@@ -52,11 +52,24 @@ jobs:
           # and can be mapped in the Windows hosts file below. Without it the
           # container gets a random id as its hostname and there is nothing
           # stable to map.
+          #
+          # Port 53 is published because System.DirectoryServices.ActiveDirectory
+          # discovers the forest through DNS SRV records, which a hosts file
+          # cannot express. Samba provisions its internal DNS server with the AD
+          # zones already, so exposing the port is all that is required.
+          #
+          # Published on all interfaces on purpose -- NOT 127.0.0.1:53:53.
+          # Podman runs inside the WSL2 VM, so binding loopback would bind the
+          # VM's loopback, and WSL2's localhost relay forwards TCP but not UDP.
+          # DNS is UDP first, so a loopback binding would be unreachable from
+          # Windows in practice.
           podman run -d \
             --name smblds-ad \
             --hostname dc \
             -p 389:389 \
             -p 636:636 \
+            -p 53:53/udp \
+            -p 53:53/tcp \
             -e REALM="EXAMPLE.COM" \
             -e DOMAIN="EXAMPLE" \
             -e ADMINPASS="AdminPassword123!" \
@@ -78,7 +91,24 @@ jobs:
       # Mapping the realm and the DC's FQDN to the published ports makes the
       # runner look enough like a domain member for that second connection to
       # succeed. The runner is administrator, so the hosts file is writable.
-      - name: Map the test domain to the published LDAP ports
+      #
+      # Name resolution here is deliberately split between two mechanisms, and
+      # both are required:
+      #
+      #   * The hosts entries below pin the A records for example.com and
+      #     dc.example.com to 127.0.0.1, where 389/636 are published. They must
+      #     NOT be "cleaned up" now that DNS is available: Samba's SRV records
+      #     name dc.example.com, and Samba's own DNS answers that A query with
+      #     the container's internal address (10.88.x.x), which Windows has no
+      #     route to.
+      #   * The NRPT rule below sends DNS queries for the zone to the container's
+      #     DNS server, which is the only way to get the SRV records that
+      #     Forest.GetForest() needs -- a hosts file cannot express SRV at all.
+      #
+      # Windows consults the hosts file before DNS, so A lookups resolve to
+      # loopback while SRV lookups go out to the container's DNS. That is the
+      # whole trick; removing either half breaks it.
+      - name: Map the test domain to the published LDAP and DNS ports
         shell: powershell
         run: |
           $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
@@ -106,6 +136,40 @@ jobs:
               catch {
                   Write-Host "$name did not resolve: $($_.Exception.Message)"
               }
+          }
+
+          # NRPT sends only *.example.com queries to the container's DNS, leaving the
+          # runner's own resolution (GitHub API, package restore) untouched. Pointed at
+          # the WSL VM's IP rather than 127.0.0.1: podman publishes inside the WSL2 VM,
+          # and WSL2's localhost relay does not cover UDP, which is what DNS uses first.
+          $wslIp = (wsl hostname -I).Trim().Split(' ')[0]
+          Write-Host "WSL VM IP: $wslIp"
+          Add-DnsClientNrptRule -Namespace ".example.com" -NameServers $wslIp
+          Clear-DnsClientCache
+
+          Write-Host "=== NRPT rules ==="
+          Get-DnsClientNrptRule | Where-Object { $_.Namespace -like "*example.com" } |
+            Format-List Namespace,NameServers | Out-String | Write-Host
+
+          # Samba's DNS needs a moment after provisioning. This is a diagnostic and must
+          # never fail the step -- an earlier iteration of this workflow was broken by
+          # exactly that (nslookup piped through 2>&1 became a terminating error).
+          Write-Host "=== SRV discovery check ==="
+          $srvFound = $false
+          foreach ($attempt in 1..10) {
+              try {
+                  $srv = Resolve-DnsName -Name "_ldap._tcp.dc._msdcs.example.com" -Type SRV -ErrorAction Stop
+                  $srv | Format-Table -AutoSize | Out-String | Write-Host
+                  $srvFound = $true
+                  break
+              }
+              catch {
+                  Write-Host "SRV not resolvable yet (attempt $attempt): $($_.Exception.Message)"
+                  Start-Sleep -Seconds 3
+              }
+          }
+          if (-not $srvFound) {
+              Write-Host "WARNING: SRV records did not resolve. Forest discovery will fail and the group-membership tests will refuse closed."
           }
 
       # The backend is published framework-dependent against net8.0-windows, so
