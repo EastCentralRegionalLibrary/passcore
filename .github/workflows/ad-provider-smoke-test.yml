@@ -35,9 +35,8 @@ jobs:
           submodules: recursive
 
       - name: Setup WSL 2
-        uses: Vampire/setup-wsl@v3
+        uses: Vampire/setup-wsl@v7
         with:
-          distribution: Ubuntu-22.04
           additional-packages: podman
 
       - name: Start SMB LDS inside WSL
@@ -55,7 +54,7 @@ jobs:
             -e ADMINPASS="adminpassword" \
             -e INSECURE_PASSWORDSETTINGS="true" \
             -v "${SEED_SCRIPT}:/entrypoint.d/seedusers.sh:ro" \
-            smblds/smblds:latest
+            docker.io/smblds/smblds:latest
 
           sleep 5
 
