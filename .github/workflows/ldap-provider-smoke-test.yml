@@ -299,9 +299,20 @@ jobs:
         run: |
           set -uo pipefail
           echo "An authorized user with the correct password must NOT be refused."
+
+          # testuser, not alloweduser. Both are in AllowedGroup, but Test 1 of the
+          # Informative leg submits a change for alloweduser and deliberately
+          # tolerates either outcome (success, or a non-authorization error if
+          # MokAPI does not implement the modify). That leaves alloweduser's current
+          # password indeterminate from here: if the change succeeded it is now
+          # NewPassword123!, so submitting testpassword would be a genuinely wrong
+          # password and the 4 it earns would say nothing about Hardened mode.
+          # testuser is deterministic - every earlier request for it (Informative
+          # Test 2, and row 6 of Step B) uses a wrong password on purpose, so no
+          # earlier step can have rotated it.
           RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
             -H "Content-Type: application/json" \
-            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+            -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
 
           # Same tolerance as Test 1 in the Informative leg: MokAPI may not fully
@@ -311,7 +322,7 @@ jobs:
           ERROR_CODE=$(printf '%s' "$RESPONSE" | jq -r '.errors[0].errorCode // empty' 2>/dev/null || true)
           # 3: UserNotFound, 4: InvalidCredentials, 6: ChangeNotPermitted
           if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
-            echo "::error::alloweduser with the correct password returned '${ERROR_CODE}'. Hardened mode is refusing an authorized user, so Step B's uniform responses prove nothing."
+            echo "::error::testuser with the correct password returned '${ERROR_CODE}'. Hardened mode is refusing an authorized user, so Step B's uniform responses prove nothing."
             exit 1
           fi
           echo "Positive control passed."
@@ -321,6 +332,11 @@ jobs:
           echo "Stopping MokAPI..."
           docker stop mokapi
 
+          # testuser's password may have been rotated by the Hardened positive
+          # control just above, so testpassword is not necessarily current here.
+          # That does not matter: MokAPI is stopped, so this must fail on
+          # connectivity (8), and a wrong password (4) is accepted by this
+          # assertion anyway. Both outcomes are posture-independent.
           echo "Attempting password change during LDAP outage..."
           RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
             -H "Content-Type: application/json" \
