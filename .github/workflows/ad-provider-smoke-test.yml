@@ -44,6 +44,9 @@ jobs:
         run: |
           # Convert Windows workspace path to a Linux mount path for Podman
           SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/smblds/seedusers.sh"
+          # Fix CRLF line endings and make script executable
+          sed -i 's/\r$//' "${SEED_SCRIPT}"
+          chmod +x "${SEED_SCRIPT}"
 
           podman run -d \
             --name smblds-ad \
@@ -78,12 +81,13 @@ jobs:
             --configuration Release `
             --runtime win-x64 `
             --framework net8.0-windows `
-            --property:PASSCORE_PROVIDER=AD
+            --property:PASSCORE_PROVIDER=AD `
+            --self-contained false `
 
       - name: Start Passcore
         shell: powershell
         run: |
-          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" `
+          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --runtime win-x64 --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" `
           -RedirectStandardOutput "passcore.log" `
           -RedirectStandardError "passcore-error.log" `
           -PassThru
