@@ -58,18 +58,31 @@ jobs:
           # cannot express. Samba provisions its internal DNS server with the AD
           # zones already, so exposing the port is all that is required.
           #
-          # Published on all interfaces on purpose -- NOT 127.0.0.1:53:53.
-          # Podman runs inside the WSL2 VM, so binding loopback would bind the
-          # VM's loopback, and WSL2's localhost relay forwards TCP but not UDP.
-          # DNS is UDP first, so a loopback binding would be unreachable from
-          # Windows in practice.
+          # DNS is bound to the WSL VM's own routable address, and neither to
+          # 127.0.0.1 nor to all interfaces. Both of those fail, for different
+          # reasons:
+          #
+          #   * 127.0.0.1:53:53 would bind the WSL VM's loopback. WSL2's
+          #     localhost relay forwards TCP but not UDP, and DNS is UDP first,
+          #     so Windows could not reach it.
+          #   * 53:53 (all interfaces) collides with the distro's own resolver
+          #     stub -- systemd-resolved holds 127.0.0.53:53, and a 0.0.0.0:53
+          #     bind conflicts with it. That is the "address already in use"
+          #     error that stopped the container from starting at all.
+          #
+          # eth0's address avoids the stub and is directly routable from Windows
+          # over the vEthernet (WSL) adapter -- it is the same address the NRPT
+          # rule below points at, so the two must agree.
+          WSL_IP="$(hostname -I | awk '{print $1}')"
+          echo "WSL VM IP for DNS publishing: ${WSL_IP}"
+
           podman run -d \
             --name smblds-ad \
             --hostname dc \
             -p 389:389 \
             -p 636:636 \
-            -p 53:53/udp \
-            -p 53:53/tcp \
+            -p ${WSL_IP}:53:53/udp \
+            -p ${WSL_IP}:53:53/tcp \
             -e REALM="EXAMPLE.COM" \
             -e DOMAIN="EXAMPLE" \
             -e ADMINPASS="AdminPassword123!" \
