@@ -62,10 +62,28 @@ jobs:
                 sleep 2
             done
 
-      - name: Setup .NET 10.0 SDK
+      # The backend is published framework-dependent against net8.0-windows, so
+      # the ASP.NET Core 8 shared runtime has to be on the machine or the apphost
+      # cannot start at all. Installing only the 10.0 SDK does not provide it:
+      # the 10.0 SDK carries the 10.0 runtimes. The LDAP smoke test, which
+      # passes, pins 8.0 for the same reason.
+      - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # Kept deliberately: a missing 8.0 ASP.NET Core runtime is invisible in the
+      # publish step and only shows up as a process that starts and immediately
+      # dies, which is exactly the failure this workflow was hitting.
+      - name: Report installed .NET runtimes
+        shell: powershell
+        run: |
+          Write-Host "=== dotnet --list-sdks ==="
+          dotnet --list-sdks
+          Write-Host "=== dotnet --list-runtimes ==="
+          dotnet --list-runtimes
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -93,36 +111,48 @@ jobs:
       - name: Start Passcore
         shell: powershell
         run: |
-          $publishDir = Resolve-Path ".\passcore_output"
+          $publishDir = (Resolve-Path ".\passcore_output").Path
           $exe = Join-Path $publishDir "Unosquare.PassCore.Web.exe"
+
+          # Absolute redirect paths. Start-Process resolves a relative redirect
+          # path against the caller's location rather than -WorkingDirectory, so
+          # a bare file name can land somewhere the later dump step never looks —
+          # which is why both logs came back empty while the app was clearly
+          # doing something.
+          $stdout = Join-Path $env:GITHUB_WORKSPACE "passcore.log"
+          $stderr = Join-Path $env:GITHUB_WORKSPACE "passcore-error.log"
+
           $proc = Start-Process -FilePath $exe `
             -WorkingDirectory $publishDir `
-            -RedirectStandardOutput "passcore.log" `
-            -RedirectStandardError "passcore-error.log" `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
             -PassThru
 
           $proc.Id | Out-File -FilePath backend.pid
           Write-Host "Started Passcore with PID $($proc.Id)"
-          Start-Sleep 5
-          if ($proc.HasExited) {
-              Write-Host "Passcore exited with code: $($proc.ExitCode)"
-              exit 1
-          }
-          $listener = Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq 5000
-          if (-not $listener) {
-              Write-Host "Nothing is listening on port 5000."
-              exit 1
-          }
 
+      # One gate, with the full budget. Previously a separate step failed the run
+      # if nothing was listening after a flat 5 seconds, which made this step's
+      # timeout unreachable: the run was already over. Liveness and readiness are
+      # checked together here so a process that dies is reported as a death (with
+      # its output) rather than as a timeout.
       - name: Wait for Passcore to be ready
         shell: powershell
         run: |
-          $deadline = (Get-Date).AddSeconds(60)
+          $passcorepid = [int](Get-Content backend.pid)
+          $deadline = (Get-Date).AddSeconds(90)
           $ready = $false
 
           do {
+              $proc = Get-Process -Id $passcorepid -ErrorAction SilentlyContinue
+              if (-not $proc) {
+                  Write-Host "Passcore process $passcorepid is gone; it exited during startup."
+                  break
+              }
+
               try {
-                  $response = Invoke-WebRequest -Uri "http://localhost:5000/api/password" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+                  $response = Invoke-WebRequest -Uri "http://localhost:5000/api/password" `
+                    -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
                   if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
                       Write-Host "Status: $($response.StatusCode)"
                       Write-Host "Response: $($response.Content)"
@@ -133,12 +163,26 @@ jobs:
               }
               catch {
                   Write-Host "Waiting for Passcore... ($($_.Exception.Message))"
-                  Start-Sleep -Seconds 1
+                  Start-Sleep -Seconds 2
               }
           } while ((Get-Date) -lt $deadline)
 
           if (-not $ready) {
-              throw "Passcore failed to start within 90 seconds."
+              Write-Host "=== Listening sockets ==="
+              Get-NetTCPConnection -State Listen |
+                Select-Object LocalAddress,LocalPort,OwningProcess |
+                Sort-Object LocalPort | Format-Table | Out-String | Write-Host
+
+              # Dumped here as well as in the always() step at the end: a
+              # force-kill discards whatever the app had buffered but not
+              # flushed, so this is the last point the output is guaranteed
+              # to still be readable.
+              Write-Host "=== Passcore Standard Output ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore.log" }
+              Write-Host "=== Passcore Error Output ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore-error.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore-error.log" }
+
+              throw "Passcore failed to become ready within 90 seconds."
           }
 
       - name: Basic Smoke Verification
@@ -216,6 +260,22 @@ jobs:
         shell: powershell
         run: wsl podman logs smblds-ad
 
+      # Before Stop Passcore, deliberately. When stdout is redirected to a file
+      # .NET buffers it, and Stop-Process -Force terminates without flushing, so
+      # dumping after the kill can silently discard the very output being sought.
+      - name: Dump Passcore Startup Logs
+        if: always()
+        shell: powershell
+        run: |
+          $stdout = Join-Path $env:GITHUB_WORKSPACE "passcore.log"
+          $stderr = Join-Path $env:GITHUB_WORKSPACE "passcore-error.log"
+
+          Write-Host "=== Passcore Standard Output ==="
+          if (Test-Path $stdout) { Get-Content $stdout } else { Write-Host "(no $stdout)" }
+
+          Write-Host "=== Passcore Error Output ==="
+          if (Test-Path $stderr) { Get-Content $stderr } else { Write-Host "(no $stderr)" }
+
       - name: Stop Passcore
         if: always()
         shell: powershell
@@ -225,16 +285,6 @@ jobs:
             Write-Host "Stopping Passcore PID $passcorepid..."
             Stop-Process -Id $passcorepid -Force -ErrorAction SilentlyContinue
           }
-
-      - name: Dump Passcore Startup Logs
-        if: always()
-        shell: powershell
-        run: |
-          echo "=== Passcore Standard Output ==="
-          if (Test-Path passcore.log) { Get-Content passcore.log }
-
-          echo "=== Passcore Error Output ==="
-          if (Test-Path passcore-error.log) { Get-Content passcore-error.log }
 
       - name: Cleanup SMBLDS Container
         if: always()
