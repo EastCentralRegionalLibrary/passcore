@@ -95,6 +95,20 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             "performed by the service account. Remove AllowAdministrativeReset or switch to the " +
             "delete/add mechanism if a fallback from a user-style change is what you want.");
 
+    // Debug, deliberately, and unlike the group-enumeration failures that were
+    // raised to Warning: this one really is a fallback. GetDomainNcRootFallback
+    // derives the domain NC from the configured search base, the minimum-length
+    // lookup continues, and a wrong answer here is still caught downstream by
+    // DomainPasswordPolicy's own Warning (EventId 112) when the lookup as a whole
+    // fails. Nothing is degraded silently, so this stays diagnostic detail.
+    private static readonly Action<ILogger, Exception?> LogRootDseQueryFailed =
+        LoggerMessage.Define(
+            LogLevel.Debug,
+            new EventId(107, nameof(LogRootDseQueryFailed)),
+            "Failed to query defaultNamingContext from the rootDSE; falling back to deriving the " +
+            "domain naming context from the configured LdapSearchBase. The minimum-length lookup " +
+            "continues, and reports its own failure separately if the fallback does not resolve.");
+
     private static readonly Action<ILogger, string?, string, Exception?> LogNonNumericPrimaryGroupId =
         LoggerMessage.Define<string?, string>(
             LogLevel.Warning,
@@ -372,7 +386,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         }
         catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
         {
-            Logger.LogDebug(ex, "Failed to query defaultNamingContext from rootDSE. Falling back to search base extraction.");
+            LogRootDseQueryFailed(Logger, ex);
         }
 
         if (string.IsNullOrEmpty(domainNcRootDn))
