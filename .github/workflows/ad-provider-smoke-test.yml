@@ -58,6 +58,9 @@ jobs:
             -e INSECURE_PASSWORDSETTINGS="true" \
             -v "${SEED_SCRIPT}:/entrypoint.d/seedusers.sh:ro" \
             docker.io/smblds/smblds:latest
+            until podman exec smblds-ad true; do
+                sleep 2
+            done
 
       - name: Setup .NET 10.0 SDK
         uses: actions/setup-dotnet@v5
@@ -73,7 +76,7 @@ jobs:
             src/Unosquare.PassCore.Web/ClientApp/package-lock.json
 
       - name: Publish Passcore Backend (AD)
-        shell: pwsh
+        shell: powershell
         run: |
           dotnet publish .\src\Unosquare.PassCore.Web\Unosquare.PassCore.Web.csproj `
             --configuration Release `
@@ -82,29 +85,51 @@ jobs:
             --property:PASSCORE_PROVIDER=AD `
             --self-contained false `
             --output ".\passcore_output"
+          Get-ChildItem .\passcore_output | Format-Table Name,Length
+          if (!(Test-Path ".\passcore_output\Unosquare.PassCore.Web.exe")) {
+              throw "Publish did not produce executable."
+          }
 
       - name: Start Passcore
         shell: powershell
         run: |
-          $exePath = (Resolve-Path ".\passcore_output\Unosquare.PassCore.Web.exe").Path
-          $proc = Start-Process $exePath `
-            -ArgumentList "--no-launch-profile" `
+          $publishDir = Resolve-Path ".\passcore_output"
+          $exe = Join-Path $publishDir "Unosquare.PassCore.Web.exe"
+          $proc = Start-Process -FilePath $exe `
+            -WorkingDirectory $publishDir `
             -RedirectStandardOutput "passcore.log" `
             -RedirectStandardError "passcore-error.log" `
             -PassThru
 
           $proc.Id | Out-File -FilePath backend.pid
           Write-Host "Started Passcore with PID $($proc.Id)"
+          Start-Sleep 5
+          if ($proc.HasExited) {
+              Write-Host "Passcore exited with code: $($proc.ExitCode)"
+              exit 1
+          }
+          $listener = Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq 5000
+          if (-not $listener) {
+              Write-Host "Nothing is listening on port 5000."
+              exit 1
+          }
 
       - name: Wait for Passcore to be ready
-        shell: bash
+        shell: powershell
         run: |
-          echo "Waiting for Passcore..."
-          timeout 90s bash -c '
-            until curl -fsS http://localhost:5000/api/password; do
-              sleep 3
-            done
-          '
+          $deadline = (Get-Date).AddSeconds(90)
+          do {
+              try {
+                  Invoke-WebRequest http://localhost:5000/api/password -UseBasicParsing | Out-Null
+                  break
+              }
+              catch {
+                  Start-Sleep 2
+              }
+          } while ((Get-Date) -lt $deadline)
+          if ((Get-Date) -ge $deadline) {
+              throw "Passcore failed to start."
+          }
 
       - name: Basic Smoke Verification
         shell: bash
