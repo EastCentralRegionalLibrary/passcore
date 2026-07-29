@@ -36,14 +36,14 @@ jobs:
 
       - name: Start SMB LDS
         run: |
-          docker run -d --name smblds-ad \
-            -p 389:389 \
-            -p 636:636 \
-            -e REALM="EXAMPLE.COM" \
-            -e DOMAIN="EXAMPLE" \
-            -e ADMINPASS="adminpassword" \
-            -e INSECURE_PASSWORDSETTINGS="true" \
-            -v "${{ github.workspace }}/tests/smblds/seedusers.sh:/entrypoint.d/seedusers.sh:ro" \
+          docker run -d --name smblds-ad `
+            -p 389:389 `
+            -p 636:636 `
+            -e REALM="EXAMPLE.COM" `
+            -e DOMAIN="EXAMPLE" `
+            -e ADMINPASS="adminpassword" `
+            -e INSECURE_PASSWORDSETTINGS="true" `
+            -v "${{ github.workspace }}/tests/smblds/seedusers.sh:/entrypoint.d/seedusers.sh:ro" `
             smblds/smblds:latest
 
       - name: Setup .NET 10.0 SDK
@@ -61,11 +61,11 @@ jobs:
 
       - name: Build Backend (AD)
         run: |
-          dotnet build \
-            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
-            --configuration Release \
-            --runtime win-x64 \
-            --framework net8.0-windows \
+          dotnet build `
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --framework net8.0-windows `
             --property:PASSCORE_PROVIDER=AD
 
       - name: Start Passcore
