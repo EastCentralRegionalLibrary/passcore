@@ -113,22 +113,32 @@ jobs:
               Write-Host "Nothing is listening on port 5000."
               exit 1
           }
-
+          
       - name: Wait for Passcore to be ready
         shell: powershell
         run: |
-          $deadline = (Get-Date).AddSeconds(90)
+          $deadline = (Get-Date).AddSeconds(60)
+          $ready = $false
+
           do {
               try {
-                  Invoke-WebRequest http://localhost:5000/api/password -UseBasicParsing | Out-Null
-                  break
+                  $response = Invoke-WebRequest -Uri "http://127.0.0.1:5000/api/password" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+                  if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+                      Write-Host "Status: $($response.StatusCode)"
+                      Write-Host "Response: $($response.Content)"
+                      Write-Host "Passcore is ready!"
+                      $ready = $true
+                      break
+                  }
               }
               catch {
-                  Start-Sleep 2
+                  Write-Host "Waiting for Passcore... ($($_.Exception.Message))"
+                  Start-Sleep -Seconds 1
               }
           } while ((Get-Date) -lt $deadline)
-          if ((Get-Date) -ge $deadline) {
-              throw "Passcore failed to start."
+
+          if (-not $ready) {
+              throw "Passcore failed to start within 90 seconds."
           }
 
       - name: Basic Smoke Verification
