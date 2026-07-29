@@ -122,14 +122,39 @@ jobs:
           $stdout = Join-Path $env:GITHUB_WORKSPACE "passcore.log"
           $stderr = Join-Path $env:GITHUB_WORKSPACE "passcore-error.log"
 
-          $proc = Start-Process -FilePath $exe `
-            -WorkingDirectory $publishDir `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -PassThru
+          # Started detached, deliberately. Start-Process hands the child this
+          # step's console; when the step ends Windows tears that console down
+          # and takes the app with it. That is exactly what happened -- the app
+          # logged "Now listening on: http://localhost:5000", then was already
+          # gone when the next step looked, with no exception and no shutdown
+          # message, because it was killed rather than failed.
+          #
+          # Win32_Process.Create does not attach the new process to the caller's
+          # console, so it survives the step boundary. cmd.exe owns the
+          # redirection and stays alive as the app's parent for as long as the
+          # app runs, which also makes it the handle to kill at teardown.
+          #
+          # The environment is NOT inherited through this path, so the two
+          # settings that matter are passed as command-line arguments instead --
+          # WebApplication.CreateBuilder(args) binds --environment and --urls as
+          # host configuration, so this is equivalent to the env vars without
+          # depending on them.
+          $commandLine = 'cmd.exe /c ""{0}" --environment ADTest --urls http://localhost:5000 > "{1}" 2> "{2}""' -f $exe, $stdout, $stderr
+          Write-Host "Launching: $commandLine"
 
-          $proc.Id | Out-File -FilePath backend.pid
-          Write-Host "Started Passcore with PID $($proc.Id)"
+          $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+              CommandLine      = $commandLine
+              CurrentDirectory = $publishDir
+          }
+
+          if ($result.ReturnValue -ne 0) {
+              throw "Win32_Process.Create failed with return value $($result.ReturnValue)."
+          }
+
+          # This is cmd.exe's pid. It lives exactly as long as the app does, so
+          # it serves as both the liveness probe and the teardown target.
+          $result.ProcessId | Out-File -FilePath backend.pid -Encoding ascii
+          Write-Host "Started Passcore host shell with PID $($result.ProcessId)"
 
       # One gate, with the full budget. Previously a separate step failed the run
       # if nothing was listening after a flat 5 seconds, which made this step's
@@ -139,14 +164,14 @@ jobs:
       - name: Wait for Passcore to be ready
         shell: powershell
         run: |
-          $passcorepid = [int](Get-Content backend.pid)
+          $passcorepid = [int](Get-Content backend.pid).Trim()
           $deadline = (Get-Date).AddSeconds(90)
           $ready = $false
 
           do {
               $proc = Get-Process -Id $passcorepid -ErrorAction SilentlyContinue
               if (-not $proc) {
-                  Write-Host "Passcore process $passcorepid is gone; it exited during startup."
+                  Write-Host "Passcore host shell $passcorepid is gone; the app exited during startup."
                   break
               }
 
@@ -281,9 +306,11 @@ jobs:
         shell: powershell
         run: |
           if (Test-Path backend.pid) {
-            $passcorepid = Get-Content backend.pid
-            Write-Host "Stopping Passcore PID $passcorepid..."
-            Stop-Process -Id $passcorepid -Force -ErrorAction SilentlyContinue
+            $passcorepid = (Get-Content backend.pid).Trim()
+            # /T because the pid is cmd.exe's and the app is its child; killing
+            # the shell alone would leave the app holding port 5000.
+            Write-Host "Stopping Passcore process tree rooted at PID $passcorepid..."
+            taskkill /F /T /PID $passcorepid 2>&1 | Write-Host
           }
 
       - name: Cleanup SMBLDS Container
