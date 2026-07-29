@@ -109,7 +109,9 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          # With "ErrorDisclosureMode": "Hardened" (default), it returns InvalidCredentials (4)
+          # This leg runs with "ErrorDisclosureMode": "Informative", which discloses an
+          # unknown user as UserNotFound (3). The Hardened leg below asserts that the
+          # same request returns InvalidCredentials (4) instead.
           echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 3)'
 
           echo "Test 4: User in restricted group"
@@ -129,6 +131,190 @@ jobs:
           echo "Response: $RESPONSE"
           # 6: ChangeNotPermitted
           echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
+
+      # ---------------------------------------------------------------------
+      # Hardened leg.
+      #
+      # Hardened is the shipped default and the posture the indistinguishability
+      # work exists to provide, but appsettings.LdapTest.json pins Informative, so
+      # until now it had no end-to-end coverage at all. The same config file is
+      # reused unchanged; only the posture differs, overridden at runtime.
+      # ---------------------------------------------------------------------
+      - name: Restart Passcore in Hardened mode
+        shell: bash
+        env:
+          # Layered over the unchanged appsettings.LdapTest.json. ASP.NET Core's
+          # default configuration chain reads environment variables after the JSON
+          # files, so this wins. It has to be a process environment variable:
+          # configuration appended as arguments after the program path is what made
+          # the earlier Docker fix silently ineffective.
+          AppSettings__ErrorDisclosureMode: Hardened
+        run: |
+          set -uo pipefail
+
+          # `dotnet run` is a launcher: backend.pid holds the launcher, and killing
+          # it does not reliably kill the child holding port 5000. Terminate by
+          # listener instead. If the old instance survived, the new one would fail
+          # to bind and every assertion below would silently be measuring the old
+          # Informative process, so the port being free is verified before starting.
+          # Whichever of these the runner image provides. Not all are guaranteed,
+          # so the port being free is confirmed over HTTP below rather than by
+          # trusting any one of them to have found the process.
+          listeners() {
+            {
+              if command -v lsof >/dev/null 2>&1; then
+                lsof -t -iTCP:5000 -sTCP:LISTEN 2>/dev/null
+              elif command -v ss >/dev/null 2>&1; then
+                ss -H -ltnp 'sport = :5000' 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2
+              elif command -v fuser >/dev/null 2>&1; then
+                fuser 5000/tcp 2>/dev/null | tr -s ' ' '\n'
+              fi
+            } | grep -E '^[0-9]+$' | sort -u || true
+          }
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            pids="$(listeners)"
+            if [ -z "$pids" ]; then
+              break
+            fi
+            echo "Attempt ${attempt}: stopping PID(s) on port 5000: ${pids}"
+            # shellcheck disable=SC2086
+            kill ${pids} 2>/dev/null || true
+            sleep 2
+          done
+
+          pids="$(listeners)"
+          if [ -n "$pids" ]; then
+            echo "Escalating to SIGKILL for: ${pids}"
+            # shellcheck disable=SC2086
+            kill -9 ${pids} 2>/dev/null || true
+            sleep 2
+          fi
+
+          # The authoritative check: nothing may still answer on the port.
+          if ! timeout 30s bash -c 'while curl -fsS http://localhost:5000/api/password >/dev/null 2>&1; do sleep 1; done'; then
+            echo "::error::Port 5000 is still serving after the previous instance was terminated. The Hardened leg cannot start."
+            exit 1
+          fi
+          echo "Port 5000 is free."
+
+          dotnet run \
+            --no-launch-profile \
+            --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --framework net8.0 \
+            --property:PASSCORE_PROVIDER=LDAP \
+            --no-build &
+          echo $! > backend.pid
+
+          echo "Waiting for Passcore (Hardened)..."
+          timeout 90s bash -c '
+            until curl -fsS http://localhost:5000/api/password >/dev/null; do
+              sleep 3
+            done
+          '
+          echo "Passcore restarted."
+
+      - name: Hardened Step A - restart verification
+        run: |
+          set -uo pipefail
+          echo "Unknown user must be indistinguishable from a wrong password in Hardened mode."
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+
+          CODE=$(printf '%s' "$RESPONSE" | jq -r '.errors[0].errorCode // empty' 2>/dev/null || true)
+          if [ "$CODE" != "4" ]; then
+            echo "::error::Expected InvalidCredentials (4) for an unknown user in Hardened mode, got '${CODE}'."
+            echo "This step runs first precisely to catch a failed restart. In Informative mode this same"
+            echo "request returns UserNotFound (3), so a '3' here almost certainly means the runtime"
+            echo "override did not take effect - most likely the previous Informative instance is still"
+            echo "bound to port 5000 and answering these requests."
+            exit 1
+          fi
+          echo "Restart confirmed: running in Hardened mode."
+
+      - name: Hardened Step B - indistinguishability
+        run: |
+          set -uo pipefail
+
+          # Every condition below must be masked behind one identical response.
+          # Rows 1 and 3 are the ones a well-meaning change is most likely to
+          # special-case: a correct password for an account refused on group
+          # grounds must not be distinguishable from anything else here.
+          declare -a labels=() bodies=() normalized=()
+          fail=0
+
+          probe() {
+            local label="$1" username="$2" password="$3"
+            local response errors code message
+
+            response=$(curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"${username}\", \"currentPassword\": \"${password}\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}" || true)
+
+            errors=$(printf '%s' "$response" | jq -S -c '.errors' 2>/dev/null || true)
+            code=$(printf '%s' "$response" | jq -r '.errors[0].errorCode // empty' 2>/dev/null || true)
+            message=$(printf '%s' "$response" | jq -r '.errors[0].message // empty' 2>/dev/null || true)
+
+            labels+=("$label")
+            bodies+=("$response")
+            normalized+=("$errors")
+
+            if [ "$code" != "4" ] || [ "$message" != "Invalid username or password" ]; then
+              echo "::error::${label}: expected errorCode 4 with message 'Invalid username or password', got errorCode '${code}' with message '${message}'."
+              fail=1
+            fi
+          }
+
+          probe "1 restricteduser + correct password (in RestrictedGroup)" restricteduser testpassword
+          probe "2 restricteduser + wrong password"                       restricteduser wrongpassword
+          probe "3 unlisteduser + correct password (in no group)"         unlisteduser   testpassword
+          probe "4 unlisteduser + wrong password"                         unlisteduser   wrongpassword
+          probe "5 nonexistent account"                                   nonexistent    anything
+          probe "6 testuser + wrong password (exists, authorized)"        testuser       wrongpassword
+
+          # Byte-identical, not merely all code 4: the message has to match too.
+          for i in "${!normalized[@]}"; do
+            if [ "${normalized[$i]}" != "${normalized[0]}" ]; then
+              echo "::error::'${labels[$i]}' is distinguishable from '${labels[0]}'."
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "----- all six responses -----"
+            for i in "${!bodies[@]}"; do
+              echo "${labels[$i]}"
+              echo "  ${bodies[$i]}"
+            done
+            echo "-----------------------------"
+            echo "A failure here is a real finding in the Hardened implementation, not a stale assertion."
+            exit 1
+          fi
+          echo "All six conditions produced identical responses."
+
+      - name: Hardened Step C - positive control
+        run: |
+          set -uo pipefail
+          echo "An authorized user with the correct password must NOT be refused."
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+
+          # Same tolerance as Test 1 in the Informative leg: MokAPI may not fully
+          # implement the change operation, so success or a non-authorization error
+          # is acceptable - but never an authorization/existence error. Without this
+          # control, a server answering 4 unconditionally would satisfy Step B.
+          ERROR_CODE=$(printf '%s' "$RESPONSE" | jq -r '.errors[0].errorCode // empty' 2>/dev/null || true)
+          # 3: UserNotFound, 4: InvalidCredentials, 6: ChangeNotPermitted
+          if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
+            echo "::error::alloweduser with the correct password returned '${ERROR_CODE}'. Hardened mode is refusing an authorized user, so Step B's uniform responses prove nothing."
+            exit 1
+          fi
+          echo "Positive control passed."
 
       - name: LDAP Environment Failure Test
         run: |
@@ -154,8 +340,34 @@ jobs:
 
       - name: Stop Services
         if: always()
+        shell: bash
         run: |
-          if [ -f backend.pid ]; then
-            kill "$(cat backend.pid)" || true
+          set -uo pipefail
+
+          # Either leg's instance may be the one running, and backend.pid holds a
+          # `dotnet run` launcher rather than the process that owns the port, so
+          # terminate by listener and use the pid file only as a backstop.
+          pids="$(
+            {
+              if command -v lsof >/dev/null 2>&1; then
+                lsof -t -iTCP:5000 -sTCP:LISTEN 2>/dev/null
+              elif command -v ss >/dev/null 2>&1; then
+                ss -H -ltnp 'sport = :5000' 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2
+              elif command -v fuser >/dev/null 2>&1; then
+                fuser 5000/tcp 2>/dev/null | tr -s ' ' '\n'
+              fi
+            } | grep -E '^[0-9]+$' | sort -u || true
+          )"
+          if [ -n "$pids" ]; then
+            # shellcheck disable=SC2086
+            kill ${pids} 2>/dev/null || true
+            sleep 2
+            # shellcheck disable=SC2086
+            kill -9 ${pids} 2>/dev/null || true
           fi
+
+          if [ -f backend.pid ]; then
+            kill "$(cat backend.pid)" 2>/dev/null || true
+          fi
+
           docker stop mokapi || true
