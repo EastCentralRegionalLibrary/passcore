@@ -37,7 +37,7 @@ jobs:
       - name: Setup WSL 2
         uses: Vampire/setup-wsl@v7
         with:
-          additional-packages: podman
+          additional-packages: podman ca-certificates
 
       - name: Start SMB LDS inside WSL
         shell: wsl-bash {0}
