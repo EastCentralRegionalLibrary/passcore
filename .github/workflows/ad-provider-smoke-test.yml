@@ -83,7 +83,10 @@ jobs:
       - name: Start Passcore
         shell: powershell
         run: |
-          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" -PassThru
+          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" `
+          -RedirectStandardOutput "passcore.log" `
+          -RedirectStandardError "passcore-error.log" `
+          -PassThru
           $proc.Id | Out-File -FilePath backend.pid
           echo "Started Passcore with PID $($proc.Id)"
 
@@ -177,10 +180,20 @@ jobs:
         shell: powershell
         run: |
           if (Test-Path backend.pid) {
-            $pId = Get-Content backend.pid
+            $passcorepid = Get-Content backend.pid
             echo "Stopping Passcore PID $pId..."
-            taskkill /F /T /PID $pId
+            taskkill /F /T /PID $passcorepid
           }
+
+      - name: Dump Passcore Startup Logs
+        if: always()
+        shell: powershell
+        run: |
+          echo "=== Passcore Standard Output ==="
+          if (Test-Path passcore.log) { Get-Content passcore.log }
+
+          echo "=== Passcore Error Output ==="
+          if (Test-Path passcore-error.log) { Get-Content passcore-error.log }
 
       - name: Cleanup SMBLDS Container
         if: always()
