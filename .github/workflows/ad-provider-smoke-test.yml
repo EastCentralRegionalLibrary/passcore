@@ -91,8 +91,22 @@ jobs:
           Write-Host "=== hosts entries for example.com ==="
           Select-String -Path $hosts -Pattern "example\.com" | ForEach-Object { Write-Host $_.Line }
 
+          # Resolved through the OS resolver, which honours the hosts file.
+          # nslookup is the wrong tool here twice over: it queries DNS directly
+          # and would never see these entries, and it writes its banner to
+          # stderr, which "2>&1" turns into a PowerShell error record that fails
+          # the step. A diagnostic must not be able to fail the job, so this one
+          # cannot throw.
           Write-Host "=== resolution check ==="
-          nslookup example.com 2>&1 | Write-Host
+          foreach ($name in @("example.com", "dc.example.com")) {
+              try {
+                  $addresses = [System.Net.Dns]::GetHostAddresses($name)
+                  Write-Host "$name -> $(($addresses | ForEach-Object { $_.IPAddressToString }) -join ', ')"
+              }
+              catch {
+                  Write-Host "$name did not resolve: $($_.Exception.Message)"
+              }
+          }
 
       # The backend is published framework-dependent against net8.0-windows, so
       # the ASP.NET Core 8 shared runtime has to be on the machine or the apphost
@@ -341,8 +355,16 @@ jobs:
             $passcorepid = (Get-Content backend.pid).Trim()
             # /T because the pid is cmd.exe's and the app is its child; killing
             # the shell alone would leave the app holding port 5000.
+            #
+            # No "2>&1": taskkill writes to stderr when the pid is already gone,
+            # and piping that into PowerShell turns it into an error record that
+            # fails the step -- which would let teardown fail a run whose tests
+            # all passed. Teardown of an already-dead process is a success here,
+            # so the exit code is reset rather than propagated.
             Write-Host "Stopping Passcore process tree rooted at PID $passcorepid..."
-            taskkill /F /T /PID $passcorepid 2>&1 | Write-Host
+            & taskkill /F /T /PID $passcorepid
+            Write-Host "taskkill exit code: $LASTEXITCODE"
+            $LASTEXITCODE = 0
           }
 
       - name: Cleanup SMBLDS Container
