@@ -53,7 +53,23 @@ public static class DomainPasswordPolicy
     public static int ResolveMinimumLength(
         ILogger logger,
         Func<int?> lookup,
-        int fallback = DefaultMinimumLength)
+        int fallback = DefaultMinimumLength) =>
+        ResolveMinimumLength(logger, lookup, fallback, out _);
+
+    /// <summary>
+    /// As <see cref="ResolveMinimumLength(ILogger, Func{int?}, int)"/>, and additionally
+    /// reports whether the value actually came from the directory.
+    /// </summary>
+    /// <param name="fromDirectory"><see langword="true"/> when the lookup returned a
+    /// value; <see langword="false"/> when the logged fallback was used. Callers that
+    /// cache the result use this to cache only real answers, so that a failing lookup
+    /// keeps re-attempting and keeps logging instead of having its warning suppressed
+    /// for the lifetime of a cache entry.</param>
+    public static int ResolveMinimumLength(
+        ILogger logger,
+        Func<int?> lookup,
+        int fallback,
+        out bool fromDirectory)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(lookup);
@@ -61,14 +77,19 @@ public static class DomainPasswordPolicy
         try
         {
             if (lookup() is { } minLength)
+            {
+                fromDirectory = true;
                 return minLength;
+            }
 
             LogLookupFailed(logger, fallback, null);
+            fromDirectory = false;
             return fallback;
         }
         catch (Exception ex)
         {
             LogLookupFailed(logger, fallback, ex);
+            fromDirectory = false;
             return fallback;
         }
     }

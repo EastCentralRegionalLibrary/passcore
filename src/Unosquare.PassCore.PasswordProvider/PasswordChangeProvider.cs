@@ -26,12 +26,16 @@ namespace Unosquare.PassCore.PasswordProvider
     /// <seealso cref="IPasswordChangeProvider" />
     /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
     [SupportedOSPlatform("windows")]
-    public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester
+    public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester, IGroupMembershipResolver
     {
         /// <inheritdoc />
         public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
 
         private readonly PasswordChangeOptions _options;
+
+        // The provider is registered as a singleton, so this is shared across
+        // requests -- which is the point: the value it holds is domain-wide.
+        private readonly CachedDomainMinimumLength _minimumLength = new();
         private IdentityType _idType = IdentityType.UserPrincipalName;
 
         private static readonly Action<ILogger, Exception?> LogAdminResetIgnoredInAutomaticContext =
@@ -215,13 +219,36 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <c>Domain Admins</c> through during a partial directory failure. This keeps
         /// it failing closed, matching the LDAP provider for the same condition.</para>
         /// </remarks>
-        public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+        public async Task<bool> IsMemberOfGroupAsync(string username, string groupName)
         {
-            // Every operation in this method is a service-account directory read
-            // (context, resolve, group enumeration); a failure is infrastructure,
-            // never an end-user credential signal. There is no request context
-            // here, so the correlation ID is unavailable — the base class logs the
-            // propagated failure with the correlation ID as a backstop.
+            var membership = await ResolveMembershipAsync(username).ConfigureAwait(false);
+            return await membership.IsMemberOfAnyAsync(new[] { groupName }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Resolves this user's group names once so that every configured group name
+        /// can be tested against the same resolution.
+        /// </summary>
+        /// <remarks>
+        /// <para>The per-group entry point above previously re-ran the whole sequence —
+        /// a fresh <c>PrincipalContext</c>, a <c>FindByIdentity</c>, and
+        /// <c>GetAuthorizationGroups</c> (the expensive one) — for every name the policy
+        /// asked about. With the shipped three restricted groups that is three of each,
+        /// per unauthenticated request, before the caller has proved anything.</para>
+        /// <para>Both enumerations are materialized into plain names in a single pass so
+        /// that the <c>PrincipalContext</c> and <c>UserPrincipal</c> can be disposed
+        /// immediately rather than held open across the policy's evaluation. That costs
+        /// one <c>GetGroups</c> in the case where a match in the authorization groups
+        /// would previously have short-circuited it — once per request, against N-fold
+        /// savings on everything else.</para>
+        /// </remarks>
+        public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
+        {
+            // Every operation here is a service-account directory read (context,
+            // resolve, group enumeration); a failure is infrastructure, never an
+            // end-user credential signal. There is no request context here, so the
+            // correlation ID is unavailable — the base class logs the propagated
+            // failure with the correlation ID as a backstop.
             try
             {
                 using var principalContext = RunAsServiceAccount(
@@ -229,19 +256,21 @@ namespace Unosquare.PassCore.PasswordProvider
                 var userPrincipal = RunAsServiceAccount(
                     "resolve user by identity", correlationId: null,
                     () => UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username)));
-                if (userPrincipal == null) return Task.FromResult(false);
 
-                // Records the first enumeration that could not complete. Both match
-                // paths return before the end of the method, so a value here always
-                // means "could not determine", never "determined not to be a member".
+                if (userPrincipal == null)
+                    return Task.FromResult<IResolvedGroupMembership>(AdResolvedMembership.NoSuchUser);
+
+                // Records the first enumeration that could not complete. A match is
+                // still definitive, so this only decides what a *negative* answer
+                // means: "determined not to be a member", or "could not determine".
                 Exception? undetermined = null;
+                var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // Deterministically check GetAuthorizationGroups first to resolve transitive/recursive and primary security groups.
+                // GetAuthorizationGroups resolves transitive/recursive and primary security groups.
                 try
                 {
                     using var authGroups = userPrincipal.GetAuthorizationGroups();
-                    if (authGroups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
-                        return Task.FromResult(true);
+                    CollectNames(authGroups, groupNames);
                 }
                 catch (Exception ex)
                 {
@@ -253,12 +282,11 @@ namespace Unosquare.PassCore.PasswordProvider
                         ServiceAccountHost(), ex);
                 }
 
-                // Complement with GetGroups to cover distribution or direct groups that might not be in authorization groups.
+                // GetGroups covers distribution or direct groups that might not be in authorization groups.
                 try
                 {
                     using var directGroups = userPrincipal.GetGroups();
-                    if (directGroups.Any(group => group.Name.Equals(groupName, StringComparison.OrdinalIgnoreCase)))
-                        return Task.FromResult(true);
+                    CollectNames(directGroups, groupNames);
                 }
                 catch (Exception ex)
                 {
@@ -269,14 +297,8 @@ namespace Unosquare.PassCore.PasswordProvider
                         ServiceAccountHost(), ex);
                 }
 
-                // Nothing matched. That is only an answer if both enumerations ran.
-                if (undetermined is not null)
-                {
-                    throw DirectoryErrorTranslator.TranslateException(
-                        undetermined, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
-                }
-
-                return Task.FromResult(false);
+                return Task.FromResult<IResolvedGroupMembership>(
+                    new AdResolvedMembership(groupNames, undetermined, _options.ErrorDisclosureMode));
             }
             catch (PasswordChangeException)
             {
@@ -289,6 +311,63 @@ namespace Unosquare.PassCore.PasswordProvider
                 ServiceAccountFailure.Log(Logger, correlationId: null, "read group membership", ServiceAccountHost(), ex);
                 throw DirectoryErrorTranslator.TranslateException(
                     ex, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
+            }
+        }
+
+        /// <summary>
+        /// Copies a principal collection's names into <paramref name="into"/>. A group
+        /// with no name means the enumeration cannot be trusted to rule anything out,
+        /// so it throws and is recorded as undetermined by the caller rather than
+        /// being silently skipped — dropping it could turn a deny-list match into a
+        /// miss.
+        /// </summary>
+        private static void CollectNames(IEnumerable<Principal> principals, HashSet<string> into)
+        {
+            foreach (var principal in principals)
+            {
+                into.Add(principal.Name ?? throw new InvalidOperationException(
+                    "A group principal has no Name, so this enumeration cannot rule out membership."));
+            }
+        }
+
+        /// <summary>
+        /// A single resolution of one user's group names, queried in memory.
+        /// </summary>
+        private sealed class AdResolvedMembership : IResolvedGroupMembership
+        {
+            /// <summary>An unresolvable user belongs to nothing, matching the previous <c>false</c> for a null principal.</summary>
+            internal static readonly AdResolvedMembership NoSuchUser =
+                new(new HashSet<string>(StringComparer.OrdinalIgnoreCase), null, ErrorDisclosureMode.Hardened);
+
+            private readonly HashSet<string> _groupNames;
+            private readonly Exception? _undetermined;
+            private readonly ErrorDisclosureMode _disclosureMode;
+
+            internal AdResolvedMembership(
+                HashSet<string> groupNames, Exception? undetermined, ErrorDisclosureMode disclosureMode)
+            {
+                _groupNames = groupNames;
+                _undetermined = undetermined;
+                _disclosureMode = disclosureMode;
+            }
+
+            public Task<bool> IsMemberOfAnyAsync(IReadOnlyCollection<string> groupNames)
+            {
+                if (groupNames is null || groupNames.Count == 0)
+                    return Task.FromResult(false);
+
+                // A match is definitive regardless of what else failed.
+                if (groupNames.Any(_groupNames.Contains))
+                    return Task.FromResult(true);
+
+                // Nothing matched. That is only an answer if both enumerations ran.
+                if (_undetermined is not null)
+                {
+                    throw DirectoryErrorTranslator.TranslateException(
+                        _undetermined, _disclosureMode, DirectoryActor.ServiceAccount);
+                }
+
+                return Task.FromResult(false);
             }
         }
 
@@ -565,8 +644,12 @@ namespace Unosquare.PassCore.PasswordProvider
         /// method supplies only the AccountManagement-specific lookup.
         /// </summary>
         /// <returns>The minimum password length as an integer.</returns>
+        // Cached with a short time-to-live: this runs on every POST, before the
+        // caller has proved anything, and the value is domain-wide. Only a
+        // directory-sourced value is cached, so a failing lookup keeps
+        // re-attempting and keeps logging its warning.
         private int AcquireDomainPasswordLength() =>
-            DomainPasswordPolicy.ResolveMinimumLength(Logger, ReadMinPwdLength);
+            _minimumLength.Resolve(Logger, ReadMinPwdLength);
 
         /// <summary>
         /// Reads <c>minPwdLength</c> from the domain. Returns <see langword="null"/>

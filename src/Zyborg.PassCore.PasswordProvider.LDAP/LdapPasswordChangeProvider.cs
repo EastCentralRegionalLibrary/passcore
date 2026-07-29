@@ -40,7 +40,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 ///   syntax, not RFC 4515 filter syntax.)
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IPasswordLengthRequirement
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver, IPasswordLengthRequirement
 {
     /// <inheritdoc />
     public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
@@ -48,6 +48,10 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
+
+    // The provider is registered as a singleton, so this is shared across requests —
+    // which is the point: the value it holds is domain-wide, not per-account.
+    private readonly CachedDomainMinimumLength _minimumLength = new();
 
     // AD operation errors lead with the Win32 code, e.g.
     // "0000052D: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM), data 0".
@@ -197,9 +201,48 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         ArgumentNullException.ThrowIfNull(username);
         ArgumentNullException.ThrowIfNull(groupName);
 
+        return IsMemberOfAnyGroup(username, new[] { groupName });
+    }
+
+    /// <summary>
+    /// Resolves this user once so that every configured group name can be tested
+    /// against the same resolution.
+    /// </summary>
+    /// <remarks>
+    /// The per-group entry point above previously re-resolved the user for every
+    /// name the policy asked about — with the shipped three restricted groups, three
+    /// binds and three searches per unauthenticated request, before the caller had
+    /// proved anything. The resolution is still lazy about the supplementary
+    /// lookups: a name matched by direct <c>memberOf</c> never triggers them, which
+    /// is the same short-circuit the per-group path always had.
+    /// </remarks>
+    public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
+    {
+        ArgumentNullException.ThrowIfNull(username);
+
+        return Task.FromResult<IResolvedGroupMembership>(new LdapResolvedMembership(this, username));
+    }
+
+    /// <summary>
+    /// The membership evaluation itself, shared by the per-group and resolve-once
+    /// entry points. Semantics are unchanged from the per-group version: a match is
+    /// definitive, and a negative answer requires every lookup that could still have
+    /// matched to have completed.
+    /// </summary>
+    private Task<bool> IsMemberOfAnyGroup(
+        string username, IReadOnlyCollection<string> groupNames, LdapResolvedMembership? resolution = null)
+    {
+        if (groupNames.Count == 0)
+            return Task.FromResult(false);
+
         try
         {
-            var user = FindUser(username);
+            // Resolved inside the try so that a failure here is translated exactly as
+            // it always was, and cached on the resolution so a second evaluation of
+            // the same request does not repeat it.
+            var user = resolution?.User ?? FindUser(username);
+            if (resolution is not null)
+                resolution.User = user;
 
             // Records the first lookup that could not complete. Every match path
             // returns before reaching the end of the method, so a value here always
@@ -211,7 +254,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             // Compare against the group's RDN value or its full DN, never as a substring,
             // so that "Admins" cannot accidentally match "AdminsExtra".
             var isMember = user.Groups.Any(dn =>
-                DnMatchesGroup(dn, groupName));
+                groupNames.Any(groupName => DnMatchesGroup(dn, groupName)));
 
             if (isMember)
                 return Task.FromResult(true);
@@ -220,11 +263,11 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             if (!string.IsNullOrEmpty(user.PrimaryGroupId))
             {
                 // Robust check for well-known RIDs:
-                if (user.PrimaryGroupId == "513" && groupName.Equals("Domain Users", StringComparison.OrdinalIgnoreCase))
+                if (user.PrimaryGroupId == "513" && groupNames.Any(g => g.Equals("Domain Users", StringComparison.OrdinalIgnoreCase)))
                     return Task.FromResult(true);
-                if (user.PrimaryGroupId == "512" && groupName.Equals("Domain Admins", StringComparison.OrdinalIgnoreCase))
+                if (user.PrimaryGroupId == "512" && groupNames.Any(g => g.Equals("Domain Admins", StringComparison.OrdinalIgnoreCase)))
                     return Task.FromResult(true);
-                if (user.PrimaryGroupId == "519" && groupName.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase))
+                if (user.PrimaryGroupId == "519" && groupNames.Any(g => g.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase)))
                     return Task.FromResult(true);
 
                 // primaryGroupID is a RID, read back from the directory as a string.
@@ -252,7 +295,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                         if (primarySearch.HasMore())
                         {
                             var primaryDn = primarySearch.Next().Dn;
-                            if (DnMatchesGroup(primaryDn, groupName))
+                            if (groupNames.Any(groupName => DnMatchesGroup(primaryDn, groupName)))
                                 return Task.FromResult(true);
                         }
                     }
@@ -304,7 +347,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 while (chainSearch.HasMore())
                 {
                     var entry = chainSearch.Next();
-                    if (DnMatchesGroup(entry.Dn, groupName))
+                    if (groupNames.Any(groupName => DnMatchesGroup(entry.Dn, groupName)))
                         return Task.FromResult(true);
                 }
             }
@@ -351,9 +394,16 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Cached with a short time-to-live. This runs on every POST, before the caller
+    /// has proved anything, and costs a bind plus two searches; the value is
+    /// domain-wide and changes about as often as a group policy edit. Only a
+    /// directory-sourced value is cached, so a failing lookup keeps re-attempting and
+    /// keeps logging its warning.
+    /// </remarks>
     public Task<int> GetMinimumLengthAsync()
     {
-        return Task.FromResult(DomainPasswordPolicy.ResolveMinimumLength(Logger, ReadMinPwdLength));
+        return Task.FromResult(_minimumLength.Resolve(Logger, ReadMinPwdLength));
     }
 
     private int? ReadMinPwdLength()
@@ -1401,4 +1451,39 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         string DistinguishedName,
         IReadOnlyCollection<string> Groups,
         string? PrimaryGroupId);
+
+    /// <summary>
+    /// Holds one resolution of a user so that several group names can be tested
+    /// against it without re-resolving. The user lookup happens once, on first use;
+    /// each evaluation then reuses it.
+    /// </summary>
+    /// <remarks>
+    /// Evaluation itself is deliberately not memoized. The supplementary lookups are
+    /// skipped entirely whenever a name matches direct <c>memberOf</c>, which is the
+    /// common case for a configured deny list, and preserving that short-circuit is
+    /// worth more than collapsing the two calls the policy makes (restricted, then
+    /// allowed) when a deployment configures both lists.
+    /// </remarks>
+    private sealed class LdapResolvedMembership : IResolvedGroupMembership
+    {
+        private readonly LdapPasswordChangeProvider _provider;
+        private readonly string _username;
+
+        public LdapResolvedMembership(LdapPasswordChangeProvider provider, string username)
+        {
+            _provider = provider;
+            _username = username;
+        }
+
+        /// <summary>The resolved user, populated on first evaluation and reused after.</summary>
+        internal LdapUser? User { get; set; }
+
+        public Task<bool> IsMemberOfAnyAsync(IReadOnlyCollection<string> groupNames)
+        {
+            if (groupNames is null || groupNames.Count == 0)
+                return Task.FromResult(false);
+
+            return _provider.IsMemberOfAnyGroup(_username, groupNames, this);
+        }
+    }
 }
