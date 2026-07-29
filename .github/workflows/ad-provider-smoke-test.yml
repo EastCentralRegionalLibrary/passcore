@@ -48,8 +48,13 @@ jobs:
           sed -i 's/\r$//' "${SEED_SCRIPT}"
           chmod +x "${SEED_SCRIPT}"
 
+          # Fixed hostname so the DC's FQDN is deterministic (dc.example.com)
+          # and can be mapped in the Windows hosts file below. Without it the
+          # container gets a random id as its hostname and there is nothing
+          # stable to map.
           podman run -d \
             --name smblds-ad \
+            --hostname dc \
             -p 389:389 \
             -p 636:636 \
             -e REALM="EXAMPLE.COM" \
@@ -61,6 +66,33 @@ jobs:
             until podman exec smblds-ad true; do
                 sleep 2
             done
+
+      # System.DirectoryServices.AccountManagement does not confine itself to the
+      # server it was given. GetAuthorizationGroups() calls LoadDomainInfo(),
+      # which resolves the domain by its DNS name and opens a fresh connection to
+      # it -- so pointing the provider at "localhost" is not enough, and the call
+      # failed with the domain unresolvable. That left group membership
+      # undetermined, and the provider correctly refused the request rather than
+      # treating "could not tell" as "not a member".
+      #
+      # Mapping the realm and the DC's FQDN to the published ports makes the
+      # runner look enough like a domain member for that second connection to
+      # succeed. The runner is administrator, so the hosts file is writable.
+      - name: Map the test domain to the published LDAP ports
+        shell: powershell
+        run: |
+          $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
+          $entries = @(
+            "127.0.0.1 example.com",
+            "127.0.0.1 dc.example.com"
+          )
+          Add-Content -Path $hosts -Value ($entries -join "`r`n")
+
+          Write-Host "=== hosts entries for example.com ==="
+          Select-String -Path $hosts -Pattern "example\.com" | ForEach-Object { Write-Host $_.Line }
+
+          Write-Host "=== resolution check ==="
+          nslookup example.com 2>&1 | Write-Host
 
       # The backend is published framework-dependent against net8.0-windows, so
       # the ASP.NET Core 8 shared runtime has to be on the machine or the apphost
