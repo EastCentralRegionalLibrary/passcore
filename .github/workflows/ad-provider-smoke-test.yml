@@ -113,7 +113,7 @@ jobs:
               Write-Host "Nothing is listening on port 5000."
               exit 1
           }
-          
+
       - name: Wait for Passcore to be ready
         shell: powershell
         run: |
@@ -122,7 +122,7 @@ jobs:
 
           do {
               try {
-                  $response = Invoke-WebRequest -Uri "http://127.0.0.1:5000/api/password" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+                  $response = Invoke-WebRequest -Uri "http://localhost:5000/api/password" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
                   if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
                       Write-Host "Status: $($response.StatusCode)"
                       Write-Host "Response: $($response.Content)"
