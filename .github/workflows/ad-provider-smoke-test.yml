@@ -96,16 +96,6 @@ jobs:
           $proc.Id | Out-File -FilePath backend.pid
           Write-Host "Started Passcore with PID $($proc.Id)"
 
-      - name: Stop Passcore
-        if: always()
-        shell: powershell
-        run: |
-          if (Test-Path backend.pid) {
-            $passcorepid = Get-Content backend.pid
-            Write-Host "Stopping Passcore PID $passcorepid..."
-            taskkill /F /T /PID $passcorepid 2>$null || true
-          }
-
       - name: Wait for Passcore to be ready
         shell: bash
         run: |
@@ -198,7 +188,7 @@ jobs:
           if (Test-Path backend.pid) {
             $passcorepid = Get-Content backend.pid
             Write-Host "Stopping Passcore PID $passcorepid..."
-            taskkill /F /T /PID $passcorepid 2>$null || true
+            Stop-Process -Id $passcorepid -Force -ErrorAction SilentlyContinue
           }
 
       - name: Dump Passcore Startup Logs
