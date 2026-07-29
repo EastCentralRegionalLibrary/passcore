@@ -59,8 +59,6 @@ jobs:
             -v "${SEED_SCRIPT}:/entrypoint.d/seedusers.sh:ro" \
             docker.io/smblds/smblds:latest
 
-          sleep 5
-
       - name: Setup .NET 10.0 SDK
         uses: actions/setup-dotnet@v5
         with:
@@ -74,25 +72,39 @@ jobs:
           cache-dependency-path: |
             src/Unosquare.PassCore.Web/ClientApp/package-lock.json
 
-      - name: Build Backend (AD)
+      - name: Publish Passcore Backend (AD)
+        shell: pwsh
         run: |
-          dotnet build `
-            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj `
+          dotnet publish .\src\Unosquare.PassCore.Web\Unosquare.PassCore.Web.csproj `
             --configuration Release `
             --runtime win-x64 `
             --framework net8.0-windows `
             --property:PASSCORE_PROVIDER=AD `
             --self-contained false `
+            --output ".\passcore_output"
 
       - name: Start Passcore
         shell: powershell
         run: |
-          $proc = Start-Process dotnet -ArgumentList "run --no-launch-profile --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj --configuration Release --runtime win-x64 --framework net8.0-windows --property:PASSCORE_PROVIDER=AD --no-build" `
-          -RedirectStandardOutput "passcore.log" `
-          -RedirectStandardError "passcore-error.log" `
-          -PassThru
+          $exePath = (Resolve-Path ".\passcore_output\Unosquare.PassCore.Web.exe").Path
+          $proc = Start-Process $exePath `
+            -ArgumentList "--no-launch-profile" `
+            -RedirectStandardOutput "passcore.log" `
+            -RedirectStandardError "passcore-error.log" `
+            -PassThru
+
           $proc.Id | Out-File -FilePath backend.pid
-          echo "Started Passcore with PID $($proc.Id)"
+          Write-Host "Started Passcore with PID $($proc.Id)"
+
+      - name: Stop Passcore
+        if: always()
+        shell: powershell
+        run: |
+          if (Test-Path backend.pid) {
+            $passcorepid = Get-Content backend.pid
+            Write-Host "Stopping Passcore PID $passcorepid..."
+            taskkill /F /T /PID $passcorepid 2>$null || true
+          }
 
       - name: Wait for Passcore to be ready
         shell: bash
@@ -185,8 +197,8 @@ jobs:
         run: |
           if (Test-Path backend.pid) {
             $passcorepid = Get-Content backend.pid
-            echo "Stopping Passcore PID $pId..."
-            taskkill /F /T /PID $passcorepid
+            Write-Host "Stopping Passcore PID $passcorepid..."
+            taskkill /F /T /PID $passcorepid 2>$null || true
           }
 
       - name: Dump Passcore Startup Logs
