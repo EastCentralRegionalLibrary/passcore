@@ -51,7 +51,7 @@ jobs:
             -p 636:636 \
             -e REALM="EXAMPLE.COM" \
             -e DOMAIN="EXAMPLE" \
-            -e ADMINPASS="adminpassword" \
+            -e ADMINPASS="AdminPassword123!" \
             -e INSECURE_PASSWORDSETTINGS="true" \
             -v "${SEED_SCRIPT}:/entrypoint.d/seedusers.sh:ro" \
             docker.io/smblds/smblds:latest
