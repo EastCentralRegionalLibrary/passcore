@@ -97,16 +97,42 @@ jobs:
             -e DOMAINPASS="AdminPassword123!" \
             -e NOCOMPLEXITY="true" \
             docker.io/nowsci/samba-domain:latest
-            # Wait until Samba AD DC is initialized
-            until podman exec smblds-ad samba-tool domain info example.com >/dev/null 2>&1; do
-              if [ "$(podman inspect -f '{{.State.Running}}' smblds-ad)" != "true" ]; then
-                echo "ERROR: Samba AD DC container stopped unexpectedly!"
-                podman logs smblds-ad
-                exit 1
-              fi
-              sleep 2
-            done
-            echo "Samba AD DC is up and ready!"
+
+      - name: Wait for Samba AD DC Provisioning
+        shell: wsl-bash {0}
+        run: |
+          echo "Waiting for Samba AD DC schema and database provisioning..."
+
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          READY=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            # 1. Fail fast if container exited
+            if [ "$(podman inspect -f '{{.State.Running}}' smblds-ad 2>/dev/null)" != "true" ]; then
+              echo "ERROR: Samba AD DC container exited unexpectedly!"
+              echo "=== Samba Container Logs ==="
+              podman logs smblds-ad
+              exit 1
+            fi
+
+            # 2. Check local LDB database directly (avoids network/DNS timeout hangs)
+            if podman exec smblds-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+              echo "Samba AD DC schema and sam.ldb are fully initialized!"
+              READY=1
+              break
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            sleep 2
+          done
+
+          if [ $READY -ne 1 ]; then
+            echo "ERROR: Timed out waiting for Samba initialization after 60 seconds!"
+            echo "=== Samba Container Logs ==="
+            podman logs smblds-ad
+            exit 1
+          fi
 
       - name: Seed Active Directory Users and Groups
         shell: wsl-bash {0}
