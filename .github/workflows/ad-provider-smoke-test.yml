@@ -98,7 +98,7 @@ jobs:
             -e NOCOMPLEXITY="true" \
             docker.io/nowsci/samba-domain:latest
             # Wait until Samba AD DC is initialized
-            until podman exec smblds-ad /domain.sh status >/dev/null 2>&1; do
+            until podman exec smblds-ad samba-tool domain info example.com >/dev/null 2>&1; do
               if [ "$(podman inspect -f '{{.State.Running}}' smblds-ad)" != "true" ]; then
                 echo "ERROR: Samba AD DC container stopped unexpectedly!"
                 podman logs smblds-ad
