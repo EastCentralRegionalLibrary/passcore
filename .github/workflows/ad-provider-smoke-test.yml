@@ -79,19 +79,28 @@ jobs:
           podman run -d \
             --name smblds-ad \
             --hostname dc \
-            -p 389:389 \
-            -p 636:636 \
-            -p ${WSL_IP}:53:53/udp \
-            -p ${WSL_IP}:53:53/tcp \
-            -e REALM="EXAMPLE.COM" \
-            -e DOMAIN="EXAMPLE" \
-            -e ADMINPASS="AdminPassword123!" \
-            -e INSECURE_PASSWORDSETTINGS="true" \
-            -v "${SEED_SCRIPT}:/entrypoint.d/seedusers.sh:ro" \
-            docker.io/smblds/smblds:latest
-            until podman exec smblds-ad true; do
+            -p 389:389 -p 636:636 \
+            -p 3268:3268 -p 3269:3269 \
+            -p ${WSL_IP}:53:53/udp -p ${WSL_IP}:53:53/tcp \
+            -e DOMAIN="example.com" \
+            -e DOMAINPASS="AdminPassword123!" \
+            -e NOCOMPLEXITY="true" \
+            docker.io/nowsci/samba-domain-controller:latest
+            until podman exec smblds-ad samba-tool domain info example.com > /dev/null 2>&1; do
                 sleep 2
             done
+
+      - name: Seed Active Directory Users and Groups
+        shell: wsl-bash {0}
+        run: |
+          SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/smblds/seedusers.sh"
+
+          # Fix CRLF line endings from Windows git checkout
+          sed -i 's/\r$//' "${SEED_SCRIPT}"
+
+          # Copy script into container and execute it
+          podman cp "${SEED_SCRIPT}" smblds-ad:/tmp/seedusers.sh
+          podman exec smblds-ad /bin/sh /tmp/seedusers.sh
 
       # System.DirectoryServices.AccountManagement does not confine itself to the
       # server it was given. GetAuthorizationGroups() calls LoadDomainInfo(),
