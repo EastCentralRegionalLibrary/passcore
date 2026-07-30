@@ -676,11 +676,27 @@ namespace Unosquare.PassCore.PasswordProvider
 
 
         /// <summary>
-        /// Creates and returns a DirectoryEntry object using LDAP connection details from options.
-        /// Returns <see langword="null"/> only when no LDAP hostnames are configured; a construction
-        /// failure is allowed to propagate so the caller can log it (rather than being swallowed here).
+        /// Binds the domain naming context — the object that carries
+        /// <c>minPwdLength</c> — using the configured service-account credentials.
+        /// Returns <see langword="null"/> only when no LDAP hostnames are configured;
+        /// every other failure propagates so the caller can log it.
         /// </summary>
-        /// <returns>A <see cref="DirectoryEntry"/> object configured with LDAP credentials, or null if no hostnames are configured.</returns>
+        /// <remarks>
+        /// <para>This used to pass a bare <c>host:port</c> to <see cref="DirectoryEntry"/>,
+        /// which is not an ADSI path. It failed with <c>0x80005000</c>
+        /// (<c>E_ADS_BAD_PATHNAME</c>) on every request, so any deployment running
+        /// <c>UseAutomaticContext: false</c> silently advertised the fallback minimum
+        /// length of 6 while logging the warning each time. The degradation behaved
+        /// exactly as designed, which is why it went unnoticed.</para>
+        /// <para>Adding the scheme alone would not have been enough.
+        /// <c>minPwdLength</c> is an attribute of the domain naming context, not of
+        /// the server root, so <c>LDAP://host:port</c> binds an object that does not
+        /// carry it and yields <see langword="null"/> — the "value absent" case,
+        /// which stops the warning and makes the failure invisible. The naming
+        /// context is therefore read from the rootDSE rather than derived from the
+        /// configured host name, which need not correspond to the domain's DN.</para>
+        /// </remarks>
+        /// <returns>A <see cref="DirectoryEntry"/> bound to the domain naming context, or null if no hostnames are configured.</returns>
         private DirectoryEntry? GetDirectoryEntry()
         {
             if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty
@@ -688,13 +704,29 @@ namespace Unosquare.PassCore.PasswordProvider
                 return null; // Return null to indicate failure to create DirectoryEntry
             }
 
-            var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string
+            var host = _options.LdapHostnames.First();
 
-            // No local catch: a construction failure propagates to
-            // ResolveMinimumLength, which logs it and returns the fallback. This
-            // removes the previous silent swallow that hid the real reason.
-            return new DirectoryEntry( // Create DirectoryEntry with LDAP credentials
-                domain,
+            // No local catch anywhere below: a bind or read failure propagates to
+            // ResolveMinimumLength, which logs it and returns the fallback. Turning
+            // a reachability failure into a null here would present it as "the
+            // directory does not publish this value" and silence the warning.
+            using var rootDse = new DirectoryEntry(
+                AdsiPath.ForRootDse(host, _options.LdapPort),
+                _options.LdapUsername,
+                _options.LdapPassword);
+
+            // Accessing Properties is what actually binds.
+            var namingContext = rootDse.Properties["defaultNamingContext"]?.Value as string;
+
+            if (string.IsNullOrWhiteSpace(namingContext))
+            {
+                throw new InvalidOperationException(
+                    FormattableString.Invariant(
+                        $"The rootDSE at '{host}:{_options.LdapPort}' returned no defaultNamingContext, so the domain naming context that carries minPwdLength cannot be located."));
+            }
+
+            return new DirectoryEntry(
+                AdsiPath.ForNamingContext(host, _options.LdapPort, namingContext),
                 _options.LdapUsername,
                 _options.LdapPassword);
         }
