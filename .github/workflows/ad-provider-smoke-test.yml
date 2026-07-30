@@ -231,6 +231,47 @@ jobs:
               throw "Publish did not produce executable."
           }
 
+      # Empties the shipped group lists in the PUBLISHED appsettings.json.
+      #
+      # This is not belt-and-braces for the empty PasswordProviderOptions in
+      # appsettings.ADTest.json -- it is the only thing that actually works.
+      # .NET configuration merges the environment file onto the base file per
+      # key, and binds arrays by index (RestrictedAdGroups:0, :1, :2). An
+      # override that supplies no indices leaves the base's indices in place,
+      # and even an explicit "RestrictedAdGroups": [] contributes zero keys and
+      # changes nothing. An override cannot SHRINK an array. So the base file's
+      # three shipped entries survived into the merged configuration,
+      # GroupMembershipPolicy saw a non-empty deny list, and it resolved
+      # membership after all -- which is how a run that was supposed to skip
+      # group evaluation entirely still failed inside GetGroups().
+      #
+      # Only the build output is touched, never the repository's shipped sample
+      # config. Emptying the arrays in the base file is what finally makes the
+      # merged result empty.
+      - name: Clear the shipped group lists from the published configuration
+        shell: powershell
+        run: |
+          $settings = ".\passcore_output\appsettings.json"
+          $json = Get-Content $settings -Raw
+
+          foreach ($key in @("RestrictedAdGroups", "AllowedAdGroups")) {
+              $json = [regex]::Replace(
+                  $json,
+                  "(?s)`"$key`"\s*:\s*\[[^\]]*\]",
+                  "`"$key`": []")
+          }
+
+          Set-Content -Path $settings -Value $json -NoNewline
+
+          Write-Host "=== group lists in the published configuration ==="
+          Select-String -Path $settings -Pattern "RestrictedAdGroups|AllowedAdGroups" -Context 0,1 |
+            ForEach-Object { Write-Host $_.Line }
+
+          # Fail loudly rather than silently re-running group evaluation.
+          if (Select-String -Path $settings -Pattern '"(Administrators|Domain Admins|Enterprise Admins)"' -Quiet) {
+              throw "Shipped group names still present; GroupMembershipPolicy would not short-circuit."
+          }
+
       - name: Start Passcore
         shell: powershell
         run: |
