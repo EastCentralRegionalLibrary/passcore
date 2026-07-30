@@ -61,12 +61,20 @@ jobs:
           # 88 (Kerberos) and 464 (kpasswd) are published because ADSI's
           # IADsUser::ChangePassword tries transports in order: LDAP over SSL on
           # 636, then the Kerberos change-password protocol on 464, then
-          # NetUserChangePassword over SMB on 445. With none of those usable it
-          # spent ~11 seconds timing out and returned E_ACCESSDENIED, which the
-          # test read as "not a policy error" and passed -- the change had never
-          # actually happened. 636 needs the runner to trust Samba's self-signed
-          # certificate, and 445 cannot be published because Windows binds it, so
-          # 464 is the transport this test can realistically give it.
+          # NetUserChangePassword over SMB on 445.
+          #
+          # Publishing them was necessary but NOT sufficient, and the reason is
+          # worth recording because the obvious theory was wrong. The first run
+          # with these ports open showed all five reachable and the request still
+          # failing in 11.18s -- against 11.4s before they were opened. The time
+          # was never port timeouts.
+          #
+          # ADSI refuses to change a password over an unencrypted, unsigned
+          # channel, and the provider binds simple over plaintext 389, so AD
+          # answers E_ACCESSDENIED. That reads as a permissions problem and is
+          # really a transport one. The fix is the trusted-CA step further down,
+          # which lets the SSL attempt on 636 validate; these ports stay open so
+          # the Kerberos path is available too.
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -258,6 +266,107 @@ jobs:
       # cannot start at all. Installing only the 10.0 SDK does not provide it:
       # the 10.0 SDK carries the 10.0 runtimes. The LDAP smoke test, which
       # passes, pins 8.0 for the same reason.
+      # ADSI's IADsUser::ChangePassword refuses to run over an unencrypted,
+      # unsigned channel. The provider binds simple over plaintext 389, so AD
+      # answers the change with E_ACCESSDENIED -- which looks like a permissions
+      # problem and is really a transport one. Publishing 88/464 did not help:
+      # the first run showed all five ports reachable and the duration unchanged
+      # at ~11s, which ruled out the port-timeout theory.
+      #
+      # Trusting the DC's self-signed CA is what gives ADSI a channel it will
+      # use. This is the opposite of disabling certificate validation: the chain
+      # is still verified, against a root the runner has been told to trust --
+      # the same thing a real deployment does with its own AD CA.
+      - name: Extract the Samba AD DC certificate authority
+        shell: wsl-bash {0}
+        run: |
+          WORKSPACE="$(wslpath '${{ github.workspace }}')"
+
+          # Samba's default location, with a search as a fallback in case the
+          # image lays it out differently.
+          CA_PATH="$(podman exec samba-ad sh -c '
+            if [ -f /var/lib/samba/private/tls/ca.pem ]; then
+              echo /var/lib/samba/private/tls/ca.pem
+            else
+              find /var/lib/samba /etc/samba -name "ca.pem" 2>/dev/null | head -1
+            fi')"
+
+          if [ -z "${CA_PATH}" ]; then
+            echo "ERROR: no ca.pem found in the container. Without the DC's CA the runner"
+            echo "       cannot validate its certificate, LDAPS will not be used, and the"
+            echo "       password change has no encrypted transport."
+            echo "=== tls directory ==="
+            podman exec samba-ad sh -c 'ls -la /var/lib/samba/private/tls/ 2>&1' || true
+            exit 1
+          fi
+
+          echo "Samba CA found at: ${CA_PATH}"
+          podman exec samba-ad cat "${CA_PATH}" > "${WORKSPACE}/samba-ca.pem"
+
+          if [ ! -s "${WORKSPACE}/samba-ca.pem" ]; then
+            echo "ERROR: extracted CA file is empty."
+            exit 1
+          fi
+
+          echo "=== extracted CA ==="
+          head -1 "${WORKSPACE}/samba-ca.pem"
+          wc -c < "${WORKSPACE}/samba-ca.pem" | xargs echo "  bytes:"
+
+      - name: Trust the Samba AD DC certificate authority
+        shell: powershell
+        run: |
+          $pemPath = Join-Path $env:GITHUB_WORKSPACE "samba-ca.pem"
+          if (-not (Test-Path $pemPath)) {
+              throw "samba-ca.pem was not extracted; the previous step should have failed."
+          }
+
+          $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pemPath)
+          Write-Host "Subject    : $($certificate.Subject)"
+          Write-Host "Issuer     : $($certificate.Issuer)"
+          Write-Host "Thumbprint : $($certificate.Thumbprint)"
+          Write-Host "Valid      : $($certificate.NotBefore) .. $($certificate.NotAfter)"
+
+          # LocalMachine\Root, not CurrentUser: the Passcore process is launched
+          # detached through Win32_Process.Create and does not necessarily run as
+          # the same user this step does.
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root", "LocalMachine")
+          $store.Open("ReadWrite")
+          $store.Add($certificate)
+          $store.Close()
+
+          $installed = Get-ChildItem Cert:\LocalMachine\Root |
+            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }
+          if (-not $installed) {
+              throw "The CA was not present in LocalMachine\Root after the add."
+          }
+          Write-Host "CA installed into LocalMachine\Root."
+
+          # Diagnostic, not an assertion. It reports WHICH name the certificate
+          # validates for, which is the open question: the provider is configured
+          # with example.com, while Samba issues its certificate for the DC's own
+          # FQDN. If example.com fails and dc.example.com succeeds, the fix is to
+          # point LdapHostnames at the DC rather than at the domain.
+          Write-Host "=== LDAPS bind check (diagnostic; does not fail the step) ==="
+          foreach ($target in @("example.com", "dc.example.com")) {
+              try {
+                  Add-Type -AssemblyName System.DirectoryServices.Protocols
+                  $identifier = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier($target, 636)
+                  $connection = New-Object System.DirectoryServices.Protocols.LdapConnection($identifier)
+                  $connection.SessionOptions.SecureSocketLayer = $true
+                  $connection.SessionOptions.ProtocolVersion = 3
+                  $connection.AuthType = [System.DirectoryServices.Protocols.AuthType]::Basic
+                  $connection.Credential = New-Object System.Net.NetworkCredential(
+                      "EXAMPLE\Administrator", "AdminPassword123!")
+                  $connection.Timeout = [TimeSpan]::FromSeconds(15)
+                  $connection.Bind()
+                  Write-Host "  LDAPS bind to ${target}:636 SUCCEEDED -- the certificate validates for this name."
+                  $connection.Dispose()
+              }
+              catch {
+                  Write-Host "  LDAPS bind to ${target}:636 failed: $($_.Exception.Message)"
+              }
+          }
+
       - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v5
         with:
@@ -526,8 +635,13 @@ jobs:
       - name: AD Success and Authorization Tests
         shell: bash
         run: |
-          # Reports which change transports the runner can actually reach. Called
-          # only on failure, to answer "which transport" without a second run.
+          # Called only on failure. Reachability alone has already been shown NOT
+          # to be the whole story -- a run with every one of these ports open
+          # still failed with E_ACCESSDENIED, because ADSI will not change a
+          # password over an unencrypted channel. So read this together with the
+          # LDAPS bind check in the "Trust the Samba AD DC certificate authority"
+          # step: all-reachable here plus a failed LDAPS bind there means the
+          # certificate is not validating for the name being connected to.
           report_transports() {
             echo "  --- change-password transport reachability (TCP only; UDP not probeable here) ---"
             for port in 389 636 464 88 3268; do
