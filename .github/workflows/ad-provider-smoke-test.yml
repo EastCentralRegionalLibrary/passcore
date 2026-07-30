@@ -49,15 +49,28 @@ jobs:
           cgroup_manager = "cgroupfs"
           EOF
 
-      - name: Start SMB LDS inside WSL
+      - name: Start Samba AD DC inside WSL
         shell: wsl-bash {0}
         run: |
           # Convert Windows workspace path to a Linux mount path for Podman
-          SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/smblds/seedusers.sh"
+          SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/samba-ad/seedusers.sh"
           # Fix CRLF line endings and make script executable
           sed -i 's/\r$//' "${SEED_SCRIPT}"
           chmod +x "${SEED_SCRIPT}"
 
+          # 88 (Kerberos) and 464 (kpasswd) are published because ADSI's
+          # IADsUser::ChangePassword tries transports in order: LDAP over SSL on
+          # 636, then the Kerberos change-password protocol on 464, then
+          # NetUserChangePassword over SMB on 445. With none of those usable it
+          # spent ~11 seconds timing out and returned E_ACCESSDENIED, which the
+          # test read as "not a policy error" and passed -- the change had never
+          # actually happened. 636 needs the runner to trust Samba's self-signed
+          # certificate, and 445 cannot be published because Windows binds it, so
+          # 464 is the transport this test can realistically give it.
+          #
+          # 135, 137-139 and 445 are deliberately NOT published: the Windows host
+          # already binds them and the publish would fail.
+          #
           # Fixed hostname so the DC's FQDN is deterministic (dc.example.com)
           # and can be mapped in the Windows hosts file below. Without it the
           # container gets a random id as its hostname and there is nothing
@@ -87,11 +100,13 @@ jobs:
           echo "WSL VM IP for DNS publishing: ${WSL_IP}"
 
           podman run -d \
-            --name smblds-ad \
+            --name samba-ad \
             --hostname dc \
             --privileged \
             -p 389:389 -p 636:636 \
             -p 3268:3268 -p 3269:3269 \
+            -p 88:88/tcp -p 88:88/udp \
+            -p 464:464/tcp -p 464:464/udp \
             -p ${WSL_IP}:53:53/udp -p ${WSL_IP}:53:53/tcp \
             -e DOMAIN="example.com" \
             -e DOMAINPASS="AdminPassword123!" \
@@ -109,15 +124,15 @@ jobs:
 
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             # 1. Fail fast if container exited
-            if [ "$(podman inspect -f '{{.State.Running}}' smblds-ad 2>/dev/null)" != "true" ]; then
+            if [ "$(podman inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
               echo "ERROR: Samba AD DC container exited unexpectedly!"
               echo "=== Samba Container Logs ==="
-              podman logs smblds-ad
+              podman logs samba-ad
               exit 1
             fi
 
             # 2. Check local LDB database directly (avoids network/DNS timeout hangs)
-            if podman exec smblds-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+            if podman exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
               echo "Samba AD DC schema and sam.ldb are fully initialized!"
               READY=1
               break
@@ -130,21 +145,21 @@ jobs:
           if [ $READY -ne 1 ]; then
             echo "ERROR: Timed out waiting for Samba initialization after 60 seconds!"
             echo "=== Samba Container Logs ==="
-            podman logs smblds-ad
+            podman logs samba-ad
             exit 1
           fi
 
       - name: Seed Active Directory Users and Groups
         shell: wsl-bash {0}
         run: |
-          SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/smblds/seedusers.sh"
+          SEED_SCRIPT="$(wslpath '${{ github.workspace }}')/tests/samba-ad/seedusers.sh"
 
           # Fix CRLF line endings from Windows git checkout
           sed -i 's/\r$//' "${SEED_SCRIPT}"
 
           # Copy script into container and execute it
-          podman cp "${SEED_SCRIPT}" smblds-ad:/tmp/seedusers.sh
-          podman exec smblds-ad /bin/sh /tmp/seedusers.sh
+          podman cp "${SEED_SCRIPT}" samba-ad:/tmp/seedusers.sh
+          podman exec samba-ad /bin/sh /tmp/seedusers.sh
 
       # System.DirectoryServices.AccountManagement does not confine itself to the
       # server it was given. GetAuthorizationGroups() calls LoadDomainInfo(),
@@ -433,71 +448,132 @@ jobs:
           curl -fsS http://localhost:5000/api/password | jq -e '.validationRegex'
           echo "Passcore is up and responding!"
 
+      # Proves minPwdLength is really read from the directory rather than
+      # falling back.
+      #
+      # The provider advertises a fallback of 6 when the read fails, and it did
+      # fail on every request: DirectoryEntry was handed a bare "host:port",
+      # which is not an ADSI path, and returned 0x80005000 E_ADS_BAD_PATHNAME.
+      # The degradation was silent by design -- a logged warning and a working
+      # request -- so nothing failed and nobody noticed.
+      #
+      # The seed sets the domain minimum to 9 precisely so the two cases are
+      # distinguishable: an 8-character password is ACCEPTED under the fallback
+      # of 6 and REJECTED under a working read. Asserting only that the warning
+      # is gone would pass against a silent null, which is the other way this
+      # can break.
+      #
+      # The request is rejected by LengthPasswordPolicy, which runs first, so no
+      # password is changed and no account state is disturbed.
+      - name: Domain minimum password length is read from the directory
+        shell: bash
+        run: |
+          echo "An 8-character password must be rejected: the domain minimum is 9, not the fallback 6"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "Ab1!efgh", "newPasswordVerify": "Ab1!efgh"}')
+          echo "Response: $RESPONSE"
+
+          # 9: ComplexPassword, which is what LengthPasswordPolicy raises.
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 9)' >/dev/null; then
+            echo "FAIL: an 8-character password was not rejected on length."
+            echo "      The domain minimum is 9. Accepting 8 means the provider is"
+            echo "      advertising its fallback of 6, i.e. the minPwdLength read is"
+            echo "      still failing or silently returning nothing."
+            exit 1
+          fi
+
+          # The message carries the value that was actually read, so this
+          # distinguishes "read 9 correctly" from "rejected for some other reason".
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 9) | .message | test("9")' >/dev/null; then
+            echo "FAIL: rejected on length, but the message does not name 9 as the minimum."
+            echo "      Message: $(echo "$RESPONSE" | jq -r '.errors[0].message')"
+            exit 1
+          fi
+
       # ---------------------------------------------------------------------
-      # Not yet at parity with the LDAP smoke test
+      # What these assertions cover, and the two things that make them possible
       #
-      # The LDAP job asserts five behaviours. This one asserts three, plus the
-      # directory-outage test below. The two that are missing -- "user in
-      # restricted group" and "user not in allowed groups" -- are deliberately
-      # absent, and appsettings.ADTest.json therefore configures neither
-      # RestrictedAdGroups nor AllowedAdGroups so that GroupMembershipPolicy
-      # short-circuits instead of failing every request.
+      # Group membership is exercised by the legs further down, each of which
+      # restarts Passcore with different group lists. Two mechanisms underpin
+      # that, and both are easy to undo by accident:
       #
-      # Why they cannot run here. PassCore resolves membership through two
-      # enumerations. GetAuthorizationGroups() works: it needs the domain to
-      # resolve by name, which the hosts entries and NRPT rule above provide.
-      # GetGroups() does not. It goes through ADStoreCtx.GetGroupsMemberOf into
-      # System.DirectoryServices.ActiveDirectory.Forest.GetForest(), which is
-      # not an LDAP search but full AD topology discovery, and it ends in:
+      # 1. Configuration arrays cannot be SHRUNK by an override. .NET binds
+      #    arrays by index and merges per key, so an environment file that omits
+      #    RestrictedAdGroups -- or supplies [] -- leaves the base file's shipped
+      #    entries in the merged result. That is why the step "Clear the shipped
+      #    group lists from the published configuration" empties them in the
+      #    PUBLISHED base file, and why per-leg values arrive as command-line
+      #    arguments, which sit last in the configuration chain and win outright.
+      #    Removing either half silently restores the shipped deny list and every
+      #    leg then tests the wrong configuration.
       #
-      #     ActiveDirectoryObjectNotFoundException: The specified forest does
-      #     not exist or cannot be contacted. example.com
+      # 2. GetGroups() is topology discovery, not an LDAP search. It goes
+      #    through ADStoreCtx.GetGroupsMemberOf into Forest.GetForest(), which
+      #    resolves the forest, locates a DC, reads the site name, and binds over
+      #    GC:// on 3268 -- which is what the published global catalog ports and
+      #    the split DNS above are for. Under the previous AD LDS-shaped image
+      #    this failed outright, membership came back undetermined, and the group
+      #    assertions could not run at all.
       #
-      # The split-DNS work above measurably moved this: before it, the call
-      # failed in ~66ms because nothing resolved at all; after it, the request
-      # spends ~84 seconds before failing, which is discovery actually issuing
-      # SRV queries and timing out rather than giving up immediately. Samba's
-      # internal DNS does serve the records (its provisioning log shows the
-      # _msdcs.example.com, DomainDnsZones and ForestDnsZones partitions being
-      # created and populated), so the SRV data exists; what forest discovery
-      # additionally wants is not satisfied by this container and runner.
-      #
-      # What this is NOT. The provider is behaving correctly. When either
-      # enumeration fails, membership is undetermined, and it refuses the
-      # request rather than treating "could not tell" as "not a member". That
-      # is the deny-list fail-closed guarantee: reporting non-membership for a
-      # membership that could not be determined would let a member of a
-      # restricted group through during a partial directory failure. Do NOT
-      # relax that behaviour to turn these two tests green -- doing so
-      # reintroduces the security hole it exists to close. The correct fix is
-      # to the environment, or to what the test asserts, never to the check.
-      #
-      # To restore parity, in rough order of likelihood:
-      #   * publish the global catalog port (3268, and 3269 for LDAPS), which
-      #     forest discovery reaches for and which is not published today;
-      #   * publish Kerberos 88/udp+tcp and kpasswd 464 -- explicit credentials
-      #     may be falling back to a path that still wants a TGT;
-      #   * confirm CN=Partitions,CN=Configuration,DC=example,DC=com is
-      #     reachable and populated as GetForest expects;
-      #   * failing all of that, run these two assertions against a real AD
-      #     forest rather than a single-DC container.
-      #
-      # Unrelated but worth recording: an 84-second hang on an unauthenticated
-      # endpoint is itself a liability. If a production directory ever puts the
-      # AD provider on this path, the request occupies a thread for that whole
-      # time with no rate limiting in front of it.
+      # The provider refuses when membership is undetermined rather than
+      # treating "could not tell" as "not a member". That is the deny-list
+      # fail-closed guarantee: answering "not a member" for a membership that
+      # could not be determined would let a member of a restricted group through
+      # during a partial directory failure. If a leg fails because membership is
+      # undetermined, fix the environment or the assertion -- never the check.
       # ---------------------------------------------------------------------
       - name: AD Success and Authorization Tests
         shell: bash
         run: |
-          echo "Test 1: Valid user + valid password + allowed group"
+          # Reports which change transports the runner can actually reach. Called
+          # only on failure, to answer "which transport" without a second run.
+          report_transports() {
+            echo "  --- change-password transport reachability (TCP only; UDP not probeable here) ---"
+            for port in 389 636 464 88 3268; do
+              if (echo > /dev/tcp/dc.example.com/${port}) >/dev/null 2>&1; then
+                echo "    tcp/${port} reachable"
+              else
+                echo "    tcp/${port} NOT reachable"
+              fi
+            done
+            echo "    note: 445 (SMB/NetUserChangePassword) is never published -- Windows binds it."
+          }
+
+          # Test 1 asserts that the password CHANGED. It previously asserted only
+          # that the response was not error code 3, 4 or 6, which an
+          # E_ACCESSDENIED from a failed change satisfies -- so the change had
+          # never once succeeded while the step reported green.
+          #
+          # alloweduser is used ONLY here. No later leg asserts on it, and Test 1b
+          # changes it back, so nothing downstream can inherit a changed password.
+          echo "Test 1: password change succeeds"
           RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
             -H "Content-Type: application/json" \
             -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          ERROR_CODE=$(echo $RESPONSE | jq -r '.errors[0].errorCode // empty')
-          if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
-            echo "Unexpected error code: $ERROR_CODE"
+          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
+            echo "FAIL: the password change did not succeed."
+            echo "      This asserts the change HAPPENED. Do not relax it to tolerate an"
+            echo "      error code -- that is what hid this for the life of the workflow."
+            report_transports
+            exit 1
+          fi
+
+          # Proves the change took effect through a real authentication, not
+          # through the absence of an error: the directory must now accept the
+          # NEW password as the current one. This request is also the restore, so
+          # alloweduser ends the step exactly as it started.
+          echo "Test 1b: new password is in effect, and the account is restored"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "NewPassword123!", "newPassword": "testpassword", "newPasswordVerify": "testpassword"}')
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
+            echo "FAIL: could not change back using the new password as the current one."
+            echo "      Either the first change did not really take effect, or the account"
+            echo "      is now left on NewPassword123! -- later legs assume testpassword."
+            report_transports
             exit 1
           fi
 
@@ -520,9 +596,296 @@ jobs:
           # here. See the parity note above this step for why they are gone and
           # what it would take to bring them back.
 
-      - name: Stop SMBLDS
+      # Forest discovery is the prerequisite the group legs stand on, and the
+      # thing that failed under the previous image. Reported BEFORE the legs so
+      # that when one fails the log already says which of the three
+      # prerequisites was missing, instead of only that membership came back
+      # undetermined.
+      #
+      # Diagnostic only: it must never fail the step. Its job is to explain a
+      # later failure, not to become one.
+      - name: Report forest discovery prerequisites
         shell: powershell
-        run: wsl podman stop smblds-ad
+        run: |
+          Write-Host "=== 1. Global catalog SRV record ==="
+          try {
+              Resolve-DnsName -Name "_gc._tcp.example.com" -Type SRV -ErrorAction Stop |
+                Format-Table -AutoSize | Out-String | Write-Host
+          }
+          catch {
+              Write-Host "  _gc._tcp.example.com did not resolve: $($_.Exception.Message)"
+          }
+
+          Write-Host "=== 2. Global catalog port reachability ==="
+          foreach ($port in @(3268, 3269)) {
+              try {
+                  $client = New-Object System.Net.Sockets.TcpClient
+                  $connect = $client.BeginConnect("dc.example.com", $port, $null, $null)
+                  if ($connect.AsyncWaitHandle.WaitOne(5000, $false) -and $client.Connected) {
+                      Write-Host "  tcp/$port on dc.example.com reachable"
+                  }
+                  else {
+                      Write-Host "  tcp/$port on dc.example.com NOT reachable"
+                  }
+                  $client.Close()
+              }
+              catch {
+                  Write-Host "  tcp/$port on dc.example.com NOT reachable: $($_.Exception.Message)"
+              }
+          }
+
+          Write-Host "=== 3. Forest.GetForest() with the ADTest bind credentials ==="
+          try {
+              Add-Type -AssemblyName System.DirectoryServices
+              $context = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext(
+                  [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Forest,
+                  "example.com",
+                  "EXAMPLE\Administrator",
+                  "AdminPassword123!")
+              $forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($context)
+              Write-Host "  Forest name : $($forest.Name)"
+              Write-Host "  Forest mode : $($forest.ForestMode)"
+              Write-Host "  Root domain : $($forest.RootDomain)"
+              Write-Host "  Global catalogs: $(($forest.GlobalCatalogs | ForEach-Object { $_.Name }) -join ', ')"
+          }
+          catch {
+              Write-Host "  Forest.GetForest() failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+              if ($_.Exception.InnerException) {
+                  Write-Host "  inner: $($_.Exception.InnerException.Message)"
+              }
+          }
+
+      # ---------------------------------------------------------------------
+      # Group membership legs
+      #
+      # Each leg restarts Passcore with different group lists, because
+      # configuration is read once at startup. Per-leg values are command-line
+      # arguments: the environment is not inherited through Win32_Process.Create,
+      # and a configuration override cannot shrink an array, so neither of the
+      # obvious alternatives works. See tests/samba-ad/restart-passcore.ps1.
+      #
+      # Every leg opens with a canary that can only pass under that leg's own
+      # configuration. Without it, a restart that silently failed to take effect
+      # would leave the previous leg's configuration answering every request,
+      # and the remaining assertions could pass for entirely the wrong reason.
+      # ---------------------------------------------------------------------
+      - name: Restart Passcore for Leg A (restricted and allowed)
+        shell: powershell
+        run: |
+          # Bypass for this process only: a git checkout carries no zone
+          # marker, so RemoteSigned should already permit it, but the run
+          # should not hinge on the runner default.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "A: restricted and allowed" -ExtraArgs @(
+            '--ClientSettings:PasswordProviderOptions:RestrictedAdGroups:0=RestrictedGroup',
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=AllowedGroup'
+          )
+
+      - name: Leg A - restricted and allowed groups
+        shell: bash
+        run: |
+          post() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"$2\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}"
+          }
+          # Best-effort: only meaningful when the account was actually allowed
+          # through and its password really changed.
+          restore() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"NewPassword123!\", \"newPassword\": \"testpassword\", \"newPasswordVerify\": \"testpassword\"}" >/dev/null || true
+          }
+
+          echo "Canary: restricteduser must be refused with ChangeNotPermitted (6)"
+          RESPONSE=$(post restricteduser testpassword)
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)' >/dev/null; then
+            echo "FAIL: canary did not produce ChangeNotPermitted."
+            echo "      Either the restart did not pick up Leg A's configuration, or the"
+            echo "      deny list is not being applied. Every later assertion in this leg"
+            echo "      would be answered by the wrong configuration."
+            exit 1
+          fi
+
+          echo "unlisteduser must be refused: in no allowed group"
+          RESPONSE=$(post unlisteduser testpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)'
+
+          # Positive control. Without it a provider that refused everything --
+          # for instance because membership came back undetermined -- would pass
+          # both assertions above and look correct.
+          echo "testuser must be permitted: member of AllowedGroup, in no restricted group"
+          RESPONSE=$(post testuser testpassword)
+          echo "Response: $RESPONSE"
+          CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
+          if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
+            echo "FAIL: positive control returned $CODE; the leg is refusing an account it should allow."
+            exit 1
+          fi
+          restore testuser
+
+      - name: Restart Passcore for Leg B (transitive membership)
+        shell: powershell
+        run: |
+          # Bypass for this process only: a git checkout carries no zone
+          # marker, so RemoteSigned should already permit it, but the run
+          # should not hinge on the runner default.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "B: transitive membership" -ExtraArgs @(
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=NestedOuter'
+          )
+
+      - name: Leg B - transitive membership
+        shell: bash
+        run: |
+          post() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"$2\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}"
+          }
+          restore() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"NewPassword123!\", \"newPassword\": \"testpassword\", \"newPasswordVerify\": \"testpassword\"}" >/dev/null || true
+          }
+
+          # Canary and the leg's substance at once: nesteduser is a member of
+          # NestedInner only, so permitting it requires transitive expansion.
+          # Under Leg A's configuration this same request is refused, so a
+          # restart that did not take effect fails here.
+          echo "Canary: nesteduser must be permitted via NestedInner -> NestedOuter"
+          RESPONSE=$(post nesteduser testpassword)
+          echo "Response: $RESPONSE"
+          CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
+          if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
+            echo "FAIL: nesteduser returned $CODE."
+            echo "      A 6 means either transitive membership was not resolved, or the"
+            echo "      restart did not pick up Leg B's configuration."
+            exit 1
+          fi
+          restore nesteduser
+
+          echo "unlisteduser must be refused: not a member of NestedOuter by any path"
+          RESPONSE=$(post unlisteduser testpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)'
+
+      - name: Restart Passcore for Leg C (primary group)
+        shell: powershell
+        run: |
+          # Bypass for this process only: a git checkout carries no zone
+          # marker, so RemoteSigned should already permit it, but the run
+          # should not hinge on the runner default.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "C: primary group" -ExtraArgs @(
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=Domain Users'
+          )
+
+      - name: Leg C - primary group membership
+        shell: bash
+        run: |
+          post() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"$2\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}"
+          }
+          restore() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"NewPassword123!\", \"newPassword\": \"testpassword\", \"newPasswordVerify\": \"testpassword\"}" >/dev/null || true
+          }
+
+          # Domain Users is every account's PRIMARY group and appears in no
+          # memberOf attribute, so resolving it requires the primary-group path
+          # specifically. This is the case that silently denies everyone if that
+          # path regresses, and "allow anyone in Domain Users" is a rule a real
+          # operator would plausibly write.
+          #
+          # Canary: under Leg B's configuration this request is refused, so a
+          # restart that did not take effect fails here.
+          echo "Canary: testuser must be permitted via the Domain Users primary group"
+          RESPONSE=$(post testuser testpassword)
+          echo "Response: $RESPONSE"
+          CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
+          if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
+            echo "FAIL: testuser returned $CODE."
+            echo "      A 6 means primary-group membership was not resolved: Domain Users"
+            echo "      is in no memberOf attribute, so only the primary-group path finds it."
+            exit 1
+          fi
+          restore testuser
+
+      - name: Restart Passcore for Leg D (group type characterization)
+        shell: powershell
+        run: |
+          # Bypass for this process only: a git checkout carries no zone
+          # marker, so RemoteSigned should already permit it, but the run
+          # should not hinge on the runner default.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "D: group type" -ExtraArgs @(
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=DistributionGroup'
+          )
+
+      # CHARACTERIZATION TEST -- it pins what the provider does today, not what
+      # it ought to do.
+      #
+      # ResolveMembershipAsync unions GetAuthorizationGroups(), which returns
+      # security groups only, with GetGroups(), which also returns distribution
+      # groups. So a distribution group currently matches, and this leg asserts
+      # that.
+      #
+      # Whether it SHOULD match is an open design question, and the leaning is
+      # towards security-groups-only. If that decision is taken, this expectation
+      # is expected to invert -- flipping it is then the correct response, and
+      # this comment is the notice that doing so is deliberate rather than a
+      # regression. Do not change provider code to make this leg produce a
+      # preferred answer; the decision comes first.
+      - name: Leg D - group type (characterization)
+        shell: bash
+        run: |
+          post() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"$2\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}"
+          }
+          restore() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"NewPassword123!\", \"newPassword\": \"testpassword\", \"newPasswordVerify\": \"testpassword\"}" >/dev/null || true
+          }
+
+          # Canary: unlisteduser belongs to no group named in this leg. Under
+          # Leg C's configuration it would be permitted via Domain Users, so a
+          # restart that did not take effect fails here rather than letting the
+          # characterization below record a value from the wrong configuration.
+          echo "Canary: unlisteduser must be refused under AllowedAdGroups=[DistributionGroup]"
+          RESPONSE=$(post unlisteduser testpassword)
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)' >/dev/null; then
+            echo "FAIL: canary did not produce ChangeNotPermitted; Leg D's configuration is not active."
+            exit 1
+          fi
+
+          echo "distributionuser: characterizing how a distribution group is treated"
+          RESPONSE=$(post distributionuser testpassword)
+          echo "Response: $RESPONSE"
+          CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
+          if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
+            echo "FAIL: distributionuser returned $CODE, but current behaviour is that a"
+            echo "      distribution group matches, because GetGroups() includes them."
+            echo ""
+            echo "      If security-groups-only semantics were deliberately adopted, this"
+            echo "      expectation is meant to invert -- see the comment on this step."
+            echo "      Flip it deliberately; do not delete it."
+            exit 1
+          fi
+          restore distributionuser
+
+      - name: Stop the Samba AD DC
+        shell: powershell
+        run: wsl podman stop samba-ad
 
       - name: AD Environment Failure Test
         shell: bash
@@ -535,14 +898,14 @@ jobs:
           # Expect LdapProblem (8) or InvalidCredentials (4)
           echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4 or .errorCode == 8)'
 
-      - name: Start SMBLDS
+      - name: Start the Samba AD DC
         shell: powershell
-        run: wsl podman start smblds-ad
+        run: wsl podman start samba-ad
 
-      - name: Check SMBLDS logs
+      - name: Check Samba AD DC logs
         if: always()
         shell: powershell
-        run: wsl podman logs smblds-ad
+        run: wsl podman logs samba-ad
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
       # .NET buffers it, and Stop-Process -Force terminates without flushing, so
@@ -580,7 +943,7 @@ jobs:
             $LASTEXITCODE = 0
           }
 
-      - name: Cleanup SMBLDS Container
+      - name: Cleanup Samba AD DC container
         if: always()
         shell: powershell
-        run: wsl podman rm -f smblds-ad
+        run: wsl podman rm -f samba-ad
