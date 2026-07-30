@@ -85,7 +85,7 @@ jobs:
             -e DOMAIN="example.com" \
             -e DOMAINPASS="AdminPassword123!" \
             -e NOCOMPLEXITY="true" \
-            docker.io/nowsci/samba-domain-controller:latest
+            docker.io/nowsci/samba-domain:latest
             until podman exec smblds-ad samba-tool domain info example.com > /dev/null 2>&1; do
                 sleep 2
             done
