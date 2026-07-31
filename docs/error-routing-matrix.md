@@ -220,14 +220,52 @@ which could still have matched actually ran:
 - **LDAP** — direct `memberOf`, the `primaryGroupToken` search, and the
   `LDAP_MATCHING_RULE_IN_CHAIN` search. `memberOf` succeeding does not cover
   nesting or the primary group, so it cannot rescue either search's failure.
-- **AD** — `GetAuthorizationGroups` (transitive plus primary security groups) and
-  `GetGroups` (direct, including distribution groups). They cover different
-  ground, so neither rescues the other's failure.
+- **AD** — `GetAuthorizationGroups` alone. It reads `tokenGroups` and returns the
+  complete transitive security-group closure including the primary group, so a
+  completed enumeration that found no match is a definitive non-member.
 
 An empty result set is a completed lookup, not a failure: ordinary
 non-membership stays an ordinary `false` and the request proceeds. Each failed
 lookup is logged at Warning through `ServiceAccountFailure` with the operation
 that failed, so the operator can see why requests started being refused.
+
+### Only security groups match
+
+Both providers match **security groups only**. A distribution group named in
+`AllowedAdGroups` or `RestrictedAdGroups` does not match, on either provider.
+
+The reason is that a distribution group carries no authorization anywhere else in
+Windows: it cannot enter an access token, so nothing else in the platform will
+ever treat membership in one as a permission. On many directories users can also
+add themselves to a distribution group, and a group a user can join must not be
+able to satisfy an authorization list. The deny-list direction matters just as
+much: an administrator converting a group from security to distribution would
+otherwise silently step every one of its members out of `RestrictedAdGroups`.
+
+How each provider applies it:
+
+- **AD** — implicitly. `GetAuthorizationGroups` reads `tokenGroups`, which
+  contains security groups only, so distribution groups are never in the set. The
+  enumeration still completes, so the negative is definitive rather than
+  undetermined.
+- **LDAP** — explicitly, from the candidate group's `groupType` attribute, tested
+  against `ADS_GROUP_TYPE_SECURITY_ENABLED` (`0x80000000`). Only groups whose name
+  matches a configured entry are checked, so the common negative answer costs no
+  extra directory read.
+
+**Directories with no `groupType`** — OpenLDAP's `groupOfNames` and anything else
+that is not AD-shaped — are unaffected: an absent attribute means the group stays
+eligible. Applying the rule unconditionally there would match nothing at all and
+would stop the LDAP provider working against non-AD servers. A `groupType` that
+cannot be read for any other reason is treated the same way, deliberately: this
+rule narrows what may match, and it must not become a new way for the directory
+to fail every request.
+
+**Operator-visible change.** A distribution group that used to match no longer
+does, and the account it used to admit or refuse will now be treated differently.
+That condition is logged at Warning (EventId 113) naming both the configured entry
+and the group it resolved to, because group type is mutable and the change is
+otherwise silent.
 
 ## Terminal catch
 

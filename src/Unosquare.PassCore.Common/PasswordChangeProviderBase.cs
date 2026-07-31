@@ -44,8 +44,12 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            expected Debug-level fallback, which no longer exists. Such a
     //            failure now leaves membership undetermined and is reported via
     //            ServiceAccountFailure (111). Retired, not free -- do not reuse.
-    //   110-112  shared helpers (AdministrativeReset, ServiceAccountFailure,
-    //            DomainPasswordPolicy)                                     next: 113
+    //   110-114  shared helpers (AdministrativeReset, ServiceAccountFailure,
+    //            DomainPasswordPolicy), then LDAP: GroupNotSecurityEnabled
+    //            (113) and GroupTypeUnreadable (114). Those two are
+    //            provider-specific and would have belonged in 100-109, but
+    //            that range is full, so numbering continues here rather than
+    //            reusing a retired ID.                                     next: 115
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or

@@ -230,12 +230,16 @@ namespace Unosquare.PassCore.PasswordProvider
         /// could still have produced a match completed, so a failed enumeration is
         /// recorded and the method throws the shared infrastructure failure instead of
         /// returning <see langword="false"/>.</para>
-        /// <para>The two enumerations do not cover the same ground, which is why
-        /// neither one succeeding rescues the other's failure:
-        /// <c>GetAuthorizationGroups</c> resolves transitive and primary security
-        /// groups, while <c>GetGroups</c> covers direct groups including distribution
-        /// groups. A match found by either is real; a miss is only conclusive when both
-        /// ran.</para>
+        /// <para><b>Only security groups can match.</b> <c>GetAuthorizationGroups</c>
+        /// is the sole source, and it returns the complete transitive security-group
+        /// closure including the primary group. Distribution groups are therefore never
+        /// matched, by either list, and that is deliberate: a distribution group cannot
+        /// enter a Windows access token, so it carries no authorization anywhere else
+        /// in Windows, and on many directories users can add themselves to one. A
+        /// self-joinable group must not be able to satisfy <c>AllowedAdGroups</c>, and
+        /// an administrator converting a group to a distribution group must not be able
+        /// to quietly step out of <c>RestrictedAdGroups</c> — see the LDAP provider,
+        /// which warns on exactly that condition.</para>
         /// <para>Reporting "not a member" for a membership that could not be determined
         /// makes <c>RestrictedAdGroups</c> <em>fail open</em>, letting a member of
         /// <c>Domain Admins</c> through during a partial directory failure. This keeps
@@ -257,12 +261,9 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <c>GetAuthorizationGroups</c> (the expensive one) — for every name the policy
         /// asked about. With the shipped three restricted groups that is three of each,
         /// per unauthenticated request, before the caller has proved anything.</para>
-        /// <para>Both enumerations are materialized into plain names in a single pass so
+        /// <para>The enumeration is materialized into plain names in a single pass so
         /// that the <c>PrincipalContext</c> and <c>UserPrincipal</c> can be disposed
-        /// immediately rather than held open across the policy's evaluation. That costs
-        /// one <c>GetGroups</c> in the case where a match in the authorization groups
-        /// would previously have short-circuited it — once per request, against N-fold
-        /// savings on everything else.</para>
+        /// immediately rather than held open across the policy's evaluation.</para>
         /// </remarks>
         public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
         {
@@ -288,7 +289,19 @@ namespace Unosquare.PassCore.PasswordProvider
                 Exception? undetermined = null;
                 var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // GetAuthorizationGroups resolves transitive/recursive and primary security groups.
+                // GetAuthorizationGroups is the SOLE match source. It reads tokenGroups
+                // -- one base-scope read the DC computes -- and returns the complete
+                // transitive security-group closure, including the primary group.
+                //
+                // GetGroups() used to be unioned in here and has been removed. What it
+                // added over this call is distribution groups, which cannot enter a
+                // Windows access token and therefore cannot carry authorization; see
+                // the class remarks on group-type semantics. What it cost was
+                // Forest.GetForest() -- full forest topology discovery ending in a bind
+                // over the GC:// provider -- on every unauthenticated request, whose
+                // failure made every NEGATIVE answer undetermined. That is a wide blast
+                // radius for a source that could only ever contribute groups this
+                // provider must not honour.
                 try
                 {
                     using var authGroups = userPrincipal.GetAuthorizationGroups();
@@ -296,26 +309,13 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 catch (Exception ex)
                 {
-                    // Transitive and primary membership are now unknown; GetGroups
-                    // below covers neither, so it cannot stand in for this.
+                    // Membership is now unknown, and nothing else covers this ground.
+                    // The undetermined handling below is unchanged and deliberately so:
+                    // a failed enumeration still fails the request closed rather than
+                    // reporting "not a member".
                     undetermined ??= ex;
                     ServiceAccountFailure.Log(
                         Logger, correlationId: null, "enumerate authorization groups",
-                        ServiceAccountHost(), ex);
-                }
-
-                // GetGroups covers distribution or direct groups that might not be in authorization groups.
-                try
-                {
-                    using var directGroups = userPrincipal.GetGroups();
-                    CollectNames(directGroups, groupNames);
-                }
-                catch (Exception ex)
-                {
-                    // Direct and distribution-group membership are now unknown.
-                    undetermined ??= ex;
-                    ServiceAccountFailure.Log(
-                        Logger, correlationId: null, "enumerate direct groups",
                         ServiceAccountHost(), ex);
                 }
 
@@ -338,16 +338,23 @@ namespace Unosquare.PassCore.PasswordProvider
 
         /// <summary>
         /// Copies a principal collection's names into <paramref name="into"/>. A group
-        /// with no name means the enumeration cannot be trusted to rule anything out,
-        /// so it throws and is recorded as undetermined by the caller rather than
-        /// being silently skipped — dropping it could turn a deny-list match into a
-        /// miss.
+        /// that cannot be reduced to a name means the enumeration cannot be trusted to
+        /// rule anything out, so it throws and is recorded as undetermined by the
+        /// caller rather than being silently skipped — dropping it could turn a
+        /// deny-list match into a miss.
         /// </summary>
         private static void CollectNames(IEnumerable<Principal> principals, HashSet<string> into)
         {
             foreach (var principal in principals)
             {
-                into.Add(principal.Name ?? throw new InvalidOperationException(
+                // The null ELEMENT is the case that actually occurs, not a non-null
+                // principal with a null Name: GetAuthorizationGroups yields nulls for
+                // SIDs it cannot translate (dotnet/runtime#80675). Testing
+                // principal?.Name rather than principal.Name is what keeps that on the
+                // intended path -- the outcome is fail-closed either way, but through
+                // this explanatory exception instead of a bare NullReferenceException.
+                // It matters more now that this is the only enumeration left.
+                into.Add(principal?.Name ?? throw new InvalidOperationException(
                     "A group principal has no Name, so this enumeration cannot rule out membership."));
             }
         }

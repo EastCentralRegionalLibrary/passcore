@@ -230,11 +230,11 @@ public class AdProviderDirectoryWriteAuditTests
         var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
         var answerBody = ExtractMethodBody(code, "Task<bool> IsMemberOfAnyAsync(");
 
-        // Both enumerations (GetAuthorizationGroups and GetGroups) must record a
-        // failure. They cover different ground — transitive plus primary security
-        // groups versus direct and distribution groups — so neither succeeding
-        // rescues the other's failure.
-        Assert.Equal(2, CountOccurrences(resolveBody, "undetermined ??= ex;"));
+        // GetAuthorizationGroups is now the sole enumeration, and its failure must
+        // still be recorded. This is the part that did NOT change when GetGroups
+        // was removed: dropping the second match source narrows what can match, and
+        // must not soften what a failure means.
+        Assert.Equal(1, CountOccurrences(resolveBody, "undetermined ??= ex;"));
 
         // A recorded failure must block the negative answer, not merely be logged.
         var guardAt = answerBody.IndexOf("if (_undetermined is not null)", StringComparison.Ordinal);
@@ -262,9 +262,86 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.Contains("DirectoryErrorTranslator.TranslateException(", answerBody, StringComparison.Ordinal);
         Assert.Contains("DirectoryActor.ServiceAccount", answerBody, StringComparison.Ordinal);
 
-        // ... and each failed enumeration is reported to the operator, not swallowed:
-        // one per enumeration, plus the terminal catch that covers resolving the user.
-        Assert.Equal(3, CountOccurrences(resolveBody, "ServiceAccountFailure.Log("));
+        // ... and the failed enumeration is reported to the operator, not swallowed:
+        // one for the enumeration, plus the terminal catch that covers resolving the
+        // user.
+        Assert.Equal(2, CountOccurrences(resolveBody, "ServiceAccountFailure.Log("));
+    }
+
+    /// <summary>
+    /// Security groups only. <c>GetAuthorizationGroups()</c> reads <c>tokenGroups</c>
+    /// and returns the transitive security-group closure including the primary group;
+    /// <c>GetGroups()</c> added nothing over it but distribution groups, which cannot
+    /// enter a Windows access token and therefore carry no authorization.
+    ///
+    /// <para>The cost of keeping it was disproportionate: <c>GetGroups()</c> routes
+    /// through <c>ADStoreCtx.GetGroupsMemberOf</c> into <c>Forest.GetForest()</c> —
+    /// full forest topology discovery — on every unauthenticated request, and its
+    /// failure made every NEGATIVE answer undetermined. One environmental gap in
+    /// forest discovery therefore refused every non-member.</para>
+    ///
+    /// <para>This is the guard against it being reinstated as a "resilience"
+    /// improvement, which is exactly how it arrived in 2020.</para>
+    /// </summary>
+    [Fact]
+    public void GroupMembership_MatchesSecurityGroupsOnlyAndDoesNotDiscoverTheForest()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
+
+        Assert.Contains("GetAuthorizationGroups()", resolveBody, StringComparison.Ordinal);
+
+        Assert.DoesNotContain(
+            "GetGroups()",
+            resolveBody,
+            StringComparison.Ordinal);
+
+        // Nothing anywhere in the provider may reach forest discovery: the whole
+        // point is that the membership path no longer depends on it.
+        Assert.DoesNotContain("GetForest", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("Forest.", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A completed enumeration that found no match is a DEFINITIVE non-member, and
+    /// that is what makes this change worth anything: before it, a negative needed
+    /// both enumerations to complete, and the second one could not.
+    ///
+    /// <para>The two halves are inseparable and both are asserted here: the negative
+    /// is returned plainly when nothing failed, and it is still withheld when
+    /// something did.</para>
+    /// </summary>
+    [Fact]
+    public void GroupMembership_CompletedEnumerationWithNoMatchIsADefinitiveNonMember()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var answerBody = ExtractMethodBody(code, "Task<bool> IsMemberOfAnyAsync(");
+
+        var guardAt = answerBody.IndexOf("if (_undetermined is not null)", StringComparison.Ordinal);
+        var notAMemberAt = answerBody.LastIndexOf("return Task.FromResult(false);", StringComparison.Ordinal);
+
+        Assert.True(guardAt >= 0, "The undetermined guard is gone; a failed enumeration would read as 'not a member'.");
+        Assert.True(
+            notAMemberAt > guardAt,
+            "There is no reachable 'not a member' answer after the undetermined guard. A completed " +
+            "enumeration that found no match must be able to answer false — otherwise every negative " +
+            "is an infrastructure error and the group lists cannot refuse anyone.");
+    }
+
+    /// <summary>
+    /// <c>GetAuthorizationGroups()</c> yields null ELEMENTS for SIDs it cannot
+    /// translate (dotnet/runtime#80675). The collector must test the element, not
+    /// just its <c>Name</c>, or it throws <c>NullReferenceException</c> before its own
+    /// guard is reached. Fail-closed either way, but through an explanatory error
+    /// rather than a bare NRE — and it matters more now this is the only enumeration.
+    /// </summary>
+    [Fact]
+    public void GroupMembership_NullGroupPrincipalIsHandledByTheIntendedGuard()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var collectBody = ExtractMethodBody(code, "void CollectNames(");
+
+        Assert.Contains("principal?.Name", collectBody, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -280,7 +357,6 @@ public class AdProviderDirectoryWriteAuditTests
         // The expensive calls belong to the once-per-request resolution...
         var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
         Assert.Contains("GetAuthorizationGroups()", resolveBody, StringComparison.Ordinal);
-        Assert.Contains("GetGroups()", resolveBody, StringComparison.Ordinal);
         Assert.Contains("FindByIdentity(", resolveBody, StringComparison.Ordinal);
 
         // ... and none of them may reappear in the per-name answer, which must be

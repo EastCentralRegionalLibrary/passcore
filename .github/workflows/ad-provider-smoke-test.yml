@@ -1073,24 +1073,31 @@ jobs:
           # should not hinge on the runner default.
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           .\tests\samba-ad\restart-passcore.ps1 -LegName "D: group type" -ExtraArgs @(
-            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=DistributionGroup'
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=DistributionGroup',
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:1=AllowedGroup'
           )
 
-      # CHARACTERIZATION TEST -- it pins what the provider does today, not what
-      # it ought to do.
+      # Leg D asserts INTENDED SEMANTICS. It used to be a characterization test
+      # pinning the opposite answer, and its own comment said that if
+      # security-groups-only were adopted this expectation should invert. It has
+      # been, and it has.
       #
-      # ResolveMembershipAsync unions GetAuthorizationGroups(), which returns
-      # security groups only, with GetGroups(), which also returns distribution
-      # groups. So a distribution group currently matches, and this leg asserts
-      # that.
+      # Only security groups can satisfy a configured name. GetAuthorizationGroups
+      # reads tokenGroups and returns the transitive security-group closure, so a
+      # distribution group is simply not in it; the enumeration completes and the
+      # negative is definitive rather than undetermined. The reasoning is in
+      # docs/error-routing-matrix.md: a distribution group cannot enter a Windows
+      # access token, so it carries no authorization anywhere else in Windows, and
+      # it is frequently self-joinable -- a group a user can add themselves to must
+      # not be able to satisfy AllowedAdGroups.
       #
-      # Whether it SHOULD match is an open design question, and the leaning is
-      # towards security-groups-only. If that decision is taken, this expectation
-      # is expected to invert -- flipping it is then the correct response, and
-      # this comment is the notice that doing so is deliberate rather than a
-      # regression. Do not change provider code to make this leg produce a
-      # preferred answer; the decision comes first.
-      - name: Leg D - group type (characterization)
+      # AllowedGroup is configured alongside DistributionGroup as a POSITIVE
+      # CONTROL. Without it every assertion in this leg would expect a refusal, and
+      # the leg would pass just as happily if the group check were broken outright
+      # and refusing everyone. alloweduser being admitted is what makes
+      # distributionuser's refusal mean "distribution groups do not match" rather
+      # than "nothing matches".
+      - name: Leg D - group type (security groups only)
         shell: bash
         run: |
           post() {
@@ -1116,25 +1123,44 @@ jobs:
             exit 1
           fi
 
-          echo "distributionuser: characterizing how a distribution group is treated"
-          RESPONSE=$(post distributionuser testpassword)
+          # Positive control. alloweduser is in AllowedGroup, an ordinary security
+          # group named in this leg's configuration, so this leg admits at least
+          # one person. Without it, "distributionuser is refused" would also be
+          # satisfied by a group check that refuses everybody.
+          echo "Positive control: alloweduser must be PERMITTED via AllowedGroup"
+          RESPONSE=$(post alloweduser testpassword)
           echo "Response: $RESPONSE"
           CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
           if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
-            echo "FAIL: distributionuser returned $CODE, but current behaviour is that a"
-            echo "      distribution group matches, because GetGroups() includes them."
-            echo ""
-            echo "      If security-groups-only semantics were deliberately adopted, this"
-            echo "      expectation is meant to invert -- see the comment on this step."
-            echo "      Flip it deliberately; do not delete it."
+            echo "FAIL: alloweduser returned $CODE. A security group named in"
+            echo "      AllowedAdGroups must still admit, or this leg proves nothing"
+            echo "      about group TYPE -- only that the check refuses everyone."
             exit 1
           fi
-          restore distributionuser
+          restore alloweduser
+
+          echo "distributionuser must be REFUSED: a distribution group does not authorize"
+          RESPONSE=$(post distributionuser testpassword)
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)' >/dev/null; then
+            echo "FAIL: distributionuser was not refused with ChangeNotPermitted (6)."
+            echo "      DistributionGroup is named in AllowedAdGroups, but it is a"
+            echo "      distribution group: it cannot enter a Windows access token, so it"
+            echo "      carries no authorization, and it must not admit."
+            echo ""
+            echo "      Note the refusal must be 6, not 8. An 8 would mean membership came"
+            echo "      back UNDETERMINED -- the enumeration failed -- which is a different"
+            echo "      condition and not what this leg is asserting. Do not relax this to"
+            echo "      accept 8."
+            exit 1
+          fi
+          # No restore: the change was refused, so the password never changed.
 
       # Back to the baseline configuration before Test 1. Leg D left
-      # AllowedAdGroups=[DistributionGroup] in force, under which alloweduser is
-      # refused outright and never reaches the change path Test 1 exists to
-      # exercise.
+      # AllowedAdGroups=[DistributionGroup, AllowedGroup] in force. That would
+      # actually admit alloweduser, but Test 1 is about the change path rather
+      # than the group path, and it should not depend on a leg's leftover
+      # configuration to reach it.
       - name: Restart Passcore with no group lists
         shell: powershell
         run: |

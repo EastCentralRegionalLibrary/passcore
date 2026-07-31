@@ -58,8 +58,16 @@ jobs:
             --configuration Release \
             --framework net8.0 \
             --property:PASSCORE_PROVIDER=LDAP \
-            --no-build &
+            --no-build > passcore.log 2>&1 &
           echo $! > backend.pid
+
+      # Redirected to a file rather than left on the console because one of the
+      # assertions below is about a log line: EventId 113 firing when a configured
+      # group name resolves only to a non-security group. That warning is the whole
+      # mitigation for the deny-list case -- an administrator converting a group from
+      # security to distribution silently disables a restriction otherwise -- so it is
+      # asserted rather than assumed. The log is echoed at the end of the job, so
+      # nothing is lost from the run output.
 
       - name: Wait for Passcore to be ready
         run: |
@@ -131,6 +139,61 @@ jobs:
           echo "Response: $RESPONSE"
           # 6: ChangeNotPermitted
           echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
+
+          # --- Group type ----------------------------------------------------
+          # Only security groups can satisfy a configured name. AllowedAdGroups
+          # lists three, one of each shape; see appsettings.LdapTest.json and
+          # tests/mokapi/users.ldif.
+
+          echo "Test 6: a group with no groupType still admits (non-AD fallback)"
+          # legacyuser is in LegacyGroup, a plain groupOfNames with no groupType --
+          # the shape OpenLDAP and other non-AD directories publish. Applying a
+          # security-only rule unconditionally would match nothing there and would
+          # stop this provider working against non-AD servers, so an absent
+          # attribute means eligible. This asserts that fallback is REACHED, not
+          # merely written: if it regressed, LegacyGroup would stop admitting and
+          # this returns 6.
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "legacyuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          if echo "$RESPONSE" | jq -e '.errors[]? | select(.errorCode == 6)' > /dev/null; then
+            echo "FAIL: legacyuser was refused on group membership. LegacyGroup has no"
+            echo "      groupType, so the absent-attribute fallback should have admitted"
+            echo "      it. A security-only rule without that fallback matches nothing on"
+            echo "      a non-AD directory."
+            exit 1
+          fi
+
+          echo "Test 7: a distribution group does NOT admit"
+          # distributionuser is in DistributionGroup (groupType 2 -- the security
+          # bit is clear). It is named in AllowedAdGroups and must still be refused:
+          # a distribution group carries no authorization anywhere else in Windows
+          # and is frequently self-joinable, so it must not satisfy an
+          # authorization list. This is the assertion that would have passed
+          # trivially before the change and now genuinely constrains it.
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "distributionuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 6: ChangeNotPermitted
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 6)'
+
+          echo "Test 7b: the refusal above was logged, not silent"
+          # Group type is mutable. An administrator converting a group from
+          # security to distribution silently disables every restriction naming it,
+          # so the condition has to be visible. EventId 113 is that warning, and it
+          # is the mitigation that makes the deny-list case safe -- assert it rather
+          # than trusting it to be there.
+          if ! grep -q "GroupNotSecurityEnabled\|is not security-enabled" passcore.log; then
+            echo "FAIL: DistributionGroup was refused but nothing was logged about why."
+            echo "      EventId 113 is the only signal an operator gets that a"
+            echo "      configured group stopped matching because its type changed."
+            echo "=== passcore.log (tail) ==="
+            tail -80 passcore.log || true
+            exit 1
+          fi
+          echo "  EventId 113 warning present."
 
       # ---------------------------------------------------------------------
       # Hardened leg.
@@ -204,7 +267,7 @@ jobs:
             --configuration Release \
             --framework net8.0 \
             --property:PASSCORE_PROVIDER=LDAP \
-            --no-build &
+            --no-build >> passcore.log 2>&1 &
           echo $! > backend.pid
 
           echo "Waiting for Passcore (Hardened)..."
@@ -353,6 +416,19 @@ jobs:
       - name: Check MokAPI logs
         if: always()
         run: docker logs mokapi
+
+      # The backend's own output is redirected to a file so the group-type warning
+      # can be asserted, so it has to be echoed back here or a failing run would
+      # show no application logs at all.
+      - name: Passcore logs
+        if: always()
+        shell: bash
+        run: |
+          if [ -f passcore.log ]; then
+            cat passcore.log
+          else
+            echo "passcore.log not present."
+          fi
 
       - name: Stop Services
         if: always()
