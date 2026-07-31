@@ -321,8 +321,19 @@ jobs:
 
           if ($podmanSubnet) {
               try {
+                  # The interface is found by asking Windows how it reaches the
+                  # WSL VM, not by looking $wslIp up as a local address. That
+                  # lookup cannot work: $wslIp is the VM's own address, which
+                  # lives inside the VM and is not configured on any Windows
+                  # adapter -- the Windows end of the vEthernet (WSL) link has a
+                  # different address. Find-NetRoute answers the question that
+                  # actually matters, which is which interface carries traffic to
+                  # the VM, and the bridge route then follows the same path.
+                  $routeToVm = Find-NetRoute -RemoteIPAddress $wslIp -ErrorAction Stop | Select-Object -First 1
+                  Write-Host "  reaching $wslIp via interface $($routeToVm.InterfaceIndex) ($($routeToVm.InterfaceAlias))"
+
                   New-NetRoute -DestinationPrefix $podmanSubnet -NextHop $wslIp `
-                    -InterfaceAlias (Get-NetIPAddress -IPAddress $wslIp -ErrorAction Stop).InterfaceAlias `
+                    -InterfaceIndex $routeToVm.InterfaceIndex `
                     -RouteMetric 1 -ErrorAction Stop | Out-Null
                   Write-Host "  route added: $podmanSubnet via $wslIp"
               }
