@@ -58,16 +58,28 @@ jobs:
           sed -i 's/\r$//' "${SEED_SCRIPT}"
           chmod +x "${SEED_SCRIPT}"
 
-          # 88 (Kerberos) and 464 (kpasswd) are published because ADSI's
-          # IADsUser::ChangePassword tries transports in order: LDAP over SSL on
-          # 636, then the Kerberos change-password protocol on 464, then
-          # NetUserChangePassword over SMB on 445.
+          # 88 (Kerberos) and 464 (kpasswd) are deliberately NOT published, and
+          # the reason is worth stating because they were published for a while.
           #
-          # Publishing them was necessary but NOT sufficient, and the reason is
-          # worth recording because the obvious theory was wrong. The first run
-          # with these ports open showed all five reachable and the request still
-          # failing in 11.18s -- against 11.4s before they were opened. The time
-          # was never port timeouts.
+          # They went in for the password change, on the theory that ADSI was
+          # timing out on unreachable transports. That was disproved: with all
+          # five ports open the request still failed in 11.18s against 11.4s
+          # before, so the time was never port timeouts, and the change fails for
+          # a reason still unidentified.
+          #
+          # Leaving them published then caused an actual regression. Once the
+          # hosts entries pointed at a routable address (below) so the DC Locator
+          # could work, a reachable KDC meant Negotiate began attempting Kerberos
+          # instead of NTLM -- and Kerberos cannot succeed here: Samba registers
+          # its SPN for the DC's FQDN, and the KDC's own A record resolves to the
+          # container-internal 10.88.x.x that Windows cannot route to. Negotiate
+          # then failed outright rather than falling back, and every bind started
+          # returning 0x8007052E ERROR_LOGON_FAILURE -- breaking the minPwdLength
+          # read that had been passing.
+          #
+          # Without a KDC to find, Negotiate uses NTLM, which works. If Kerberos
+          # is ever wanted here it needs SPN and realm configuration on the
+          # runner, not merely an open port.
           #
           # 389 is published for BOTH protocols, and the /udp is not incidental.
           # podman publishes TCP only when no protocol is given, so "-p 389:389"
@@ -92,9 +104,8 @@ jobs:
           #
           # So the channel IS encrypted and signed, and SDSUtils.ChangePassword
           # still returns E_ACCESSDENIED. Whatever remains is not reachability,
-          # not certificate trust, and not channel protection. These ports stay
-          # published because they are prerequisites either way; they are simply
-          # not sufficient.
+          # not certificate trust, and not channel protection -- which is also
+          # why unpublishing 88 and 464 above costs that investigation nothing.
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -133,8 +144,6 @@ jobs:
             --privileged \
             -p 389:389/tcp -p 389:389/udp -p 636:636 \
             -p 3268:3268 -p 3269:3269 \
-            -p 88:88/tcp -p 88:88/udp \
-            -p 464:464/tcp -p 464:464/udp \
             -p ${WSL_IP}:53:53/udp -p ${WSL_IP}:53:53/tcp \
             -e DOMAIN="example.com" \
             -e DOMAINPASS="AdminPassword123!" \
@@ -384,6 +393,35 @@ jobs:
           # with example.com, while Samba issues its certificate for the DC's own
           # FQDN. If example.com fails and dc.example.com succeeds, the fix is to
           # point LdapHostnames at the DC rather than at the domain.
+          # Plain LDAP on 389 with Negotiate -- the same channel the provider
+          # uses for every read. Worth probing separately from LDAPS because the
+          # two failed independently: binds worked while the hosts entries were
+          # on loopback and started returning 0x8007052E ERROR_LOGON_FAILURE once
+          # they became routable and a KDC was reachable. If this fails, nothing
+          # downstream can work and the reason is here rather than three steps
+          # later in an application log.
+          Write-Host "=== LDAP bind check on 389, Negotiate (diagnostic; does not fail the step) ==="
+          foreach ($target in @("example.com", "dc.example.com")) {
+              try {
+                  Add-Type -AssemblyName System.DirectoryServices.Protocols
+                  $identifier = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier($target, 389)
+                  $connection = New-Object System.DirectoryServices.Protocols.LdapConnection($identifier)
+                  $connection.SessionOptions.ProtocolVersion = 3
+                  $connection.SessionOptions.Sealing = $true
+                  $connection.SessionOptions.Signing = $true
+                  $connection.AuthType = [System.DirectoryServices.Protocols.AuthType]::Negotiate
+                  $connection.Credential = New-Object System.Net.NetworkCredential(
+                      "Administrator", "AdminPassword123!", "EXAMPLE")
+                  $connection.Timeout = [TimeSpan]::FromSeconds(15)
+                  $connection.Bind()
+                  Write-Host "  sealed bind to ${target}:389 SUCCEEDED"
+                  $connection.Dispose()
+              }
+              catch {
+                  Write-Host "  sealed bind to ${target}:389 failed: $($_.Exception.Message)"
+              }
+          }
+
           Write-Host "=== LDAPS bind check (diagnostic; does not fail the step) ==="
           foreach ($target in @("example.com", "dc.example.com")) {
               try {
