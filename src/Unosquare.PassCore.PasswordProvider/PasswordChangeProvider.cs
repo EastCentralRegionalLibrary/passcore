@@ -47,6 +47,27 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
+        // Records which channel the service-account context actually got. With a
+        // fallback in the path, "it worked" is not enough information: an
+        // operator debugging a password-change failure needs to know whether the
+        // process is sealing or on SSL, and a deployment silently drifting from
+        // one to the other is worth seeing.
+        private static readonly Action<ILogger, string, string, int, Exception?> LogSecureChannelEstablished =
+            LoggerMessage.Define<string, string, int>(
+                LogLevel.Information,
+                new EventId(108, nameof(LogSecureChannelEstablished)),
+                "Service-account directory context established over {Channel} to {Host}:{Port}. " +
+                "A password change requires an encrypted or signed channel; this is the one in use.");
+
+        private static readonly Action<ILogger, string, int, Exception?> LogSealingUnavailable =
+            LoggerMessage.Define<string, int>(
+                LogLevel.Warning,
+                new EventId(109, nameof(LogSealingUnavailable)),
+                "Could not establish a signed-and-sealed context to the directory; falling back to SSL " +
+                "on {Host}:{Port}. The fallback needs the directory's certificate to be trusted by this " +
+                "machine. If neither channel can be established, password changes will fail with an " +
+                "access-denied error that describes the transport rather than any permission.");
+
         // EventId 105 (LogGroupEnumerationFallback) is retired, not reused. It
         // described a group-enumeration failure as an expected fallback logged at
         // Debug, which is no longer true in either direction: a failed enumeration
@@ -619,18 +640,59 @@ namespace Unosquare.PassCore.PasswordProvider
                     throw new InvalidOperationException("LDAP Hostnames are not configured."); // Throw exception to signal configuration error
                 }
 
-                var domain = $"{_options.LdapHostnames.First()}:{_options.LdapPort}"; // Construct domain string from hostname and port
+                var host = _options.LdapHostnames.First();
+
+                // A plain bind is not enough to change a password. ADSI refuses
+                // to modify unicodePwd over a channel that is neither encrypted
+                // nor signed, and the refusal arrives as E_ACCESSDENIED, which
+                // reads as a permissions problem and is really a transport one.
+                // The previous code passed no ContextOptions and therefore bound
+                // in the clear, so on this path a password change could not
+                // succeed at all. (Automatic-context deployments were unaffected:
+                // ContextType.Domain alone negotiates Kerberos with signing and
+                // sealing already.)
+                //
+                // Sign-and-seal is tried first because it encrypts the channel
+                // through the negotiated security package and needs no
+                // certificate trust, so it imposes nothing new on existing
+                // deployments. SSL is the fallback for directories that refuse
+                // or cannot negotiate sealing.
                 try
                 {
-                    return new PrincipalContext( // Create PrincipalContext with LDAP credentials
-                        ContextType.Domain,
-                        domain,
-                        _options.LdapUsername,
-                        _options.LdapPassword);
+                    var context = CreateVerifiedContext(
+                        FormattableString.Invariant($"{host}:{_options.LdapPort}"),
+                        ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing);
+
+                    LogSecureChannelEstablished(Logger, "sign-and-seal", host, _options.LdapPort, null);
+                    return context;
                 }
-                catch (Exception ex)
+                catch (Exception sealingFailure)
                 {
-                    throw new InvalidOperationException("Failed to create PrincipalContext.", ex); // Re-throw exception to signal failure
+                    // LDAPS runs on its own port. When the configured port is the
+                    // plaintext default the operator has not chosen one, so the
+                    // well-known 636 is used; any other value is taken as
+                    // deliberate and left alone.
+                    var sslPort = _options.LdapPort == PlaintextLdapPort ? SecureLdapPort : _options.LdapPort;
+
+                    LogSealingUnavailable(Logger, host, sslPort, sealingFailure);
+
+                    try
+                    {
+                        var context = CreateVerifiedContext(
+                            FormattableString.Invariant($"{host}:{sslPort}"),
+                            ContextOptions.Negotiate | ContextOptions.SecureSocketLayer);
+
+                        LogSecureChannelEstablished(Logger, "SSL", host, sslPort, null);
+                        return context;
+                    }
+                    catch (Exception sslFailure)
+                    {
+                        // Both channels reported, because "which one failed and
+                        // how" is the whole diagnostic value here.
+                        throw new InvalidOperationException(
+                            "Failed to create PrincipalContext over either a signed-and-sealed or an SSL channel.",
+                            new AggregateException(sealingFailure, sslFailure));
+                    }
                 }
             }
         }
@@ -674,6 +736,49 @@ namespace Unosquare.PassCore.PasswordProvider
             }
         }
 
+
+        /// <summary>The standard plaintext LDAP port; the default for <c>LdapPort</c>.</summary>
+        private const int PlaintextLdapPort = 389;
+
+        /// <summary>The standard LDAPS port, used when falling back to SSL from an unset <c>LdapPort</c>.</summary>
+        private const int SecureLdapPort = 636;
+
+        /// <summary>
+        /// Builds a <see cref="PrincipalContext"/> and forces it to bind.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="PrincipalContext"/> connects lazily, so a context whose
+        /// channel cannot be established is returned looking healthy and fails
+        /// much later, somewhere unrelated. Reading
+        /// <see cref="PrincipalContext.ConnectedServer"/> forces the bind here,
+        /// which is what makes "try sealing, then fall back" possible at all: the
+        /// fallback needs the first attempt to have genuinely failed by now.
+        /// </remarks>
+        private PrincipalContext CreateVerifiedContext(string server, ContextOptions options)
+        {
+            // The overload that accepts ContextOptions also requires a container.
+            // Null means the domain root, which is what the previous
+            // container-less constructor bound to, so the search scope is
+            // unchanged -- only the channel is.
+            var context = new PrincipalContext(
+                ContextType.Domain,
+                server,
+                container: null,
+                options,
+                _options.LdapUsername,
+                _options.LdapPassword);
+
+            try
+            {
+                _ = context.ConnectedServer;
+                return context;
+            }
+            catch
+            {
+                context.Dispose();
+                throw;
+            }
+        }
 
         /// <summary>
         /// Binds the domain naming context — the object that carries
