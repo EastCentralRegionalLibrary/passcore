@@ -58,28 +58,27 @@ jobs:
           sed -i 's/\r$//' "${SEED_SCRIPT}"
           chmod +x "${SEED_SCRIPT}"
 
-          # 88 (Kerberos) and 464 (kpasswd) are deliberately NOT published, and
-          # the reason is worth stating because they were published for a while.
+          # 88 (Kerberos) and 464 (kpasswd) are republished as part of a
+          # TIME-BOXED EXPERIMENT, together with the static route added on the
+          # Windows side further down. The two are one logical unit: the route
+          # alone changes nothing observable, and republishing these ports alone
+          # reproduces a known breakage. If the experiment fails they are removed
+          # together.
           #
-          # They went in for the password change, on the theory that ADSI was
-          # timing out on unreachable transports. That was disproved: with all
-          # five ports open the request still failed in 11.18s against 11.4s
-          # before, so the time was never port timeouts, and the change fails for
-          # a reason still unidentified.
+          # The known breakage, from the last time these were published: making
+          # the hosts entries routable so the DC Locator could work also made the
+          # KDC findable, at which point Negotiate began preferring Kerberos,
+          # failed, and did NOT fall back to NTLM -- so every bind broke,
+          # including the minPwdLength read that had been passing. Expect a broad
+          # red rather than a targeted one if that recurs; it is not a new fault.
           #
-          # Leaving them published then caused an actual regression. Once the
-          # hosts entries pointed at a routable address (below) so the DC Locator
-          # could work, a reachable KDC meant Negotiate began attempting Kerberos
-          # instead of NTLM -- and Kerberos cannot succeed here: Samba registers
-          # its SPN for the DC's FQDN, and the KDC's own A record resolves to the
-          # container-internal 10.88.x.x that Windows cannot route to. Negotiate
-          # then failed outright rather than falling back, and every bind started
-          # returning 0x8007052E ERROR_LOGON_FAILURE -- breaking the minPwdLength
-          # read that had been passing.
-          #
-          # Without a KDC to find, Negotiate uses NTLM, which works. If Kerberos
-          # is ever wanted here it needs SPN and realm configuration on the
-          # runner, not merely an open port.
+          # The hypothesis being tested: DNS SRV responses carry glue A records in
+          # the additional section, so when the Kerberos client resolves
+          # _kerberos._tcp.example.com it can take dc.example.com's accompanying
+          # 10.88.x.x address directly, never performing the separate lookup the
+          # hosts file would have intercepted -- and then dials an address Windows
+          # cannot route to. If that is the mechanism, a route fixes it. Windows
+          # does not need the container on its network, only a way to reach it.
           #
           # 389 is published for BOTH protocols, and the /udp is not incidental.
           # podman publishes TCP only when no protocol is given, so "-p 389:389"
@@ -144,11 +143,36 @@ jobs:
             --privileged \
             -p 389:389/tcp -p 389:389/udp -p 636:636 \
             -p 3268:3268 -p 3269:3269 \
+            -p 88:88/tcp -p 88:88/udp \
+            -p 464:464/tcp -p 464:464/udp \
             -p ${WSL_IP}:53:53/udp -p ${WSL_IP}:53:53/tcp \
             -e DOMAIN="example.com" \
             -e DOMAINPASS="AdminPassword123!" \
             -e NOCOMPLEXITY="true" \
             docker.io/nowsci/samba-domain:latest
+
+          # EXPERIMENT (time-boxed). Windows does not need the container on its
+          # network, only a route to it. The WSL VM already forwards, because
+          # podman requires ip_forward.
+          #
+          # The subnet is READ rather than assumed: netavark defaults to
+          # 10.88.0.0/16, but a hardcoded value that quietly stopped matching
+          # would produce a confusing negative result and this experiment is
+          # only worth running if its negative is trustworthy.
+          NETWORK_FILE="$(wslpath '${{ github.workspace }}')/podman-network.txt"
+
+          PODMAN_SUBNET="$(podman network inspect podman --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)"
+          if [ -z "${PODMAN_SUBNET}" ]; then
+            # Older/other backends report a different shape; fall back to JSON.
+            PODMAN_SUBNET="$(podman network inspect podman 2>/dev/null | grep -o '"subnet"[^,]*' | head -1 | sed 's/.*: *"//; s/"//')"
+          fi
+
+          CONTAINER_IP="$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' samba-ad 2>/dev/null)"
+
+          echo "podman bridge subnet : ${PODMAN_SUBNET:-<unknown>}"
+          echo "container address    : ${CONTAINER_IP:-<unknown>}"
+
+          printf '%s\n%s\n' "${PODMAN_SUBNET}" "${CONTAINER_IP}" > "${NETWORK_FILE}"
 
       - name: Wait for Samba AD DC Provisioning
         shell: wsl-bash {0}
@@ -272,6 +296,105 @@ jobs:
                   Write-Host "$name did not resolve: $($_.Exception.Message)"
               }
           }
+
+          # --- EXPERIMENT: static route to the podman bridge ------------------
+          # Half of a time-boxed pair; the other half is republishing 88/464.
+          # Windows does not need the container on its network, only a route to
+          # it, and the WSL VM already forwards because podman requires
+          # ip_forward. If Kerberos has been dialling the container's own
+          # 10.88.x.x address taken from a DNS glue record, this is what makes
+          # that address reachable.
+          #
+          # Subnet and container address are read from podman, never hardcoded.
+          $networkFile = Join-Path $env:GITHUB_WORKSPACE "podman-network.txt"
+          $podmanSubnet = $null
+          $containerIp = $null
+          if (Test-Path $networkFile) {
+              $networkFacts = @(Get-Content $networkFile)
+              if ($networkFacts.Count -ge 1) { $podmanSubnet = $networkFacts[0].Trim() }
+              if ($networkFacts.Count -ge 2) { $containerIp = $networkFacts[1].Trim() }
+          }
+
+          Write-Host "=== podman network facts ==="
+          Write-Host "  subnet    : $(if ($podmanSubnet) { $podmanSubnet } else { '<not reported>' })"
+          Write-Host "  container : $(if ($containerIp) { $containerIp } else { '<not reported>' })"
+
+          if ($podmanSubnet) {
+              try {
+                  New-NetRoute -DestinationPrefix $podmanSubnet -NextHop $wslIp `
+                    -InterfaceAlias (Get-NetIPAddress -IPAddress $wslIp -ErrorAction Stop).InterfaceAlias `
+                    -RouteMetric 1 -ErrorAction Stop | Out-Null
+                  Write-Host "  route added: $podmanSubnet via $wslIp"
+              }
+              catch {
+                  # A route that cannot be added is a Stage 1 failure and the
+                  # probe below will say so; it must not fail the step here.
+                  Write-Host "  route not added: $($_.Exception.Message)"
+              }
+              Write-Host "=== routes matching the bridge ==="
+              Get-NetRoute -ErrorAction SilentlyContinue |
+                Where-Object { $_.DestinationPrefix -eq $podmanSubnet } |
+                Format-Table DestinationPrefix,NextHop,InterfaceAlias,RouteMetric |
+                Out-String | Write-Host
+          }
+          else {
+              Write-Host "  no subnet reported; skipping the route (Stage 1 will fail and say so)"
+          }
+
+          # Stage 1: is the bridge reachable at all? No Kerberos involved, so a
+          # failure here is a routing problem and nothing else.
+          Write-Host "=== EXPERIMENT Stage 1: TCP to the container address ==="
+          if ($containerIp) {
+              foreach ($port in @(389, 88)) {
+                  try {
+                      $client = New-Object System.Net.Sockets.TcpClient
+                      $connect = $client.BeginConnect($containerIp, $port, $null, $null)
+                      if ($connect.AsyncWaitHandle.WaitOne(5000, $false) -and $client.Connected) {
+                          Write-Host "  Stage 1: ${containerIp}:${port} REACHABLE"
+                      }
+                      else {
+                          Write-Host "  Stage 1: ${containerIp}:${port} NOT reachable"
+                      }
+                      $client.Close()
+                  }
+                  catch {
+                      Write-Host "  Stage 1: ${containerIp}:${port} NOT reachable: $($_.Exception.Message)"
+                  }
+              }
+          }
+          else {
+              Write-Host "  Stage 1: skipped, no container address reported"
+          }
+
+          # Stage 2: does an EXPLICIT Kerberos bind succeed? AuthType.Kerberos,
+          # not Negotiate, so NTLM cannot satisfy it -- a Negotiate success would
+          # prove nothing about Kerberos, and this investigation has twice
+          # produced a fix whose stated rationale was wrong.
+          Write-Host "=== EXPERIMENT Stage 2: explicit Kerberos bind ==="
+          try {
+              Add-Type -AssemblyName System.DirectoryServices.Protocols
+              $identifier = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier("example.com", 389)
+              $connection = New-Object System.DirectoryServices.Protocols.LdapConnection($identifier)
+              $connection.SessionOptions.ProtocolVersion = 3
+              $connection.SessionOptions.Sealing = $true
+              $connection.SessionOptions.Signing = $true
+              $connection.AuthType = [System.DirectoryServices.Protocols.AuthType]::Kerberos
+              $connection.Credential = New-Object System.Net.NetworkCredential(
+                  "Administrator", "AdminPassword123!", "EXAMPLE")
+              $connection.Timeout = [TimeSpan]::FromSeconds(20)
+              $connection.Bind()
+              Write-Host "  Stage 2: Kerberos bind to example.com:389 SUCCEEDED"
+              $connection.Dispose()
+          }
+          catch {
+              # The exact error decides the outcome: a KDC error naming the
+              # principal is a different answer from a timeout.
+              Write-Host "  Stage 2: Kerberos bind FAILED: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+              if ($_.Exception.InnerException) {
+                  Write-Host "  Stage 2: inner: $($_.Exception.InnerException.Message)"
+              }
+          }
+          # --- end EXPERIMENT --------------------------------------------------
 
           # NRPT sends only *.example.com queries to the container's DNS, leaving
           # the runner's own resolution (GitHub API, package restore) untouched.
