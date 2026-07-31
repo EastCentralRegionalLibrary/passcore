@@ -58,34 +58,25 @@ jobs:
           sed -i 's/\r$//' "${SEED_SCRIPT}"
           chmod +x "${SEED_SCRIPT}"
 
-          # 88 (Kerberos) and 464 (kpasswd) are deliberately NOT published, and
-          # the reason is worth stating because they were published for a while.
+          # 88 (Kerberos) and 464 (kpasswd) ARE published, together with the
+          # static route to the podman bridge added on the Windows side further
+          # down. Read both as topology completeness rather than as a Kerberos
+          # attempt: KERBEROS WAS TESTED HERE AND DOES NOT WORK.
           #
-          # They went in for the password change, on the theory that ADSI was
-          # timing out on unreachable transports. That was disproved: with all
-          # five ports open the request still failed in 11.18s against 11.4s
-          # before, so the time was never port timeouts, and the change fails for
-          # a reason still unidentified.
+          # What the route is retained for is ADDRESS REACHABILITY. Samba's own
+          # DNS answers for dc.example.com with the container-internal 10.88.x.x,
+          # and the hosts entries below override that -- but only for the two
+          # names they pin, and only for A lookups that go through the resolver.
+          # Anything that arrives at the container's real address by another path
+          # -- a glue A record in the additional section of an SRV answer, an
+          # LDAP referral, the server name a bound connection reports back --
+          # used to dial into a black hole. With the route it reaches the
+          # container. The KDC ports are published in the same spirit: so the
+          # topology the DC advertises is one the runner can actually follow,
+          # rather than one with holes in it that produce misleading timeouts.
           #
-          # Leaving them published then caused an actual regression. Once the
-          # hosts entries pointed at a routable address (below) so the DC Locator
-          # could work, a reachable KDC meant Negotiate began attempting Kerberos
-          # instead of NTLM -- and Kerberos cannot succeed here: Samba registers
-          # its SPN for the DC's FQDN, and the KDC's own A record resolves to the
-          # container-internal 10.88.x.x that Windows cannot route to. Negotiate
-          # then failed outright rather than falling back, and every bind started
-          # returning 0x8007052E ERROR_LOGON_FAILURE -- breaking the minPwdLength
-          # read that had been passing.
-          #
-          # Without a KDC to find, Negotiate uses NTLM, which works.
-          #
-          # The obvious next move -- route Windows to the podman bridge so the
-          # container's own address becomes reachable -- has been TESTED AND
-          # REJECTED. Do not retry it. The theory was that a Kerberos client
-          # takes dc.example.com's 10.88.x.x address straight from the glue A
-          # record in an SRV response, never performing the lookup the hosts file
-          # would have intercepted, and so dials somewhere unroutable. The route
-          # was added and demonstrably worked:
+          # Kerberos itself is a closed question. Do not retry it. The route was
+          # added and demonstrably worked:
           #
           #   route added: 10.88.0.0/16 via 172.27.120.101
           #                (vEthernet (WSL (Hyper-V firewall)))
@@ -97,13 +88,28 @@ jobs:
           #
           #   Stage 2: Kerberos bind FAILED: "A local error occurred."
           #
-          # Reachability was therefore never the blocker. That error is the
+          # Reachability was therefore never the blocker, which is exactly why
+          # the route is kept and the Kerberos ambition is not. That error is the
           # client failing before it reaches the wire: a machine that is not
           # domain-joined has no EXAMPLE.COM realm mapping, so the Kerberos
           # package cannot request a ticket at all. Making Kerberos work here
           # needs realm and SPN configuration on the runner, which is a larger
-          # change than this test justifies -- and Task 2 removes the dependency
-          # that motivated it, from production as well as CI.
+          # change than this test justifies -- and the group work removes the
+          # forest dependency that motivated it, from production as well as CI.
+          #
+          # The hazard that once made these two ports unpublishable is RETIRED,
+          # and it is worth stating plainly because the ports are back. It used
+          # to be that publishing them broke every bind: with the hosts entries
+          # pointing at a routable address, a findable KDC made Negotiate prefer
+          # Kerberos, Kerberos failed, Negotiate did not fall back, and every
+          # read returned 0x8007052E ERROR_LOGON_FAILURE -- including the
+          # minPwdLength read that had been passing. The cause was binding to the
+          # REALM name, which has no service principal, not the open ports.
+          # LdapHostnames now names the DC, whose SPN exists, and the experiment
+          # run confirmed the difference directly: with 88 and 464 published the
+          # sealed bind to dc.example.com still succeeded and the minPwdLength
+          # assertion still ran. The broad-red failure mode did not recur. If it
+          # ever does, look at LdapHostnames before looking here.
           #
           # 389 is published for BOTH protocols, and the /udp is not incidental.
           # podman publishes TCP only when no protocol is given, so "-p 389:389"
@@ -121,6 +127,10 @@ jobs:
           # outcome:
           #
           #   1. 88 and 464 published -- all five ports confirmed reachable.
+          #      This one began as a theory that ADSI was timing out on
+          #      unreachable transports, and disproved it: with all five ports
+          #      open the request still failed in 11.18s against 11.4s before, so
+          #      the duration was never port timeouts.
           #   2. The DC's CA trusted -- LDAPS binds to example.com:636 and
           #      dc.example.com:636 both confirmed succeeding from the runner.
           #   3. The provider bound with sign-and-seal -- the app logs
@@ -128,8 +138,7 @@ jobs:
           #
           # So the channel IS encrypted and signed, and SDSUtils.ChangePassword
           # still returns E_ACCESSDENIED. Whatever remains is not reachability,
-          # not certificate trust, and not channel protection -- which is also
-          # why unpublishing 88 and 464 above costs that investigation nothing.
+          # not certificate trust, and not channel protection.
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -168,11 +177,36 @@ jobs:
             --privileged \
             -p 389:389/tcp -p 389:389/udp -p 636:636 \
             -p 3268:3268 -p 3269:3269 \
+            -p 88:88/tcp -p 88:88/udp \
+            -p 464:464/tcp -p 464:464/udp \
             -p ${WSL_IP}:53:53/udp -p ${WSL_IP}:53:53/tcp \
             -e DOMAIN="example.com" \
             -e DOMAINPASS="AdminPassword123!" \
             -e NOCOMPLEXITY="true" \
             docker.io/nowsci/samba-domain:latest
+
+          # Facts for the static route added on the Windows side. Both are READ
+          # from podman rather than assumed: netavark defaults to 10.88.0.0/16,
+          # but a hardcoded value that quietly stopped matching would add a route
+          # to nowhere and the resulting unreachability would look like a network
+          # fault rather than a stale constant.
+          #
+          # Handed over through a file because this step runs in WSL and the
+          # route is added from PowerShell; the two do not share an environment.
+          NETWORK_FILE="$(wslpath '${{ github.workspace }}')/podman-network.txt"
+
+          PODMAN_SUBNET="$(podman network inspect podman --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)"
+          if [ -z "${PODMAN_SUBNET}" ]; then
+            # Older/other backends report a different shape; fall back to JSON.
+            PODMAN_SUBNET="$(podman network inspect podman 2>/dev/null | grep -o '"subnet"[^,]*' | head -1 | sed 's/.*: *"//; s/"//')"
+          fi
+
+          CONTAINER_IP="$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' samba-ad 2>/dev/null)"
+
+          echo "podman bridge subnet : ${PODMAN_SUBNET:-<unknown>}"
+          echo "container address    : ${CONTAINER_IP:-<unknown>}"
+
+          printf '%s\n%s\n' "${PODMAN_SUBNET}" "${CONTAINER_IP}" > "${NETWORK_FILE}"
 
       - name: Wait for Samba AD DC Provisioning
         shell: wsl-bash {0}
@@ -238,11 +272,15 @@ jobs:
       # both are required:
       #
       #   * The hosts entries below pin the A records for example.com and
-      #     dc.example.com to 127.0.0.1, where 389/636 are published. They must
-      #     NOT be "cleaned up" now that DNS is available: Samba's SRV records
-      #     name dc.example.com, and Samba's own DNS answers that A query with
-      #     the container's internal address (10.88.x.x), which Windows has no
-      #     route to.
+      #     dc.example.com to the WSL VM's address, where the container's ports
+      #     are published. They must NOT be "cleaned up" now that DNS is
+      #     available: Samba's SRV records name dc.example.com, and Samba's own
+      #     DNS answers that A query with the container's internal address
+      #     (10.88.x.x). A static route to the podman bridge is now added as
+      #     well, so that address is no longer a black hole -- but the route is
+      #     a diagnostic that is allowed to fail, while this pinning is the
+      #     load-bearing path and the one every assertion has been proven
+      #     against.
       #   * The NRPT rule below sends DNS queries for the zone to the container's
       #     DNS server, which is the only way to get the SRV records that
       #     Forest.GetForest() needs -- a hosts file cannot express SRV at all.
@@ -262,9 +300,10 @@ jobs:
           # eth0's address carries both, and "-p 389:389/tcp" binds 0.0.0.0
           # inside the VM, so TCP is served over the same address that UDP is.
           # One routable address therefore replaces the previous split
-          # arrangement rather than extending it: these entries exist only to
-          # override Samba's own answer of the container-internal 10.88.x.x,
-          # which Windows has no route to, and any routable address does that.
+          # arrangement rather than extending it: these entries exist to override
+          # Samba's own answer of the container-internal 10.88.x.x with an
+          # address whose reachability does not depend on the static route added
+          # below, and any routable address does that.
           # The NRPT rule below is unchanged and still required -- a hosts file
           # cannot express the SRV records forest discovery reads.
           $wslIp = (wsl hostname -I).Trim().Split(' ')[0]
@@ -296,6 +335,94 @@ jobs:
                   Write-Host "$name did not resolve: $($_.Exception.Message)"
               }
           }
+
+          # --- Static route to the podman bridge -------------------------------
+          # Windows does not need the container on its network, only a route to
+          # it, and the WSL VM already forwards because podman requires
+          # ip_forward. This is what makes the container's own 10.88.x.x address
+          # reachable when something obtains it by a path the hosts file cannot
+          # intercept -- a glue A record in an SRV answer, a referral, or the
+          # server name a bound connection reports back.
+          #
+          # It is retained for that reachability and NOT for Kerberos, which was
+          # tested over this same route and failed; see the port list in "Start
+          # Samba AD DC inside WSL" for the recorded result.
+          #
+          # Subnet and container address come from podman (written out by that
+          # step), never hardcoded.
+          $networkFile = Join-Path $env:GITHUB_WORKSPACE "podman-network.txt"
+          $podmanSubnet = $null
+          $containerIp = $null
+          if (Test-Path $networkFile) {
+              $networkFacts = @(Get-Content $networkFile)
+              if ($networkFacts.Count -ge 1) { $podmanSubnet = $networkFacts[0].Trim() }
+              if ($networkFacts.Count -ge 2) { $containerIp = $networkFacts[1].Trim() }
+          }
+
+          Write-Host "=== podman network facts ==="
+          Write-Host "  subnet    : $(if ($podmanSubnet) { $podmanSubnet } else { '<not reported>' })"
+          Write-Host "  container : $(if ($containerIp) { $containerIp } else { '<not reported>' })"
+
+          if ($podmanSubnet) {
+              try {
+                  # The interface is found by asking Windows how it reaches the
+                  # WSL VM, not by looking $wslIp up as a local address. That
+                  # lookup cannot work: $wslIp is the VM's own address, which
+                  # lives inside the VM and is not configured on any Windows
+                  # adapter -- the Windows end of the vEthernet (WSL) link has a
+                  # different address. Find-NetRoute answers the question that
+                  # actually matters, which is which interface carries traffic to
+                  # the VM, and the bridge route then follows the same path.
+                  $routeToVm = Find-NetRoute -RemoteIPAddress $wslIp -ErrorAction Stop | Select-Object -First 1
+                  Write-Host "  reaching $wslIp via interface $($routeToVm.InterfaceIndex) ($($routeToVm.InterfaceAlias))"
+
+                  New-NetRoute -DestinationPrefix $podmanSubnet -NextHop $wslIp `
+                    -InterfaceIndex $routeToVm.InterfaceIndex `
+                    -RouteMetric 1 -ErrorAction Stop | Out-Null
+                  Write-Host "  route added: $podmanSubnet via $wslIp"
+              }
+              catch {
+                  # Nothing in the suite depends on this route -- every assertion
+                  # passed before it existed -- so a failure to add it is a
+                  # diagnostic, not a reason to fail the job.
+                  Write-Host "  route not added: $($_.Exception.Message)"
+              }
+              Write-Host "=== routes matching the bridge ==="
+              Get-NetRoute -ErrorAction SilentlyContinue |
+                Where-Object { $_.DestinationPrefix -eq $podmanSubnet } |
+                Format-Table DestinationPrefix,NextHop,InterfaceAlias,RouteMetric |
+                Out-String | Write-Host
+          }
+          else {
+              Write-Host "  no subnet reported; skipping the route"
+          }
+
+          # Confirms the route does what it is kept for. A plain TCP connect to
+          # the container's own address, with no authentication of any kind, so a
+          # failure here is a routing problem and nothing else.
+          Write-Host "=== reachability of the container address ==="
+          if ($containerIp) {
+              foreach ($port in @(389, 88)) {
+                  try {
+                      $client = New-Object System.Net.Sockets.TcpClient
+                      $connect = $client.BeginConnect($containerIp, $port, $null, $null)
+                      if ($connect.AsyncWaitHandle.WaitOne(5000, $false) -and $client.Connected) {
+                          Write-Host "  ${containerIp}:${port} REACHABLE"
+                      }
+                      else {
+                          Write-Host "  ${containerIp}:${port} NOT reachable"
+                      }
+                      $client.Close()
+                  }
+                  catch {
+                      Write-Host "  ${containerIp}:${port} NOT reachable: $($_.Exception.Message)"
+                  }
+              }
+          }
+          else {
+              Write-Host "  skipped, no container address reported"
+          }
+          # --- end static route -------------------------------------------------
 
           # NRPT sends only *.example.com queries to the container's DNS, leaving
           # the runner's own resolution (GitHub API, package restore) untouched.
