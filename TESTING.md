@@ -95,9 +95,28 @@ artifacts when a job fails.
 
 - Playwright runs Chromium and Firefox in CI. Add a WebKit project to
   `playwright.config.ts` if additional cross-browser coverage is desired.
-- There is no automated integration test for the AD provider — it lives
-  behind `[SupportedOSPlatform("windows")]` and depends on a real Active
-  Directory. CI coverage is limited to the Windows build job.
+- The AD provider smoke test (`ad-provider-smoke-test.yml`) runs against a
+  Samba AD DC in a container, so the provider is no longer covered only by the
+  Windows build job. What it does and does not reach is worth stating
+  precisely, because the difference is a configuration the runner cannot adopt:
+
+  - The runner is not domain-joined, so `appsettings.ADTest.json` must set
+    `UseAutomaticContext: false`. Production deployments normally run it
+    **true**, and the two take different paths through
+    `AcquirePrincipalContext`.
+  - **Covered**, and configuration-independent — the same code runs either
+    way: provider logic, error routing and disclosure posture, policy
+    evaluation order, group membership resolution, and the `minPwdLength`
+    read.
+  - **Not covered anywhere**: context construction and channel selection on
+    the automatic-context path, which calls
+    `new PrincipalContext(ContextType.Domain)` with no server, credentials or
+    options. No job exercises it.
+  - The explicit-credentials path that *is* covered has already been found
+    broken twice — the ADSI path defect behind `minPwdLength`, and a password
+    change that fails with `E_ACCESSDENIED`. The uncovered path should not be
+    assumed to be the safer one on the strength of having had fewer bugs
+    found in it.
 - The LDAP smoke test relies on MokAPI's LDAP fixture support. Swap in
   `osixia/openldap` if you need a more realistic password-change path
   (Modify with `userPassword` works against both; the AD-style
