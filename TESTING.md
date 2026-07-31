@@ -117,7 +117,81 @@ artifacts when a job fails.
     change that fails with `E_ACCESSDENIED`. The uncovered path should not be
     assumed to be the safer one on the strength of having had fewer bugs
     found in it.
+  - The password change itself does not succeed on the explicit-bind path.
+    That is an open issue rather than a property of the harness; see
+    [The AD password change on the explicit-bind path](#the-ad-password-change-on-the-explicit-bind-path)
+    below for what has been ruled out.
 - The LDAP smoke test relies on MokAPI's LDAP fixture support. Swap in
   `osixia/openldap` if you need a more realistic password-change path
   (Modify with `userPassword` works against both; the AD-style
   `unicodePwd` delete/add flow only works against a real AD).
+
+## The AD password change on the explicit-bind path
+
+**Status: open.** Against the containerised Samba AD DC, with
+`UseAutomaticContext: false` and explicit service-account credentials, reads
+work and the password change does not. `SDSUtils.ChangePassword` — the ADSI
+call behind `UserPrincipal.ChangePassword` — returns `E_ACCESSDENIED`.
+
+This is recorded here because the obvious explanations have been tested and
+are not the cause. Anyone picking it up should start after this list, not
+before it.
+
+### What has been ruled out, with evidence
+
+| Hypothesis | How it was tested | Result |
+| ---------- | ----------------- | ------ |
+| Unreachable transports causing ADSI to time out through its transport list | Published 88, 464, 636, 3268 and 3269 in addition to 389; all five confirmed reachable from the runner | Not the cause. The request still failed, in 11.18s against 11.4s before — so the duration was never port timeouts either |
+| The DC's certificate not being trusted, so SSL is unavailable | Extracted the DC's CA and installed it in the runner's trusted root store; probed with `LdapConnection` | Not the cause. LDAPS binds to both `example.com:636` and `dc.example.com:636` succeed |
+| An unprotected channel, with the DC refusing a password change over it | Read the provider's own EventId 108 | Not the cause. The context is established over sign-and-seal, with no SSL fallback — the channel is signed and encrypted |
+| Kerberos being unavailable, leaving a weaker authentication than the operation needs | Routed the runner to the podman bridge so the container's own address was reachable, then bound with `AuthType.Kerberos` explicitly so NTLM could not satisfy it | Not the cause of the change failing, and not fixable here. Reachability was fine (`10.88.0.2:389` and `:88` both reachable) and the bind still failed with `"A local error occurred."` — the client failing before the wire, because a machine that is not domain-joined has no `EXAMPLE.COM` realm mapping |
+| The pinned `LdapPort` keeping ADSI's SSL transport off 636 | Set `LdapPort: 636` in `appsettings.ADTest.json` | Not the cause, and actively worse. See below |
+
+### The `LdapPort: 636` result, and what it exposed
+
+The idea was that `IADsUser::ChangePassword` tries LDAP over SSL among its
+transports, and that a `DirectoryEntry` carrying `LDAP://dc.example.com:389/…`
+never gives it an SSL connection to use. Pinning 636 should have made the
+provider's existing sealed→SSL fallback hand it one.
+
+It never got that far. With 636 configured, **both** channels were refused and
+context acquisition failed outright:
+
+```
+sealed  (Negotiate|Signing|Sealing) on dc.example.com:636
+  COMException (0x8007203A): The server is not operational.
+SSL     (Negotiate|SecureSocketLayer) on dc.example.com:636
+  DirectoryServicesCOMException (0x80072028): A more secure authentication
+  method is required for this server.
+```
+
+EventId 108 never fired — no channel was ever established — and the run died at
+the first assertion, the `minPwdLength` read that passes on 389. The port is
+back to 389 and this hypothesis is closed.
+
+The second error is the part worth keeping. **That was the first time the SSL
+fallback in `AcquirePrincipalContext` has ever been exercised**, because the
+sealed bind on 389 has always succeeded and short-circuited it — and it failed.
+So the fallback that the code advertises as its safety net is, against this DC,
+unproven at best. Note the contrast: a raw `LdapConnection` with SSL to the same
+host and port succeeds from the same runner in the same job. The difference is
+ADSI, not the network and not the certificate.
+
+Two things follow, and they are separable:
+
+- **The fallback needs its own coverage.** It is currently reached only when the
+  primary channel fails, which in CI is never. Whatever is wrong with it is
+  invisible from a green run.
+- **`0x80072028` is `LDAP_STRONG_AUTH_REQUIRED`.** Samba's
+  `ldap server require strong auth` refusing the bind that ADSI actually sent is
+  the first thing to check — which means capturing what ADSI sent, rather than
+  reasoning about what it should have sent. This investigation has twice
+  produced a fix whose stated rationale turned out to be wrong, so the next step
+  is a packet capture or a Samba-side log, not another configuration guess.
+
+### What the smoke test asserts about it
+
+Test 1 asserts the password change **succeeds**, and it currently fails. The
+assertion has deliberately not been weakened to match the behaviour: it
+describes what the provider is supposed to do, and a failing assertion is the
+correct report of an open defect. Do not relax it to get a green run.
