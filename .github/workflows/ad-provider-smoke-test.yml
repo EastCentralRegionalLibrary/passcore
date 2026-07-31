@@ -69,9 +69,20 @@ jobs:
           # failing in 11.18s -- against 11.4s before they were opened. The time
           # was never port timeouts.
           #
-          # The channel theory that replaced it has since been ruled out too, and
-          # the sequence is recorded so nobody re-runs it. Three things were
-          # tried, each verified working, and the change still fails identically:
+          # 389 is published for BOTH protocols, and the /udp is not incidental.
+          # podman publishes TCP only when no protocol is given, so "-p 389:389"
+          # left UDP 389 unpublished -- and UDP 389 is what the DC Locator needs.
+          # Netlogon sends a CLDAP ping as an LDAP UDP search before connecting
+          # over TCP; without a response it cannot confirm the server is a global
+          # catalog or determine its site, and Forest.GetForest() fails. That is
+          # exactly the signature seen: DNS resolving, tcp/3268 reachable, and
+          # GetForest() still failing. GetAuthorizationGroups() was unaffected
+          # throughout because tokenGroups is a base-scope read on an
+          # already-bound TCP connection and never goes through the locator.
+          #
+          # The change-password investigation is separate and still open. Three
+          # things were tried there, each verified working, with no change in
+          # outcome:
           #
           #   1. 88 and 464 published -- all five ports confirmed reachable.
           #   2. The DC's CA trusted -- LDAPS binds to example.com:636 and
@@ -120,7 +131,7 @@ jobs:
             --name samba-ad \
             --hostname dc \
             --privileged \
-            -p 389:389 -p 636:636 \
+            -p 389:389/tcp -p 389:389/udp -p 636:636 \
             -p 3268:3268 -p 3269:3269 \
             -p 88:88/tcp -p 88:88/udp \
             -p 464:464/tcp -p 464:464/udp \
@@ -209,10 +220,27 @@ jobs:
       - name: Map the test domain to the published LDAP and DNS ports
         shell: powershell
         run: |
+          # The WSL VM's address, not 127.0.0.1. These A records have to carry
+          # UDP as well as TCP now: the DC Locator's CLDAP ping goes to UDP 389,
+          # and WSL2's localhost relay forwards TCP but not UDP -- the same
+          # constraint already recorded below for DNS, which was solved there and
+          # only there. A datagram sent to 127.0.0.1 simply never arrives.
+          #
+          # eth0's address carries both, and "-p 389:389/tcp" binds 0.0.0.0
+          # inside the VM, so TCP is served over the same address that UDP is.
+          # One routable address therefore replaces the previous split
+          # arrangement rather than extending it: these entries exist only to
+          # override Samba's own answer of the container-internal 10.88.x.x,
+          # which Windows has no route to, and any routable address does that.
+          # The NRPT rule below is unchanged and still required -- a hosts file
+          # cannot express the SRV records forest discovery reads.
+          $wslIp = (wsl hostname -I).Trim().Split(' ')[0]
+          Write-Host "WSL VM IP: $wslIp"
+
           $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
           $entries = @(
-            "127.0.0.1 example.com",
-            "127.0.0.1 dc.example.com"
+            "$wslIp example.com",
+            "$wslIp dc.example.com"
           )
           Add-Content -Path $hosts -Value ($entries -join "`r`n")
 
@@ -236,12 +264,9 @@ jobs:
               }
           }
 
-          # NRPT sends only *.example.com queries to the container's DNS, leaving the
-          # runner's own resolution (GitHub API, package restore) untouched. Pointed at
-          # the WSL VM's IP rather than 127.0.0.1: podman publishes inside the WSL2 VM,
-          # and WSL2's localhost relay does not cover UDP, which is what DNS uses first.
-          $wslIp = (wsl hostname -I).Trim().Split(' ')[0]
-          Write-Host "WSL VM IP: $wslIp"
+          # NRPT sends only *.example.com queries to the container's DNS, leaving
+          # the runner's own resolution (GitHub API, package restore) untouched.
+          # Same $wslIp as the hosts entries above, and they must agree.
           Add-DnsClientNrptRule -Namespace ".example.com" -NameServers $wslIp
           Clear-DnsClientCache
 
@@ -275,10 +300,14 @@ jobs:
       # cannot start at all. Installing only the 10.0 SDK does not provide it:
       # the 10.0 SDK carries the 10.0 runtimes. The LDAP smoke test, which
       # passes, pins 8.0 for the same reason.
-      # ADSI's IADsUser::ChangePassword refuses to run over an unencrypted,
-      # unsigned channel. The provider binds simple over plaintext 389, so AD
-      # answers the change with E_ACCESSDENIED -- which looks like a permissions
-      # problem and is really a transport one. Publishing 88/464 did not help:
+      # ADSI's IADsUser::ChangePassword will not run over an unencrypted,
+      # unsigned channel, which was the reason this step was added. That theory
+      # has since been ruled out as the cause HERE: the PrincipalContext
+      # constructor already defaulted to Negotiate | Signing | Sealing, a live
+      # run records sign-and-seal being established with no fallback, and the
+      # change is still refused. The step stays because trusting the DC's CA is
+      # correct regardless and the SSL fallback depends on it -- it is simply not
+      # the fix it was believed to be. Publishing 88/464 did not help either:
       # the first run showed all five ports reachable and the duration unchanged
       # at ~11s, which ruled out the port-timeout theory.
       #
@@ -645,6 +674,23 @@ jobs:
               catch {
                   Write-Host "  tcp/$port on dc.example.com NOT reachable: $($_.Exception.Message)"
               }
+          }
+
+          # The DC Locator itself. This is the layer that actually failed:
+          # Forest.GetForest() cannot proceed without a CLDAP response on UDP
+          # 389, and neither a DNS answer nor a TCP connect proves that arrived.
+          # Test-NetConnection cannot probe UDP usefully, so the locator is
+          # exercised directly and asked what it found.
+          Write-Host "=== 2b. DC Locator (CLDAP over UDP 389) ==="
+          try {
+              $located = & nltest /dsgetdc:example.com 2>&1
+              $located | ForEach-Object { Write-Host "  $_" }
+              Write-Host "  nltest exit code: $LASTEXITCODE"
+              $LASTEXITCODE = 0
+          }
+          catch {
+              Write-Host "  nltest failed: $($_.Exception.Message)"
+              $LASTEXITCODE = 0
           }
 
           Write-Host "=== 3. Forest.GetForest() with the ADTest bind credentials ==="

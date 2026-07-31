@@ -57,7 +57,8 @@ namespace Unosquare.PassCore.PasswordProvider
                 LogLevel.Information,
                 new EventId(108, nameof(LogSecureChannelEstablished)),
                 "Service-account directory context established over {Channel} to {Host}:{Port}. " +
-                "A password change requires an encrypted or signed channel; this is the one in use.");
+                "This is the channel for directory reads and writes made through this context. " +
+                "IADsUser::ChangePassword selects its own transport and is not governed by it.");
 
         private static readonly Action<ILogger, string, int, Exception?> LogSealingUnavailable =
             LoggerMessage.Define<string, int>(
@@ -642,21 +643,24 @@ namespace Unosquare.PassCore.PasswordProvider
 
                 var host = _options.LdapHostnames.First();
 
-                // A plain bind is not enough to change a password. ADSI refuses
-                // to modify unicodePwd over a channel that is neither encrypted
-                // nor signed, and the refusal arrives as E_ACCESSDENIED, which
-                // reads as a permissions problem and is really a transport one.
-                // The previous code passed no ContextOptions and therefore bound
-                // in the clear, so on this path a password change could not
-                // succeed at all. (Automatic-context deployments were unaffected:
-                // ContextType.Domain alone negotiates Kerberos with signing and
-                // sealing already.)
+                // The sign-and-seal flags below are EXPLICIT, not new. The
+                // four-argument PrincipalContext constructor this replaced
+                // chained to GetDefaultOptionForStore(Domain), which is already
+                // Negotiate | Signing | Sealing, and Microsoft documents that
+                // default. So on the primary path this is inert, and an earlier
+                // version of this comment claiming the previous code "bound in
+                // the clear" was simply wrong -- EventId 108 from a live run
+                // records sign-and-seal being established, with no fallback.
                 //
-                // Sign-and-seal is tried first because it encrypts the channel
-                // through the negotiated security package and needs no
-                // certificate trust, so it imposes nothing new on existing
-                // deployments. SSL is the fallback for directories that refuse
-                // or cannot negotiate sealing.
+                // What is genuinely new is the SSL fallback and the eager bind.
+                // Stating the flags anyway is deliberate: the default is a
+                // framework decision that could change, and this connection has
+                // to be protected for the directory to accept a write at all.
+                //
+                // Sign-and-seal leads because it encrypts through the negotiated
+                // security package and needs no certificate trust, so it asks
+                // nothing new of existing deployments. SSL covers directories
+                // that will not negotiate sealing.
                 try
                 {
                     var context = CreateVerifiedContext(
