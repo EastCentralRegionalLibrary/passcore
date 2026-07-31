@@ -153,10 +153,39 @@ the one to work from.
 not "permission denied on the password write" — it is ADSI being unable to read
 **configuration information** from the DC. That is the Configuration naming
 context, and it is the same thing `Forest.GetForest()` needs and cannot get on
-this runner. Two failures previously treated as unrelated may share one root
-cause: a machine that is not domain-joined, reaching the Configuration NC over an
-explicit bind. Anyone resuming this should test that hypothesis before any
-transport or credential theory — those are already ruled out below.
+this runner.
+
+So two failures previously treated as unrelated may share one root cause. **This
+is a hypothesis, not a finding, and the evidence is not clean:** the two errors
+carry *different* codes. `Forest.GetForest()` fails with `0x8007052E` (1326,
+logon failure); the change fails with `0x80070547` (1351, cannot read config). If
+a single cause drove both you would expect the same code. The plausible story is
+ADSI wrapping an inner authentication failure as "cannot access domain info" —
+plausible, and not established. The Configuration NC probe below exists to settle
+it rather than argue it.
+
+One thing that needs no action: **1351 is not in `Win32ErrorCode`**, so it falls
+to the default classification — `Infrastructure`, the same place
+`ERROR_ACCESS_DENIED` lands. That is why Test 1 reports code 8 and not something
+new, and the wire behaviour is unchanged. The catalog does not need an entry for
+it.
+
+### The Configuration NC probe
+
+The AD smoke test reads the Configuration naming context three ways, beside the
+existing sealed-bind and LDAPS diagnostics, using ADSI with
+`Secure | Signing | Sealing` — the same stack and channel the provider's own
+context uses, because a probe on a different channel answers a different
+question. The DN comes from rootDSE's `configurationNamingContext` rather than
+being constructed, for the same reason `AdsiPath` reads `defaultNamingContext`.
+
+How to read it:
+
+| `dc.example.com` | `example.com` | Reading |
+| --- | --- | --- |
+| succeeds | fails | **Target naming.** Both failures share a root cause: NTLM derives its target name from the server string, and the realm name has no SPN. A Kerberos realm mapping becomes well motivated. |
+| fails | fails | **Credentials or permissions, not naming.** `EXAMPLE\Administrator` should be able to read this, so the bind itself or Samba's provisioning is the suspect. |
+| succeeds | succeeds | **Hypothesis dead.** 1351 comes from something else, and `LdapPort: 636` regains standing as the next thing to try. |
 
 This is recorded here because the obvious explanations have been tested and
 are not the cause. Anyone picking it up should start after this list, not

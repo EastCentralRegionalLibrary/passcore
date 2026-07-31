@@ -598,6 +598,106 @@ jobs:
               }
           }
 
+          # --- Configuration naming context probe ------------------------------
+          # Test 1 fails with 0x80070547, ERROR_CANT_ACCESS_DOMAIN_INFO (1351):
+          # "configuration information could not be read from the domain
+          # controller". That is ADSI failing to read the CONFIGURATION naming
+          # context -- which is also what Forest.GetForest() needs, and
+          # GetForest() fails here too.
+          #
+          # So the hypothesis is that one cause drives both. It is a HYPOTHESIS,
+          # not a finding, and the codes do not match: GetForest() fails 0x8007052E
+          # (1326, logon failure) while the change fails 1351. The plausible story
+          # is ADSI wrapping an inner authentication failure as "cannot access
+          # domain info", which is exactly what this probe is here to test rather
+          # than argue about.
+          #
+          # Three reads, reported independently, because which name is used is the
+          # variable under test: dc.example.com has a service principal behind it
+          # and example.com does not.
+          #
+          #   dc succeeds, example fails -> target naming; both failures share a
+          #                                 root cause and Kerberos would address it
+          #   both fail                  -> credentials or permissions, not naming
+          #   both succeed               -> hypothesis dead; 1351 comes from
+          #                                 elsewhere and LdapPort 636 regains standing
+          #
+          # ADSI (DirectoryEntry) rather than LdapConnection, with
+          # Secure | Signing | Sealing -- the same stack and the same channel the
+          # provider's own context uses. A probe on a different channel tests a
+          # different thing, which is how earlier rounds went sideways.
+          Write-Host "=== Configuration NC probe (diagnostic; does not fail the step) ==="
+
+          $authTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                       [System.DirectoryServices.AuthenticationTypes]::Signing -bor `
+                       [System.DirectoryServices.AuthenticationTypes]::Sealing
+
+          function Report-ProbeError {
+              param($ErrorRecord, [string] $Prefix)
+              $exception = $ErrorRecord.Exception
+              Write-Host "${Prefix} FAILED: $($exception.GetType().Name): $($exception.Message)"
+              # The HRESULT is the whole point -- 1326 and 1351 are different answers.
+              if ($exception.PSObject.Properties.Name -contains 'ErrorCode') {
+                  Write-Host "${Prefix}   ErrorCode: 0x$('{0:X8}' -f $exception.ErrorCode)"
+              }
+              if ($exception.HResult) {
+                  Write-Host "${Prefix}   HRESULT:   0x$('{0:X8}' -f $exception.HResult)"
+              }
+              $inner = $exception.InnerException
+              while ($inner) {
+                  Write-Host "${Prefix}   inner: $($inner.GetType().Name): $($inner.Message)"
+                  if ($inner.HResult) {
+                      Write-Host "${Prefix}   inner HRESULT: 0x$('{0:X8}' -f $inner.HResult)"
+                  }
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # 1. The DN comes from rootDSE, never constructed. Hardcoding
+          #    CN=Configuration,DC=example,DC=com would test a string this code does
+          #    not use; the provider already reads defaultNamingContext this way and
+          #    the same reasoning applies here.
+          $configurationNc = $null
+          try {
+              $rootDse = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://dc.example.com:389/RootDSE",
+                  "EXAMPLE\Administrator",
+                  "AdminPassword123!",
+                  $authTypes)
+              $configurationNc = $rootDse.Properties["configurationNamingContext"].Value
+              Write-Host "  1. rootDSE configurationNamingContext: $configurationNc"
+              $rootDse.Dispose()
+          }
+          catch {
+              Report-ProbeError $_ "  1. rootDSE read"
+          }
+
+          if (-not $configurationNc) {
+              Write-Host "  2. skipped -- no configurationNamingContext to read"
+              Write-Host "  3. skipped -- no configurationNamingContext to read"
+          }
+          else {
+              $probeIndex = 2
+              foreach ($target in @("dc.example.com", "example.com")) {
+                  try {
+                      $entry = New-Object System.DirectoryServices.DirectoryEntry(
+                          "LDAP://${target}:389/$configurationNc",
+                          "EXAMPLE\Administrator",
+                          "AdminPassword123!",
+                          $authTypes)
+                      # Accessing a property is what actually binds.
+                      $dn = $entry.Properties["distinguishedName"].Value
+                      Write-Host "  ${probeIndex}. Configuration NC via ${target}: SUCCEEDED -- read '$dn'"
+                      $entry.Dispose()
+                  }
+                  catch {
+                      Report-ProbeError $_ "  ${probeIndex}. Configuration NC via ${target}:"
+                  }
+                  $probeIndex++
+              }
+          }
+          # --- end Configuration naming context probe --------------------------
+
       - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v5
         with:
