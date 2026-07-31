@@ -42,12 +42,15 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string] $LegName,
-    [Parameter(Mandatory = $true)][string[]] $ExtraArgs
+    [string[]] $ExtraArgs = @()
 )
 
 $ErrorActionPreference = 'Stop'
 
 Write-Host "=== Restarting Passcore for leg: $LegName ==="
+if ($ExtraArgs.Count -eq 0) {
+    Write-Host "  no extra configuration arguments (baseline configuration)"
+}
 foreach ($argument in $ExtraArgs) { Write-Host "  configuration argument: $argument" }
 
 # --- Stop the previous instance -------------------------------------------

@@ -69,12 +69,21 @@ jobs:
           # failing in 11.18s -- against 11.4s before they were opened. The time
           # was never port timeouts.
           #
-          # ADSI refuses to change a password over an unencrypted, unsigned
-          # channel, and the provider binds simple over plaintext 389, so AD
-          # answers E_ACCESSDENIED. That reads as a permissions problem and is
-          # really a transport one. The fix is the trusted-CA step further down,
-          # which lets the SSL attempt on 636 validate; these ports stay open so
-          # the Kerberos path is available too.
+          # The channel theory that replaced it has since been ruled out too, and
+          # the sequence is recorded so nobody re-runs it. Three things were
+          # tried, each verified working, and the change still fails identically:
+          #
+          #   1. 88 and 464 published -- all five ports confirmed reachable.
+          #   2. The DC's CA trusted -- LDAPS binds to example.com:636 and
+          #      dc.example.com:636 both confirmed succeeding from the runner.
+          #   3. The provider bound with sign-and-seal -- the app logs
+          #      "context established over sign-and-seal", with no SSL fallback.
+          #
+          # So the channel IS encrypted and signed, and SDSUtils.ChangePassword
+          # still returns E_ACCESSDENIED. Whatever remains is not reachability,
+          # not certificate trust, and not channel protection. These ports stay
+          # published because they are prerequisites either way; they are simply
+          # not sufficient.
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -600,116 +609,6 @@ jobs:
             exit 1
           fi
 
-      # ---------------------------------------------------------------------
-      # What these assertions cover, and the two things that make them possible
-      #
-      # Group membership is exercised by the legs further down, each of which
-      # restarts Passcore with different group lists. Two mechanisms underpin
-      # that, and both are easy to undo by accident:
-      #
-      # 1. Configuration arrays cannot be SHRUNK by an override. .NET binds
-      #    arrays by index and merges per key, so an environment file that omits
-      #    RestrictedAdGroups -- or supplies [] -- leaves the base file's shipped
-      #    entries in the merged result. That is why the step "Clear the shipped
-      #    group lists from the published configuration" empties them in the
-      #    PUBLISHED base file, and why per-leg values arrive as command-line
-      #    arguments, which sit last in the configuration chain and win outright.
-      #    Removing either half silently restores the shipped deny list and every
-      #    leg then tests the wrong configuration.
-      #
-      # 2. GetGroups() is topology discovery, not an LDAP search. It goes
-      #    through ADStoreCtx.GetGroupsMemberOf into Forest.GetForest(), which
-      #    resolves the forest, locates a DC, reads the site name, and binds over
-      #    GC:// on 3268 -- which is what the published global catalog ports and
-      #    the split DNS above are for. Under the previous AD LDS-shaped image
-      #    this failed outright, membership came back undetermined, and the group
-      #    assertions could not run at all.
-      #
-      # The provider refuses when membership is undetermined rather than
-      # treating "could not tell" as "not a member". That is the deny-list
-      # fail-closed guarantee: answering "not a member" for a membership that
-      # could not be determined would let a member of a restricted group through
-      # during a partial directory failure. If a leg fails because membership is
-      # undetermined, fix the environment or the assertion -- never the check.
-      # ---------------------------------------------------------------------
-      - name: AD Success and Authorization Tests
-        shell: bash
-        run: |
-          # Called only on failure. Reachability alone has already been shown NOT
-          # to be the whole story -- a run with every one of these ports open
-          # still failed with E_ACCESSDENIED, because ADSI will not change a
-          # password over an unencrypted channel. So read this together with the
-          # LDAPS bind check in the "Trust the Samba AD DC certificate authority"
-          # step: all-reachable here plus a failed LDAPS bind there means the
-          # certificate is not validating for the name being connected to.
-          report_transports() {
-            echo "  --- change-password transport reachability (TCP only; UDP not probeable here) ---"
-            for port in 389 636 464 88 3268; do
-              if (echo > /dev/tcp/dc.example.com/${port}) >/dev/null 2>&1; then
-                echo "    tcp/${port} reachable"
-              else
-                echo "    tcp/${port} NOT reachable"
-              fi
-            done
-            echo "    note: 445 (SMB/NetUserChangePassword) is never published -- Windows binds it."
-          }
-
-          # Test 1 asserts that the password CHANGED. It previously asserted only
-          # that the response was not error code 3, 4 or 6, which an
-          # E_ACCESSDENIED from a failed change satisfies -- so the change had
-          # never once succeeded while the step reported green.
-          #
-          # alloweduser is used ONLY here. No later leg asserts on it, and Test 1b
-          # changes it back, so nothing downstream can inherit a changed password.
-          echo "Test 1: password change succeeds"
-          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
-            -H "Content-Type: application/json" \
-            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
-          echo "Response: $RESPONSE"
-          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
-            echo "FAIL: the password change did not succeed."
-            echo "      This asserts the change HAPPENED. Do not relax it to tolerate an"
-            echo "      error code -- that is what hid this for the life of the workflow."
-            report_transports
-            exit 1
-          fi
-
-          # Proves the change took effect through a real authentication, not
-          # through the absence of an error: the directory must now accept the
-          # NEW password as the current one. This request is also the restore, so
-          # alloweduser ends the step exactly as it started.
-          echo "Test 1b: new password is in effect, and the account is restored"
-          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
-            -H "Content-Type: application/json" \
-            -d '{"username": "alloweduser", "currentPassword": "NewPassword123!", "newPassword": "testpassword", "newPasswordVerify": "testpassword"}')
-          echo "Response: $RESPONSE"
-          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
-            echo "FAIL: could not change back using the new password as the current one."
-            echo "      Either the first change did not really take effect, or the account"
-            echo "      is now left on NewPassword123! -- later legs assume testpassword."
-            report_transports
-            exit 1
-          fi
-
-          echo "Test 2: Invalid current password"
-          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
-            -H "Content-Type: application/json" \
-            -d '{"username": "testuser", "currentPassword": "wrongpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
-          echo "Response: $RESPONSE"
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
-
-          echo "Test 3: Unknown user (Informative Mode)"
-          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
-            -H "Content-Type: application/json" \
-            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
-          echo "Response: $RESPONSE"
-          # 3: UserNotFound
-          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 3)'
-
-          # Tests 4 and 5 -- restricted group and allowed group -- used to sit
-          # here. See the parity note above this step for why they are gone and
-          # what it would take to bring them back.
-
       # Forest discovery is the prerequisite the group legs stand on, and the
       # thing that failed under the previous image. Reported BEFORE the legs so
       # that when one fails the log already says which of the three
@@ -996,6 +895,126 @@ jobs:
             exit 1
           fi
           restore distributionuser
+
+      # Back to the baseline configuration before Test 1. Leg D left
+      # AllowedAdGroups=[DistributionGroup] in force, under which alloweduser is
+      # refused outright and never reaches the change path Test 1 exists to
+      # exercise.
+      - name: Restart Passcore with no group lists
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "baseline: no group lists"
+
+      # ---------------------------------------------------------------------
+      # What these assertions cover, and the two things that make them possible
+      #
+      # Group membership is exercised by the legs further down, each of which
+      # restarts Passcore with different group lists. Two mechanisms underpin
+      # that, and both are easy to undo by accident:
+      #
+      # 1. Configuration arrays cannot be SHRUNK by an override. .NET binds
+      #    arrays by index and merges per key, so an environment file that omits
+      #    RestrictedAdGroups -- or supplies [] -- leaves the base file's shipped
+      #    entries in the merged result. That is why the step "Clear the shipped
+      #    group lists from the published configuration" empties them in the
+      #    PUBLISHED base file, and why per-leg values arrive as command-line
+      #    arguments, which sit last in the configuration chain and win outright.
+      #    Removing either half silently restores the shipped deny list and every
+      #    leg then tests the wrong configuration.
+      #
+      # 2. GetGroups() is topology discovery, not an LDAP search. It goes
+      #    through ADStoreCtx.GetGroupsMemberOf into Forest.GetForest(), which
+      #    resolves the forest, locates a DC, reads the site name, and binds over
+      #    GC:// on 3268 -- which is what the published global catalog ports and
+      #    the split DNS above are for. Under the previous AD LDS-shaped image
+      #    this failed outright, membership came back undetermined, and the group
+      #    assertions could not run at all.
+      #
+      # The provider refuses when membership is undetermined rather than
+      # treating "could not tell" as "not a member". That is the deny-list
+      # fail-closed guarantee: answering "not a member" for a membership that
+      # could not be determined would let a member of a restricted group through
+      # during a partial directory failure. If a leg fails because membership is
+      # undetermined, fix the environment or the assertion -- never the check.
+      # ---------------------------------------------------------------------
+      - name: AD Success and Authorization Tests
+        shell: bash
+        run: |
+          # Called only on failure. Reachability alone has already been shown NOT
+          # to be the whole story -- a run with every one of these ports open
+          # still failed with E_ACCESSDENIED, because ADSI will not change a
+          # password over an unencrypted channel. So read this together with the
+          # LDAPS bind check in the "Trust the Samba AD DC certificate authority"
+          # step: all-reachable here plus a failed LDAPS bind there means the
+          # certificate is not validating for the name being connected to.
+          report_transports() {
+            echo "  --- change-password transport reachability (TCP only; UDP not probeable here) ---"
+            for port in 389 636 464 88 3268; do
+              if (echo > /dev/tcp/dc.example.com/${port}) >/dev/null 2>&1; then
+                echo "    tcp/${port} reachable"
+              else
+                echo "    tcp/${port} NOT reachable"
+              fi
+            done
+            echo "    note: 445 (SMB/NetUserChangePassword) is never published -- Windows binds it."
+          }
+
+          # Test 1 asserts that the password CHANGED. It previously asserted only
+          # that the response was not error code 3, 4 or 6, which an
+          # E_ACCESSDENIED from a failed change satisfies -- so the change had
+          # never once succeeded while the step reported green.
+          #
+          # alloweduser is used ONLY here. No later leg asserts on it, and Test 1b
+          # changes it back, so nothing downstream can inherit a changed password.
+          echo "Test 1: password change succeeds"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
+            echo "FAIL: the password change did not succeed."
+            echo "      This asserts the change HAPPENED. Do not relax it to tolerate an"
+            echo "      error code -- that is what hid this for the life of the workflow."
+            report_transports
+            exit 1
+          fi
+
+          # Proves the change took effect through a real authentication, not
+          # through the absence of an error: the directory must now accept the
+          # NEW password as the current one. This request is also the restore, so
+          # alloweduser ends the step exactly as it started.
+          echo "Test 1b: new password is in effect, and the account is restored"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "alloweduser", "currentPassword": "NewPassword123!", "newPassword": "testpassword", "newPasswordVerify": "testpassword"}')
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '(.errors // []) | length == 0' >/dev/null; then
+            echo "FAIL: could not change back using the new password as the current one."
+            echo "      Either the first change did not really take effect, or the account"
+            echo "      is now left on NewPassword123! -- later legs assume testpassword."
+            report_transports
+            exit 1
+          fi
+
+          echo "Test 2: Invalid current password"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "wrongpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
+
+          echo "Test 3: Unknown user (Informative Mode)"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 3: UserNotFound
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 3)'
+
+          # Tests 4 and 5 -- restricted group and allowed group -- used to sit
+          # here. See the parity note above this step for why they are gone and
+          # what it would take to bring them back.
 
       - name: Stop the Samba AD DC
         shell: powershell
