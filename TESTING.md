@@ -114,7 +114,7 @@ artifacts when a job fails.
     options. No job exercises it.
   - The explicit-credentials path that *is* covered has already been found
     broken twice — the ADSI path defect behind `minPwdLength`, and a password
-    change that fails with `E_ACCESSDENIED`. The uncovered path should not be
+    change that fails with `0x80070547`. The uncovered path should not be
     assumed to be the safer one on the strength of having had fewer bugs
     found in it.
   - The password change itself does not succeed on the explicit-bind path.
@@ -131,7 +131,32 @@ artifacts when a job fails.
 **Status: open.** Against the containerised Samba AD DC, with
 `UseAutomaticContext: false` and explicit service-account credentials, reads
 work and the password change does not. `SDSUtils.ChangePassword` — the ADSI
-call behind `UserPrincipal.ChangePassword` — returns `E_ACCESSDENIED`.
+call behind `UserPrincipal.ChangePassword` — fails.
+
+**The exact error, captured once the group legs stopped blocking Test 1:**
+
+```
+DirectoryUnavailableException: The directory service could not complete the password change request
+ ---> PrincipalOperationException: Configuration information could not be read from the
+      domain controller, either because the machine is unavailable, or access has been
+      denied. (0x80070547)
+   at System.DirectoryServices.AccountManagement.SDSUtils.ChangePassword(DirectoryEntry de, ...)
+   at System.DirectoryServices.AccountManagement.ADStoreCtx.ChangePassword(...)
+   at System.DirectoryServices.AccountManagement.AuthenticablePrincipal.ChangePassword(...)
+```
+
+`0x80070547` is `ERROR_CANT_ACCESS_DOMAIN_INFO` (1351). Earlier notes recorded
+this as `E_ACCESSDENIED`; that was from a less precise capture, and this stack is
+the one to work from.
+
+**The distinction matters, and it is a lead rather than a detail.** The failure is
+not "permission denied on the password write" — it is ADSI being unable to read
+**configuration information** from the DC. That is the Configuration naming
+context, and it is the same thing `Forest.GetForest()` needs and cannot get on
+this runner. Two failures previously treated as unrelated may share one root
+cause: a machine that is not domain-joined, reaching the Configuration NC over an
+explicit bind. Anyone resuming this should test that hypothesis before any
+transport or credential theory — those are already ruled out below.
 
 This is recorded here because the obvious explanations have been tested and
 are not the cause. Anyone picking it up should start after this list, not
@@ -195,3 +220,18 @@ Test 1 asserts the password change **succeeds**, and it currently fails. The
 assertion has deliberately not been weakened to match the behaviour: it
 describes what the provider is supposed to do, and a failing assertion is the
 correct report of an open defect. Do not relax it to get a green run.
+
+Test 1 is now the **only** failing assertion in the AD smoke test. It spent a
+long time unreachable: the group legs run before it, and Leg A's non-member
+assertion could not be answered while membership resolution depended on
+`Forest.GetForest()`. Since the move to security-groups-only, Legs A–D pass and
+Test 1 executes, which is how the stack above was finally captured.
+
+The legs' own "must be permitted" assertions are unaffected by the change failing.
+They check that the account got **past the group check**, not that the password
+was written, so they treat anything other than `UserNotFound` (3),
+`InvalidCredentials` (4) or `ChangeNotPermitted` (6) as permitted. Their trailing
+`restore` calls do fail — the password was never changed, so restoring it with the
+new one cannot authenticate — and that is why `ERROR_LOGON_FAILURE (1326)` appears
+in the log alongside each of them. It is expected noise from `|| true` cleanup, not
+a second defect.
