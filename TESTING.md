@@ -149,20 +149,21 @@ DirectoryUnavailableException: The directory service could not complete the pass
 this as `E_ACCESSDENIED`; that was from a less precise capture, and this stack is
 the one to work from.
 
-**The distinction matters, and it is a lead rather than a detail.** The failure is
-not "permission denied on the password write" — it is ADSI being unable to read
-**configuration information** from the DC. That is the Configuration naming
-context, and it is the same thing `Forest.GetForest()` needs and cannot get on
-this runner.
+**The distinction matters.** The failure is not "permission denied on the password
+write" — it is ADSI reporting that it could not read **configuration information**
+from the DC, i.e. the Configuration naming context.
 
-So two failures previously treated as unrelated may share one root cause. **This
-is a hypothesis, not a finding, and the evidence is not clean:** the two errors
-carry *different* codes. `Forest.GetForest()` fails with `0x8007052E` (1326,
-logon failure); the change fails with `0x80070547` (1351, cannot read config). If
-a single cause drove both you would expect the same code. The plausible story is
-ADSI wrapping an inner authentication failure as "cannot access domain info" —
-plausible, and not established. The Configuration NC probe below exists to settle
-it rather than argue it.
+That looked like it might tie Test 1 to `Forest.GetForest()`, which also needs the
+Configuration NC and also fails here. **The probe below refuted that.** The
+Configuration NC is readable via `dc.example.com` and fails only via
+`example.com` — and `LdapHostnames` is `dc.example.com`, the name that
+*succeeds*. Test 1 never names `example.com` at all. So the Configuration NC is
+demonstrably readable with these credentials, over this channel, to this host,
+and the change still fails claiming it cannot read it.
+
+**Two failures, two causes.** Name resolution explains `Forest.GetForest()`. It
+explains nothing about Test 1. Anything suggesting otherwise is wrong and has
+been removed rather than softened.
 
 One thing that needs no action: **1351 is not in `Win32ErrorCode`**, so it falls
 to the default classification — `Infrastructure`, the same place
@@ -201,22 +202,26 @@ The Configuration NC is **readable with these credentials** — so this is not a
 permissions problem, and not a Samba provisioning problem. Readability depends
 entirely on **which name is used to bind**.
 
-The inner code is the part worth noting: `0x8007052E` is 1326,
-`ERROR_LOGON_FAILURE` — **the same code `Forest.GetForest()` fails with.** The
-earlier objection to the shared-root-cause hypothesis was that the two failures
-carried different codes (1326 versus 1351). They do not. Reading the Configuration
-NC *by the realm name* fails with exactly 1326, which is what `GetForest()` does
-internally, and 1351 is the wrapper ADSI puts on it when the read happens inside
-`SDSUtils.ChangePassword`. The hypothesis now has direct evidence rather than
-plausibility.
-
-The mechanism is target naming: a signed-and-sealed bind derives its service
-principal from the server string it was given, Samba registers
+The mechanism behind read 3 is target naming: a signed-and-sealed bind derives its
+service principal from the server string it was given, Samba registers
 `ldap/dc.example.com` and not `ldap/example.com`, and a name with no SPN behind it
-cannot authenticate. This is the same root cause already documented for
-`LdapHostnames` — and `LdapHostnames` was pointed at the DC to work around it. The
-remaining failures are the paths that build their *own* `DirectoryContext` around
-the domain or forest name, where configuration cannot reach.
+cannot authenticate. `0x8007052E` is 1326, `ERROR_LOGON_FAILURE` — the same code
+`Forest.GetForest()` fails with, and for the same reason: `GetForest()` builds its
+`DirectoryContext` around the **forest name**, which is exactly the name that has
+no SPN. That is the same root cause already documented for `LdapHostnames`, which
+was pointed at the DC to work around it.
+
+**This explains `Forest.GetForest()` and not Test 1**, and the distinction is the
+most useful thing the probe produced. `LdapHostnames` is `dc.example.com` — read 2,
+the one that *succeeded*. The change operation never names `example.com`. So Test 1
+runs entirely on the path where the Configuration NC is provably readable, and
+still reports that it cannot read it.
+
+Two failures, two causes. Do not fix one expecting the other to move. In
+particular, **do not register `ldap/example.com` on the Samba side**: it would
+repair `GetForest()` and the `example.com` bind, leave Test 1 untouched, and spend
+a fixture change on a dependency the security-groups-only work has already removed
+from production.
 
 That made a Kerberos realm mapping the interesting next test. **It was tested and
 it does not work — do not retry it.**

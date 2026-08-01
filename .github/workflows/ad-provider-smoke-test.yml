@@ -161,10 +161,12 @@ jobs:
           # So the channel IS encrypted and signed, and SDSUtils.ChangePassword
           # still fails -- with 0x80070547, ERROR_CANT_ACCESS_DOMAIN_INFO, once
           # Test 1 finally became reachable. Whatever remains is not reachability,
-          # not certificate trust, and not channel protection. See TESTING.md,
-          # "The AD password change on the explicit-bind path": the error names the
-          # CONFIGURATION naming context, which is the same thing Forest.GetForest()
-          # cannot read here, so the two may share one root cause.
+          # not certificate trust, and not channel protection. The error names the
+          # CONFIGURATION naming context, which briefly looked like it tied Test 1
+          # to Forest.GetForest() -- the probe below REFUTED that. The Configuration
+          # NC is readable via dc.example.com, which is the name LdapHostnames
+          # carries and the only name Test 1 ever uses. Two failures, two causes.
+          # See TESTING.md, "The AD password change on the explicit-bind path".
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -625,24 +627,28 @@ jobs:
           # "configuration information could not be read from the domain
           # controller". That is ADSI failing to read the CONFIGURATION naming
           # context -- which is also what Forest.GetForest() needs, and
-          # GetForest() fails here too.
+          # GetForest() fails here too. This probe was added to test whether one
+          # cause drove both.
           #
-          # So the hypothesis is that one cause drives both. It is a HYPOTHESIS,
-          # not a finding, and the codes do not match: GetForest() fails 0x8007052E
-          # (1326, logon failure) while the change fails 1351. The plausible story
-          # is ADSI wrapping an inner authentication failure as "cannot access
-          # domain info", which is exactly what this probe is here to test rather
-          # than argue about.
+          # RESULT: it does not, and the probe is kept because that answer is worth
+          # re-confirming whenever this environment changes.
           #
-          # Three reads, reported independently, because which name is used is the
-          # variable under test: dc.example.com has a service principal behind it
-          # and example.com does not.
+          #   1. rootDSE configurationNamingContext: CN=Configuration,DC=example,DC=com
+          #   2. via dc.example.com: SUCCEEDED
+          #   3. via example.com:    FAILED, inner 0x8007052E (1326)
           #
-          #   dc succeeds, example fails -> target naming; both failures share a
-          #                                 root cause and Kerberos would address it
-          #   both fail                  -> credentials or permissions, not naming
-          #   both succeed               -> hypothesis dead; 1351 comes from
-          #                                 elsewhere and LdapPort 636 regains standing
+          # Read 3 is target naming and explains Forest.GetForest(), which builds
+          # its DirectoryContext around the forest name -- the name with no SPN.
+          # It explains NOTHING about Test 1: LdapHostnames is dc.example.com,
+          # read 2, the one that succeeds, and the change operation never names
+          # example.com at all. So the Configuration NC is provably readable on
+          # the exact path Test 1 uses, and the change still reports that it
+          # cannot read it.
+          #
+          # Two failures, two causes. Do not fix one expecting the other to move,
+          # and do not register ldap/example.com on the Samba side to close read 3:
+          # it would leave Test 1 untouched and spend a fixture change on a
+          # dependency the security-groups-only work removed from production.
           #
           # ADSI (DirectoryEntry) rather than LdapConnection, with
           # Secure | Signing | Sealing -- the same stack and the same channel the
