@@ -69,6 +69,7 @@ dn: cn=AllowedGroup,ou=groups,dc=example,dc=com
 objectClass: top
 objectClass: groupOfNames
 cn: AllowedGroup
+groupType: -2147483646
 member: cn=testuser,ou=people,dc=example,dc=com
 member: cn=alloweduser,ou=people,dc=example,dc=com
 
@@ -76,4 +77,60 @@ dn: cn=RestrictedGroup,ou=groups,dc=example,dc=com
 objectClass: top
 objectClass: groupOfNames
 cn: RestrictedGroup
+groupType: -2147483646
 member: cn=restricteduser,ou=people,dc=example,dc=com
+
+# --- Group-type fixtures ---------------------------------------------------
+# Only SECURITY groups can satisfy AllowedAdGroups or RestrictedAdGroups. The
+# two groups above carry groupType -2147483646 (0x80000002, global security
+# group), so they exercise the security-enabled path.
+#
+# The two entries below exercise the other two outcomes, and they exist because
+# a filter that is never contradicted is not tested. Without them, every group
+# in this fixture would be eligible for the same reason and the rule would look
+# covered while proving nothing.
+
+# No groupType at all -- a plain RFC 4519 groupOfNames, which is what OpenLDAP
+# and other non-AD directories publish. The provider must treat this as
+# ELIGIBLE: a security-only rule applied unconditionally would match nothing on
+# such a directory and would stop the LDAP provider working against non-AD
+# servers entirely. This is the documented fallback, and this fixture is what
+# makes it reachable rather than merely present.
+dn: cn=LegacyGroup,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: LegacyGroup
+member: cn=legacyuser,ou=people,dc=example,dc=com
+
+# groupType 2 (0x00000002, global group with the security bit CLEAR) -- a
+# distribution group. The provider must treat this as INELIGIBLE and warn: a
+# distribution group carries no authorization anywhere else in Windows and is
+# frequently self-joinable, so it must not satisfy an authorization list.
+dn: cn=DistributionGroup,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: DistributionGroup
+groupType: 2
+member: cn=distributionuser,ou=people,dc=example,dc=com
+
+dn: cn=legacyuser,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: legacyuser
+sn: legacyuser
+userPassword: testpassword
+sAMAccountName: legacyuser
+memberOf: cn=LegacyGroup,ou=groups,dc=example,dc=com
+
+dn: cn=distributionuser,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: distributionuser
+sn: distributionuser
+userPassword: testpassword
+sAMAccountName: distributionuser
+memberOf: cn=DistributionGroup,ou=groups,dc=example,dc=com

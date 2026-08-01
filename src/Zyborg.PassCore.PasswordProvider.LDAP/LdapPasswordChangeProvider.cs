@@ -123,6 +123,38 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             "incomplete picture. This is a directory-data problem: check the account's " +
             "primaryGroupID attribute.");
 
+    private static readonly Action<ILogger, string, string, Exception?> LogGroupNotSecurityEnabled =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Warning,
+            new EventId(113, nameof(LogGroupNotSecurityEnabled)),
+            "Configured group '{GroupName}' matched '{GroupDn}' by name, but that group is not " +
+            "security-enabled, so it does not count as a membership. Only security groups are " +
+            "matched: a distribution group carries no authorization anywhere else in Windows and " +
+            "is frequently self-joinable. THIS CHANGES THE ANSWER — if the group is named in " +
+            "RestrictedAdGroups the restriction is not being applied to this account, and if it " +
+            "is named in AllowedAdGroups the account is not being admitted by it. Group type is " +
+            "mutable, so check whether this group was converted from a security group.");
+
+    // Debug, not Warning, and unlike LogGroupNotSecurityEnabled above: this one
+    // really is a fallback. An unreadable group type degrades to the behaviour that
+    // preceded the security-groups-only rule -- the group still matches -- so nothing
+    // is refused that would previously have been allowed, and a deny list still
+    // refuses. Raising it would make every non-AD directory log warnings for working
+    // normally.
+    private static readonly Action<ILogger, string, Exception?> LogGroupTypeUnreadable =
+        LoggerMessage.Define<string>(
+            LogLevel.Debug,
+            new EventId(114, nameof(LogGroupTypeUnreadable)),
+            "Could not read groupType for candidate group '{GroupDn}', so its type is treated as " +
+            "absent and the group is still eligible to match. This is the same outcome as a " +
+            "directory that publishes no groupType at all.");
+
+    /// <summary>
+    /// <c>ADS_GROUP_TYPE_SECURITY_ENABLED</c>: the high bit of <c>groupType</c>, set on
+    /// every security group and clear on every distribution group.
+    /// </summary>
+    private const uint AdsGroupTypeSecurityEnabled = 0x80000000;
+
     private static readonly string[] RequiredAttributes =
     {
         "distinguishedName",
@@ -130,6 +162,30 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         "memberOf",
         "primaryGroupID",
     };
+
+    private static readonly string[] GroupTypeAttributes = { "groupType" };
+
+    /// <summary>
+    /// What a candidate group's <c>groupType</c> says about whether it may satisfy a
+    /// configured group name.
+    /// </summary>
+    private enum GroupTypeClass
+    {
+        /// <summary>
+        /// The directory does not publish <c>groupType</c> for this entry. Non-AD
+        /// directories have no such attribute — an OpenLDAP <c>groupOfNames</c> carries
+        /// nothing equivalent — so the group is treated as eligible. This is the
+        /// documented fallback that keeps the provider working against non-AD servers;
+        /// without it a security-only rule would match nothing at all there.
+        /// </summary>
+        Absent,
+
+        /// <summary>Security-enabled, so it may satisfy a configured name.</summary>
+        Security,
+
+        /// <summary>A distribution group. It may not satisfy a configured name.</summary>
+        Distribution,
+    }
 
     internal Func<LdapConnection> LdapConnectionFactory { get; set; } = () => new LdapConnection();
 
@@ -249,15 +305,41 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             // means "could not determine", never "determined not to be a member".
             Exception? undetermined = null;
 
+            // A group can legitimately appear in BOTH the direct memberOf list and the
+            // in-chain search results, so without this the same rejected group is
+            // reported twice for one request. The warning is meant to tell an operator
+            // that a configured name stopped matching; saying it twice per request
+            // makes it look like two problems.
+            var reportedNonSecurityGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             // 1. Direct membership check
             // `memberOf` returns full DNs (e.g. "cn=Admins,ou=groups,dc=example,dc=com").
             // Compare against the group's RDN value or its full DN, never as a substring,
             // so that "Admins" cannot accidentally match "AdminsExtra".
-            var isMember = user.Groups.Any(dn =>
-                groupNames.Any(groupName => DnMatchesGroup(dn, groupName)));
+            //
+            // A name match is a CANDIDATE, not yet an answer: only security groups
+            // count, and `memberOf` yields DNs with no group-type information in them.
+            // The type is therefore read per candidate DN — which happens only on the
+            // match path, so the common negative answer costs nothing extra.
+            foreach (var dn in user.Groups)
+            {
+                var matchedName = groupNames.FirstOrDefault(groupName => DnMatchesGroup(dn, groupName));
+                if (matchedName is null)
+                    continue;
 
-            if (isMember)
-                return Task.FromResult(true);
+                switch (ClassifyGroupByDn(dn))
+                {
+                    case GroupTypeClass.Security:
+                    case GroupTypeClass.Absent:
+                        return Task.FromResult(true);
+                    case GroupTypeClass.Distribution:
+                        // Not a match. Said out loud, because it changes the answer
+                        // and group type is mutable.
+                        if (reportedNonSecurityGroups.Add(dn))
+                            LogGroupNotSecurityEnabled(Logger, matchedName, dn, null);
+                        break;
+                }
+            }
 
             // 2. Primary Group Resolution (both well-known fallback and dynamic search)
             if (!string.IsNullOrEmpty(user.PrimaryGroupId))
@@ -335,20 +417,39 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
                 // that means a wrong answer rather than a clean error.
                 var chainFilter =
                     $"(member:1.2.840.113556.1.4.1941:={EscapeLdapSearchFilterValue(user.DistinguishedName)})";
+                // groupType is requested alongside the DN, so the security-group rule
+                // costs no extra round trip here. It is applied client-side rather than
+                // as (groupType:1.2.840.113556.1.4.803:=2147483648) in the filter above
+                // for two reasons: a server-side bit-AND cannot distinguish "this is a
+                // distribution group" from "this directory has no groupType attribute",
+                // which is exactly what the non-AD fallback turns on, and not every
+                // directory implements the extensible match in the first place.
                 var chainSearch = SearchLdap(
                     ldap,
                     _options.LdapSearchBase,
                     LdapConnection.ScopeSub,
                     chainFilter,
-                    new[] { "distinguishedName" },
+                    new[] { "distinguishedName", "groupType" },
                     false,
                     _searchConstraints);
 
                 while (chainSearch.HasMore())
                 {
                     var entry = chainSearch.Next();
-                    if (groupNames.Any(groupName => DnMatchesGroup(entry.Dn, groupName)))
-                        return Task.FromResult(true);
+                    var matchedName = groupNames.FirstOrDefault(groupName => DnMatchesGroup(entry.Dn, groupName));
+                    if (matchedName is null)
+                        continue;
+
+                    switch (ClassifyGroupType(entry))
+                    {
+                        case GroupTypeClass.Security:
+                        case GroupTypeClass.Absent:
+                            return Task.FromResult(true);
+                        case GroupTypeClass.Distribution:
+                            if (reportedNonSecurityGroups.Add(entry.Dn))
+                                LogGroupNotSecurityEnabled(Logger, matchedName, entry.Dn, null);
+                            break;
+                    }
                 }
             }
             catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
@@ -480,6 +581,86 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             return "";
         var dcIndex = searchBase.IndexOf("dc=", StringComparison.OrdinalIgnoreCase);
         return dcIndex >= 0 ? searchBase[dcIndex..] : searchBase;
+    }
+
+    /// <summary>
+    /// Reads a candidate group's <c>groupType</c> by DN, for the direct-membership
+    /// path where only the DN is known.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>A read that cannot complete yields <see cref="GroupTypeClass.Absent"/>,
+    /// the same as a directory that publishes no <c>groupType</c>.</b> That is
+    /// deliberate, and it is the one place in this file where a failure does not become
+    /// "undetermined".</para>
+    /// <para>The reasoning is the same one that motivated dropping the AD provider's
+    /// second enumeration: a security-groups-only rule is a NARROWING of what may
+    /// match, layered on a membership check that previously asked the directory
+    /// nothing extra. If an unanswerable type question could refuse the request, this
+    /// change would introduce a fresh environmental dependency capable of failing every
+    /// request — precisely the fragility it exists to remove. Degrading to prior
+    /// behaviour is strictly no worse than before the narrowing existed.</para>
+    /// <para>It is also the safe direction for the case that matters. Treating an
+    /// unreadable group as eligible means it still MATCHES, so a name in
+    /// <c>RestrictedAdGroups</c> still refuses the request — the deny list stays
+    /// closed. On the allow-list side it admits the account to the rest of the flow,
+    /// where it must still prove the current password: exactly what it would have done
+    /// before this change.</para>
+    /// </remarks>
+    private GroupTypeClass ClassifyGroupByDn(string dn)
+    {
+        try
+        {
+            using var ldap = BindAsServiceAccount();
+            var search = SearchLdap(
+                ldap,
+                dn,
+                LdapConnection.ScopeBase,
+                "(objectClass=*)",
+                GroupTypeAttributes,
+                false,
+                _searchConstraints);
+
+            return search.HasMore() ? ClassifyGroupType(search.Next()) : GroupTypeClass.Absent;
+        }
+        catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
+        {
+            LogGroupTypeUnreadable(Logger, dn, ex);
+            return GroupTypeClass.Absent;
+        }
+    }
+
+    /// <summary>
+    /// Classifies a group entry from its <c>groupType</c> attribute.
+    /// </summary>
+    /// <remarks>
+    /// An absent or unparseable value yields <see cref="GroupTypeClass.Absent"/>, which
+    /// is treated as eligible. That is the non-AD fallback: OpenLDAP's
+    /// <c>groupOfNames</c> has no <c>groupType</c>, and a directory that publishes none
+    /// would otherwise match no group at all.
+    /// </remarks>
+    private static GroupTypeClass ClassifyGroupType(LdapEntry entry)
+    {
+        var attributeSet = entry.GetAttributeSet();
+        var groupTypeKey = attributeSet.Keys
+            .FirstOrDefault(k => k.Equals("groupType", StringComparison.OrdinalIgnoreCase));
+
+        if (groupTypeKey is null)
+            return GroupTypeClass.Absent;
+
+        var raw = attributeSet[groupTypeKey].StringValue;
+        if (string.IsNullOrWhiteSpace(raw))
+            return GroupTypeClass.Absent;
+
+        // groupType is a 32-bit flags value that AD publishes as a SIGNED decimal, so
+        // every security group arrives negative -- a global security group is
+        // -2147483646 (0x80000002). Parsing as int and reinterpreting the bits is what
+        // makes the high-bit test work on that form.
+        if (!int.TryParse(raw.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed))
+            return GroupTypeClass.Absent;
+
+        return (unchecked((uint)parsed) & AdsGroupTypeSecurityEnabled) != 0
+            ? GroupTypeClass.Security
+            : GroupTypeClass.Distribution;
     }
 
     internal static bool DnMatchesGroup(string dn, string groupName)

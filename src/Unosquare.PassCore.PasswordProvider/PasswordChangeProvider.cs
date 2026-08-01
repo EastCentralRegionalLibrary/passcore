@@ -47,6 +47,58 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
+        // Information, not a warning: skipping the sealed bind on the LDAPS port is
+        // correct behaviour, not a degradation. It exists so that EventId 108
+        // reporting "SSL" is not mistaken for sealing having been tried and refused
+        // by the directory -- which is exactly the misreading that sent this
+        // investigation after a non-existent fallback defect.
+        private static readonly Action<ILogger, string, int, Exception?> LogSealedBindSkippedForLdapsPort =
+            LoggerMessage.Define<string, int>(
+                LogLevel.Information,
+                new EventId(116, nameof(LogSealedBindSkippedForLdapsPort)),
+                "Skipping the signed-and-sealed bind to {Host}: LdapPort is {Port}, the LDAPS port, " +
+                "which is TLS from the first byte and cannot answer a plain LDAP bind. Connecting " +
+                "over SSL instead. This is expected for an LDAPS configuration.");
+
+        // Warning, not error, and deliberately so. Everything else on this path
+        // works and is covered end-to-end against a live directory: reads, binds,
+        // credential verification, group membership, minPwdLength, policy
+        // evaluation and error routing. Refusing to start would break deployments
+        // using all of that, and would claim more than the evidence supports.
+        //
+        // The wording is scoped tightly to what has actually been observed, which
+        // is narrower than the first version of this warning claimed. Server-side
+        // audit logging on the test DC shows the change producing NO
+        // authentication event at all -- no bind, no kpasswd, no SAMR -- while the
+        // service account's binds and the user's own credential verification both
+        // succeed against that same directory moments earlier. So ADSI fails
+        // before it contacts the directory, which is what ERROR_CANT_ACCESS_-
+        // DOMAIN_INFO says, and the observation was made on a host that is not
+        // domain-joined and therefore has no domain configuration to read.
+        //
+        // What is deliberately NOT claimed: that this affects a domain-joined host
+        // running UseAutomaticContext=false. That combination is untested, and
+        // saying otherwise would implicate deployments with no evidence against
+        // them. An operator on a domain-joined host who sees this warning and no
+        // failures should ignore it.
+        private static readonly Action<ILogger, Exception?> LogExplicitBindPasswordChangeUnverified =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(115, nameof(LogExplicitBindPasswordChangeUnverified)),
+                "UseAutomaticContext is false, so password changes are performed over an " +
+                "explicitly-bound context. On a host that is NOT domain-joined, that operation " +
+                "has been observed to fail with 0x80070547 (ERROR_CANT_ACCESS_DOMAIN_INFO): ADSI " +
+                "gives up before contacting the directory - the domain controller records no " +
+                "authentication attempt for it at all - and the user receives a generic " +
+                "\"the directory service could not complete the password change request\" error. " +
+                "Everything else on this path is verified and unaffected: reads, credential " +
+                "verification, group membership, the minimum-length lookup and policy evaluation " +
+                "all work against the same directory. If password changes fail this way, run " +
+                "PassCore on a domain-joined host. Whether a domain-joined host with " +
+                "UseAutomaticContext=false is affected has not been tested - if you are on one " +
+                "and password changes work, this warning does not apply to you. " +
+                "See TESTING.md, \"The AD password change on the explicit-bind path\".");
+
         // Records which channel the service-account context actually got. With a
         // fallback in the path, "it worked" is not enough information: an
         // operator debugging a password-change failure needs to know whether the
@@ -91,6 +143,13 @@ namespace Unosquare.PassCore.PasswordProvider
 
             if (_options.AllowAdministrativeReset && _options.UseAutomaticContext)
                 LogAdminResetIgnoredInAutomaticContext(Logger, null);
+
+            // Told to the operator at startup rather than to the user at failure.
+            // Without this the first sign is an end user receiving a generic
+            // directory error, which reads as a transient outage rather than a
+            // configuration that may never have been able to change a password.
+            if (!_options.UseAutomaticContext)
+                LogExplicitBindPasswordChangeUnverified(Logger, null);
         }
 
         private static void ValidateOptions(PasswordChangeOptions opts)
@@ -230,12 +289,16 @@ namespace Unosquare.PassCore.PasswordProvider
         /// could still have produced a match completed, so a failed enumeration is
         /// recorded and the method throws the shared infrastructure failure instead of
         /// returning <see langword="false"/>.</para>
-        /// <para>The two enumerations do not cover the same ground, which is why
-        /// neither one succeeding rescues the other's failure:
-        /// <c>GetAuthorizationGroups</c> resolves transitive and primary security
-        /// groups, while <c>GetGroups</c> covers direct groups including distribution
-        /// groups. A match found by either is real; a miss is only conclusive when both
-        /// ran.</para>
+        /// <para><b>Only security groups can match.</b> <c>GetAuthorizationGroups</c>
+        /// is the sole source, and it returns the complete transitive security-group
+        /// closure including the primary group. Distribution groups are therefore never
+        /// matched, by either list, and that is deliberate: a distribution group cannot
+        /// enter a Windows access token, so it carries no authorization anywhere else
+        /// in Windows, and on many directories users can add themselves to one. A
+        /// self-joinable group must not be able to satisfy <c>AllowedAdGroups</c>, and
+        /// an administrator converting a group to a distribution group must not be able
+        /// to quietly step out of <c>RestrictedAdGroups</c> — see the LDAP provider,
+        /// which warns on exactly that condition.</para>
         /// <para>Reporting "not a member" for a membership that could not be determined
         /// makes <c>RestrictedAdGroups</c> <em>fail open</em>, letting a member of
         /// <c>Domain Admins</c> through during a partial directory failure. This keeps
@@ -257,12 +320,9 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <c>GetAuthorizationGroups</c> (the expensive one) — for every name the policy
         /// asked about. With the shipped three restricted groups that is three of each,
         /// per unauthenticated request, before the caller has proved anything.</para>
-        /// <para>Both enumerations are materialized into plain names in a single pass so
+        /// <para>The enumeration is materialized into plain names in a single pass so
         /// that the <c>PrincipalContext</c> and <c>UserPrincipal</c> can be disposed
-        /// immediately rather than held open across the policy's evaluation. That costs
-        /// one <c>GetGroups</c> in the case where a match in the authorization groups
-        /// would previously have short-circuited it — once per request, against N-fold
-        /// savings on everything else.</para>
+        /// immediately rather than held open across the policy's evaluation.</para>
         /// </remarks>
         public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
         {
@@ -288,7 +348,19 @@ namespace Unosquare.PassCore.PasswordProvider
                 Exception? undetermined = null;
                 var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // GetAuthorizationGroups resolves transitive/recursive and primary security groups.
+                // GetAuthorizationGroups is the SOLE match source. It reads tokenGroups
+                // -- one base-scope read the DC computes -- and returns the complete
+                // transitive security-group closure, including the primary group.
+                //
+                // GetGroups() used to be unioned in here and has been removed. What it
+                // added over this call is distribution groups, which cannot enter a
+                // Windows access token and therefore cannot carry authorization; see
+                // the class remarks on group-type semantics. What it cost was
+                // Forest.GetForest() -- full forest topology discovery ending in a bind
+                // over the GC:// provider -- on every unauthenticated request, whose
+                // failure made every NEGATIVE answer undetermined. That is a wide blast
+                // radius for a source that could only ever contribute groups this
+                // provider must not honour.
                 try
                 {
                     using var authGroups = userPrincipal.GetAuthorizationGroups();
@@ -296,26 +368,13 @@ namespace Unosquare.PassCore.PasswordProvider
                 }
                 catch (Exception ex)
                 {
-                    // Transitive and primary membership are now unknown; GetGroups
-                    // below covers neither, so it cannot stand in for this.
+                    // Membership is now unknown, and nothing else covers this ground.
+                    // The undetermined handling below is unchanged and deliberately so:
+                    // a failed enumeration still fails the request closed rather than
+                    // reporting "not a member".
                     undetermined ??= ex;
                     ServiceAccountFailure.Log(
                         Logger, correlationId: null, "enumerate authorization groups",
-                        ServiceAccountHost(), ex);
-                }
-
-                // GetGroups covers distribution or direct groups that might not be in authorization groups.
-                try
-                {
-                    using var directGroups = userPrincipal.GetGroups();
-                    CollectNames(directGroups, groupNames);
-                }
-                catch (Exception ex)
-                {
-                    // Direct and distribution-group membership are now unknown.
-                    undetermined ??= ex;
-                    ServiceAccountFailure.Log(
-                        Logger, correlationId: null, "enumerate direct groups",
                         ServiceAccountHost(), ex);
                 }
 
@@ -338,16 +397,23 @@ namespace Unosquare.PassCore.PasswordProvider
 
         /// <summary>
         /// Copies a principal collection's names into <paramref name="into"/>. A group
-        /// with no name means the enumeration cannot be trusted to rule anything out,
-        /// so it throws and is recorded as undetermined by the caller rather than
-        /// being silently skipped — dropping it could turn a deny-list match into a
-        /// miss.
+        /// that cannot be reduced to a name means the enumeration cannot be trusted to
+        /// rule anything out, so it throws and is recorded as undetermined by the
+        /// caller rather than being silently skipped — dropping it could turn a
+        /// deny-list match into a miss.
         /// </summary>
         private static void CollectNames(IEnumerable<Principal> principals, HashSet<string> into)
         {
             foreach (var principal in principals)
             {
-                into.Add(principal.Name ?? throw new InvalidOperationException(
+                // The null ELEMENT is the case that actually occurs, not a non-null
+                // principal with a null Name: GetAuthorizationGroups yields nulls for
+                // SIDs it cannot translate (dotnet/runtime#80675). Testing
+                // principal?.Name rather than principal.Name is what keeps that on the
+                // intended path -- the outcome is fail-closed either way, but through
+                // this explanatory exception instead of a bare NullReferenceException.
+                // It matters more now that this is the only enumeration left.
+                into.Add(principal?.Name ?? throw new InvalidOperationException(
                     "A group principal has no Name, so this enumeration cannot rule out membership."));
             }
         }
@@ -661,42 +727,72 @@ namespace Unosquare.PassCore.PasswordProvider
                 // security package and needs no certificate trust, so it asks
                 // nothing new of existing deployments. SSL covers directories
                 // that will not negotiate sealing.
-                try
-                {
-                    var context = CreateVerifiedContext(
-                        FormattableString.Invariant($"{host}:{_options.LdapPort}"),
-                        ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing);
+                //
+                // The PORT each mechanism targets is decided by LdapChannelPorts,
+                // not taken from configuration directly, because the two are not
+                // independent: 389 upgrades in band and is not listening for a TLS
+                // ClientHello, while 636 is TLS from the first byte and cannot
+                // answer an LDAP BindRequest. Pairing them wrongly produces
+                // 0x8007203A "the server is not operational" no matter which
+                // directory is on the other end -- a self-inflicted failure that
+                // was read as a directory problem for several rounds.
+                var sealedPort = LdapChannelPorts.SealedPortFor(_options.LdapPort);
+                var sslPort = LdapChannelPorts.SslPortFor(_options.LdapPort);
 
-                    LogSecureChannelEstablished(Logger, "sign-and-seal", host, _options.LdapPort, null);
-                    return context;
+                Exception? sealingFailure = null;
+
+                if (sealedPort is null)
+                {
+                    // LdapPort is the LDAPS port, so a sealed bind has nowhere
+                    // valid to go. Logged rather than passed over silently: without
+                    // it, EventId 108 reporting "SSL" instead of "sign-and-seal"
+                    // looks like sealing was tried and refused by the directory.
+                    LogSealedBindSkippedForLdapsPort(Logger, host, _options.LdapPort, null);
                 }
-                catch (Exception sealingFailure)
+                else
                 {
-                    // LDAPS runs on its own port. When the configured port is the
-                    // plaintext default the operator has not chosen one, so the
-                    // well-known 636 is used; any other value is taken as
-                    // deliberate and left alone.
-                    var sslPort = _options.LdapPort == PlaintextLdapPort ? SecureLdapPort : _options.LdapPort;
-
-                    LogSealingUnavailable(Logger, host, sslPort, sealingFailure);
-
                     try
                     {
                         var context = CreateVerifiedContext(
-                            FormattableString.Invariant($"{host}:{sslPort}"),
-                            ContextOptions.Negotiate | ContextOptions.SecureSocketLayer);
+                            FormattableString.Invariant($"{host}:{sealedPort.Value}"),
+                            ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing);
 
-                        LogSecureChannelEstablished(Logger, "SSL", host, sslPort, null);
+                        LogSecureChannelEstablished(Logger, "sign-and-seal", host, sealedPort.Value, null);
                         return context;
                     }
-                    catch (Exception sslFailure)
+                    catch (Exception failure)
                     {
-                        // Both channels reported, because "which one failed and
-                        // how" is the whole diagnostic value here.
-                        throw new InvalidOperationException(
-                            "Failed to create PrincipalContext over either a signed-and-sealed or an SSL channel.",
-                            new AggregateException(sealingFailure, sslFailure));
+                        sealingFailure = failure;
+                        LogSealingUnavailable(Logger, host, sslPort, failure);
                     }
+                }
+
+                try
+                {
+                    var context = CreateVerifiedContext(
+                        FormattableString.Invariant($"{host}:{sslPort}"),
+                        ContextOptions.Negotiate | ContextOptions.SecureSocketLayer);
+
+                    LogSecureChannelEstablished(Logger, "SSL", host, sslPort, null);
+                    return context;
+                }
+                catch (Exception sslFailure)
+                {
+                    // Both channels reported when both ran, because "which one
+                    // failed and how" is the whole diagnostic value here. When the
+                    // sealed attempt was skipped there is only one real failure to
+                    // report, and inventing a second would misrepresent it.
+                    if (sealingFailure is null)
+                    {
+                        throw new InvalidOperationException(
+                            FormattableString.Invariant(
+                                $"Failed to create PrincipalContext over an SSL channel to {host}:{sslPort}. A signed-and-sealed bind was not attempted because LdapPort is the LDAPS port."),
+                            sslFailure);
+                    }
+
+                    throw new InvalidOperationException(
+                        "Failed to create PrincipalContext over either a signed-and-sealed or an SSL channel.",
+                        new AggregateException(sealingFailure, sslFailure));
                 }
             }
         }
@@ -740,12 +836,6 @@ namespace Unosquare.PassCore.PasswordProvider
             }
         }
 
-
-        /// <summary>The standard plaintext LDAP port; the default for <c>LdapPort</c>.</summary>
-        private const int PlaintextLdapPort = 389;
-
-        /// <summary>The standard LDAPS port, used when falling back to SSL from an unset <c>LdapPort</c>.</summary>
-        private const int SecureLdapPort = 636;
 
         /// <summary>
         /// Builds a <see cref="PrincipalContext"/> and forces it to bind.

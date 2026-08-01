@@ -92,10 +92,32 @@ jobs:
           # the route is kept and the Kerberos ambition is not. That error is the
           # client failing before it reaches the wire: a machine that is not
           # domain-joined has no EXAMPLE.COM realm mapping, so the Kerberos
-          # package cannot request a ticket at all. Making Kerberos work here
-          # needs realm and SPN configuration on the runner, which is a larger
-          # change than this test justifies -- and the group work removes the
-          # forest dependency that motivated it, from production as well as CI.
+          # package cannot request a ticket at all.
+          #
+          # The obvious follow-up -- supply that realm mapping with ksetup -- has
+          # ALSO been tested and rejected. Do not retry it either. The mappings
+          # took (ksetup reported kdc and kpasswd for EXAMPLE.COM) and Kerberos
+          # genuinely came alive: the bind moved from "A local error occurred" to
+          #
+          #   Kerberos bind FAILED: LdapException: The supplied credential is invalid.
+          #
+          # which is a real authentication exchange being refused rather than a
+          # client-side failure. It still cannot authenticate, and no mapping can
+          # fix that: a host-to-realm map says which REALM a host is in, it does
+          # not rewrite the SERVICE PRINCIPAL requested. Naming example.com still
+          # asks for ldap/example.com@EXAMPLE.COM, and Samba registers
+          # ldap/dc.example.com. Note it is the same error the NTLM sealed bind to
+          # example.com:389 returns -- Kerberos hits the same wall by the same
+          # route.
+          #
+          # Nothing downstream moved: the Configuration NC read via example.com,
+          # Forest.GetForest() and Test 1 all failed exactly as before. See
+          # TESTING.md, "The ksetup realm mapping, tested and rejected".
+          #
+          # Making Kerberos work here needs an SPN for the realm name registered
+          # on the Samba side, which is a larger change than this test justifies
+          # -- and the group work removes the forest dependency that motivated it,
+          # from production as well as CI.
           #
           # The hazard that once made these two ports unpublishable is RETIRED,
           # and it is worth stating plainly because the ports are back. It used
@@ -137,8 +159,14 @@ jobs:
           #      "context established over sign-and-seal", with no SSL fallback.
           #
           # So the channel IS encrypted and signed, and SDSUtils.ChangePassword
-          # still returns E_ACCESSDENIED. Whatever remains is not reachability,
-          # not certificate trust, and not channel protection.
+          # still fails -- with 0x80070547, ERROR_CANT_ACCESS_DOMAIN_INFO, once
+          # Test 1 finally became reachable. Whatever remains is not reachability,
+          # not certificate trust, and not channel protection. The error names the
+          # CONFIGURATION naming context, which briefly looked like it tied Test 1
+          # to Forest.GetForest() -- the probe below REFUTED that. The Configuration
+          # NC is readable via dc.example.com, which is the name LdapHostnames
+          # carries and the only name Test 1 ever uses. Two failures, two causes.
+          # See TESTING.md, "The AD password change on the explicit-bind path".
           #
           # 135, 137-139 and 445 are deliberately NOT published: the Windows host
           # already binds them and the publish would fail.
@@ -255,6 +283,143 @@ jobs:
           # Copy script into container and execute it
           podman cp "${SEED_SCRIPT}" samba-ad:/tmp/seedusers.sh
           podman exec samba-ad /bin/sh /tmp/seedusers.sh
+
+      # TIME-BOXED EXPERIMENT plus a diagnostic that is worth keeping regardless.
+      #
+      # ---- Why the log level (keep this) ----
+      # Every round of the password-change investigation has been argued from the
+      # CLIENT's error text, because nothing on the server side was visible. Samba
+      # at log level 3 records bind attempts and why it rejects them, which is the
+      # capture this has needed throughout and is obtainable without tcpdump.
+      #
+      # ---- The strong-auth relaxation is GONE, and should stay gone ----
+      # This step briefly set "ldap server require strong auth = allow_sasl_over_tls"
+      # to test whether Samba's default hardening (yes, since CVE-2016-2112) was
+      # what blocked the password change. It was not, and the question is now
+      # moot: server-side audit logging shows the change producing NO
+      # authentication event at all, and a server-side auth policy cannot explain
+      # a failure the server never sees.
+      #
+      # It is removed rather than left in place because it made this DC diverge
+      # from a real one's default for no remaining benefit, and a test directory
+      # that is quietly more permissive than production is a good way to miss a
+      # regression later. Samba's own documentation says not to set it. If some
+      # future question genuinely needs it, set it deliberately for that run and
+      # take it out again.
+      #
+      # Note for anyone tempted to retry it: it must be applied with
+      # `supervisorctl restart samba`, NOT `podman restart`. See below.
+      - name: Raise Samba's log level for server-side visibility
+        shell: wsl-bash {0}
+        run: |
+          echo "=== smb.conf BEFORE ==="
+          podman exec samba-ad cat /etc/samba/smb.conf
+
+          # Inserted directly after [global] with awk rather than appended, because
+          # appending would land the settings in whatever section happens to be
+          # last and they would be silently ignored.
+          # "log level = 3" ALONE IS NOT ENOUGH and the first attempt proved it:
+          # it produced no bind logging at all, because LDAP bind attempts are
+          # recorded by Samba's auth_audit debug class rather than by the global
+          # level. Without the per-class levels the dump below shows only daemon
+          # startup lines, which is an absence of instrumentation and must not be
+          # mistaken for an absence of bind attempts.
+          podman exec samba-ad sh -c '
+            awk "/^\[global\]/{
+                   print;
+                   print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   next
+                 } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
+              && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
+
+          echo "=== smb.conf AFTER ==="
+          podman exec samba-ad cat /etc/samba/smb.conf
+
+          # supervisorctl, NOT podman restart. This is the difference between the
+          # experiment running and only appearing to.
+          #
+          # `podman restart` re-runs the image's ENTRYPOINT, which regenerates
+          # /etc/samba/smb.conf from scratch -- discarding the edits above before
+          # Samba ever reads them. Earlier rounds did exactly that and were
+          # misread badly: the smb.conf dump showed the settings present (it runs
+          # before the restart), the run then proceeded with Samba's DEFAULTS, and
+          # "allow_sasl_over_tls did not fix the password change" was recorded as
+          # a result when the relaxation had never been in force at all. The empty
+          # auth logs had the same cause -- log level was still 1.
+          #
+          # supervisord owns the samba process (`[program:samba]`,
+          # `/usr/sbin/samba -i`), so restarting just that program re-execs the
+          # daemon against the smb.conf on disk without invoking the entrypoint.
+          # The testparm block below is what proves which of the two happened.
+          podman exec samba-ad supervisorctl restart samba
+
+          echo "Waiting for Samba to come back after the restart..."
+          READY=0
+          for attempt in $(seq 1 30); do
+            if [ "$(podman inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
+              echo "ERROR: container is not running after restart."
+              podman logs samba-ad | tail -50
+              exit 1
+            fi
+            # supervisorctl reporting RUNNING is the real signal now: ldbsearch
+            # alone reads sam.ldb straight off disk and answers even while the
+            # daemon is down, so on its own it would gate on nothing.
+            if podman exec samba-ad supervisorctl status samba 2>/dev/null | grep -q RUNNING \
+               && podman exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
+                    -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          podman exec samba-ad supervisorctl status || true
+
+          if [ $READY -ne 1 ]; then
+            echo "ERROR: Samba did not become ready within 60s of the restart."
+            podman logs samba-ad | tail -50
+            exit 1
+          fi
+          echo "Samba is ready again."
+
+          # Ask Samba what it actually PARSED, rather than trusting that writing
+          # the file was enough. Four rounds went into getting server-side
+          # visibility and every empty result was ambiguous between "the setting
+          # did not apply" and "it applied and there is nothing to log". This
+          # removes that ambiguity permanently: if these echo the intended values
+          # and the log is still empty, the config is not the problem.
+          echo "=== what Samba parsed ==="
+          for p in "log level" "logging" "ldap server require strong auth"; do
+            printf '  %-38s ' "$p ="
+            podman exec samba-ad testparm -s --parameter-name="$p" 2>/dev/null | tr -d '\r' || echo "(could not read)"
+          done
+
+          # "logging" is deliberately NOT set. It was set to "file" in an earlier
+          # round and that is the likeliest reason the AD DC log stayed empty:
+          # samba -i writes debug output to stderr, which supervisord captures and
+          # the dump below reads, whereas "logging = file" redirects it to
+          # /var/log/samba/log.samba -- a file that was then never created. Leaving
+          # it unset keeps the output on the path that demonstrably works, since
+          # that capture already shows samba's startup banner.
+
+          # Confirm the seed survived the restart, so that a later group assertion
+          # failing cannot be quietly blamed on the restart having wiped fixtures.
+          echo "=== fixture check after restart ==="
+          podman exec samba-ad samba-tool user list | sort | tr '\n' ' '
+          echo
+
+          # The container itself is no longer restarted, so its address should be
+          # unchanged -- this re-read is cheap insurance rather than a necessity,
+          # and it keeps the route correct if that ever stops being true.
+          NETWORK_FILE="$(wslpath '${{ github.workspace }}')/podman-network.txt"
+          PODMAN_SUBNET="$(podman network inspect podman --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)"
+          if [ -z "${PODMAN_SUBNET}" ]; then
+            PODMAN_SUBNET="$(podman network inspect podman 2>/dev/null | grep -o '"subnet"[^,]*' | head -1 | sed 's/.*: *"//; s/"//')"
+          fi
+          CONTAINER_IP="$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' samba-ad 2>/dev/null)"
+          echo "podman bridge subnet : ${PODMAN_SUBNET:-<unknown>}"
+          echo "container address    : ${CONTAINER_IP:-<unknown>} (re-read after restart)"
+          printf '%s\n%s\n' "${PODMAN_SUBNET}" "${CONTAINER_IP}" > "${NETWORK_FILE}"
 
       # System.DirectoryServices.AccountManagement does not confine itself to the
       # server it was given. GetAuthorizationGroups() calls LoadDomainInfo(),
@@ -594,6 +759,118 @@ jobs:
               }
           }
 
+          # --- Configuration naming context probe ------------------------------
+          # Test 1 fails with 0x80070547, ERROR_CANT_ACCESS_DOMAIN_INFO (1351):
+          # "configuration information could not be read from the domain
+          # controller". That is ADSI failing to read the CONFIGURATION naming
+          # context -- which is also what Forest.GetForest() needs, and
+          # GetForest() fails here too. This probe was added to test whether one
+          # cause drove both.
+          #
+          # RESULT: it does not, and the probe is kept because that answer is worth
+          # re-confirming whenever this environment changes.
+          #
+          #   1. rootDSE configurationNamingContext: CN=Configuration,DC=example,DC=com
+          #   2. via dc.example.com: SUCCEEDED
+          #   3. via example.com:    FAILED, inner 0x8007052E (1326)
+          #
+          # Read 3 is target naming and explains Forest.GetForest(), which builds
+          # its DirectoryContext around the forest name -- the name with no SPN.
+          # It explains NOTHING about Test 1: LdapHostnames is dc.example.com,
+          # read 2, the one that succeeds, and the change operation never names
+          # example.com at all. So the Configuration NC is provably readable on
+          # the exact path Test 1 uses, and the change still reports that it
+          # cannot read it.
+          #
+          # Two failures, two causes. Do not fix one expecting the other to move,
+          # and do not register ldap/example.com on the Samba side to close read 3:
+          # it would leave Test 1 untouched and spend a fixture change on a
+          # dependency the security-groups-only work removed from production.
+          #
+          # ADSI (DirectoryEntry) rather than LdapConnection, with
+          # Secure | Signing | Sealing -- the same stack and the same channel the
+          # provider's own context uses. A probe on a different channel tests a
+          # different thing, which is how earlier rounds went sideways.
+          Write-Host "=== Configuration NC probe (diagnostic; does not fail the step) ==="
+
+          $authTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                       [System.DirectoryServices.AuthenticationTypes]::Signing -bor `
+                       [System.DirectoryServices.AuthenticationTypes]::Sealing
+
+          function Report-ProbeError {
+              param($ErrorRecord, [string] $Prefix)
+              $exception = $ErrorRecord.Exception
+              Write-Host "${Prefix} FAILED: $($exception.GetType().Name): $($exception.Message)"
+              # The HRESULT is the whole point -- 1326 and 1351 are different answers.
+              if ($exception.PSObject.Properties.Name -contains 'ErrorCode') {
+                  Write-Host "${Prefix}   ErrorCode: 0x$('{0:X8}' -f $exception.ErrorCode)"
+              }
+              if ($exception.HResult) {
+                  Write-Host "${Prefix}   HRESULT:   0x$('{0:X8}' -f $exception.HResult)"
+              }
+              $inner = $exception.InnerException
+              while ($inner) {
+                  Write-Host "${Prefix}   inner: $($inner.GetType().Name): $($inner.Message)"
+                  if ($inner.HResult) {
+                      Write-Host "${Prefix}   inner HRESULT: 0x$('{0:X8}' -f $inner.HResult)"
+                  }
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # 1. The DN comes from rootDSE, never constructed. Hardcoding
+          #    CN=Configuration,DC=example,DC=com would test a string this code does
+          #    not use; the provider already reads defaultNamingContext this way and
+          #    the same reasoning applies here.
+          $configurationNc = $null
+          try {
+              $rootDse = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://dc.example.com:389/RootDSE",
+                  "EXAMPLE\Administrator",
+                  "AdminPassword123!",
+                  $authTypes)
+              $rootDse.RefreshCache(@("configurationNamingContext"))
+              $configurationNc = $rootDse.Properties["configurationNamingContext"].Value
+              Write-Host "  1. rootDSE configurationNamingContext: $configurationNc"
+              $rootDse.Dispose()
+          }
+          catch {
+              Report-ProbeError $_ "  1. rootDSE read"
+          }
+
+          if (-not $configurationNc) {
+              Write-Host "  2. skipped -- no configurationNamingContext to read"
+              Write-Host "  3. skipped -- no configurationNamingContext to read"
+          }
+          else {
+              $probeIndex = 2
+              foreach ($target in @("dc.example.com", "example.com")) {
+                  try {
+                      $entry = New-Object System.DirectoryServices.DirectoryEntry(
+                          "LDAP://${target}:389/$configurationNc",
+                          "EXAMPLE\Administrator",
+                          "AdminPassword123!",
+                          $authTypes)
+                      # RefreshCache, not a property read, and the difference is the
+                      # whole value of this probe. Reading $entry.Properties[...] goes
+                      # through PowerShell's ADSI adapter, which on a failed bind
+                      # yields a null collection -- so the failure surfaces as
+                      # "Cannot index into a null array" and the directory's actual
+                      # error is lost. RefreshCache calls straight through and throws
+                      # the COMException, whose HRESULT is the answer being sought.
+                      $entry.RefreshCache(@("distinguishedName"))
+                      $dn = $entry.Properties["distinguishedName"].Value
+                      Write-Host "  ${probeIndex}. Configuration NC via ${target}: SUCCEEDED -- read '$dn'"
+                      $entry.Dispose()
+                  }
+                  catch {
+                      Report-ProbeError $_ "  ${probeIndex}. Configuration NC via ${target}:"
+                  }
+                  $probeIndex++
+              }
+          }
+          # --- end Configuration naming context probe --------------------------
+
       - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v5
         with:
@@ -770,10 +1047,12 @@ jobs:
               # force-kill discards whatever the app had buffered but not
               # flushed, so this is the last point the output is guaranteed
               # to still be readable.
-              Write-Host "=== Passcore Standard Output ==="
-              if (Test-Path "$env:GITHUB_WORKSPACE\passcore.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore.log" }
-              Write-Host "=== Passcore Error Output ==="
-              if (Test-Path "$env:GITHUB_WORKSPACE\passcore-error.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore-error.log" }
+              # Tailed: passcore.log accumulates across every leg's restart, so
+              # the whole file is mostly earlier legs that already succeeded.
+              Write-Host "=== Passcore Standard Output (tail) ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore.log" -Tail 150 }
+              Write-Host "=== Passcore Error Output (tail) ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore-error.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore-error.log" -Tail 80 }
 
               throw "Passcore failed to become ready within 90 seconds."
           }
@@ -1073,24 +1352,31 @@ jobs:
           # should not hinge on the runner default.
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           .\tests\samba-ad\restart-passcore.ps1 -LegName "D: group type" -ExtraArgs @(
-            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=DistributionGroup'
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:0=DistributionGroup',
+            '--ClientSettings:PasswordProviderOptions:AllowedAdGroups:1=AllowedGroup'
           )
 
-      # CHARACTERIZATION TEST -- it pins what the provider does today, not what
-      # it ought to do.
+      # Leg D asserts INTENDED SEMANTICS. It used to be a characterization test
+      # pinning the opposite answer, and its own comment said that if
+      # security-groups-only were adopted this expectation should invert. It has
+      # been, and it has.
       #
-      # ResolveMembershipAsync unions GetAuthorizationGroups(), which returns
-      # security groups only, with GetGroups(), which also returns distribution
-      # groups. So a distribution group currently matches, and this leg asserts
-      # that.
+      # Only security groups can satisfy a configured name. GetAuthorizationGroups
+      # reads tokenGroups and returns the transitive security-group closure, so a
+      # distribution group is simply not in it; the enumeration completes and the
+      # negative is definitive rather than undetermined. The reasoning is in
+      # docs/error-routing-matrix.md: a distribution group cannot enter a Windows
+      # access token, so it carries no authorization anywhere else in Windows, and
+      # it is frequently self-joinable -- a group a user can add themselves to must
+      # not be able to satisfy AllowedAdGroups.
       #
-      # Whether it SHOULD match is an open design question, and the leaning is
-      # towards security-groups-only. If that decision is taken, this expectation
-      # is expected to invert -- flipping it is then the correct response, and
-      # this comment is the notice that doing so is deliberate rather than a
-      # regression. Do not change provider code to make this leg produce a
-      # preferred answer; the decision comes first.
-      - name: Leg D - group type (characterization)
+      # AllowedGroup is configured alongside DistributionGroup as a POSITIVE
+      # CONTROL. Without it every assertion in this leg would expect a refusal, and
+      # the leg would pass just as happily if the group check were broken outright
+      # and refusing everyone. alloweduser being admitted is what makes
+      # distributionuser's refusal mean "distribution groups do not match" rather
+      # than "nothing matches".
+      - name: Leg D - group type (security groups only)
         shell: bash
         run: |
           post() {
@@ -1116,25 +1402,44 @@ jobs:
             exit 1
           fi
 
-          echo "distributionuser: characterizing how a distribution group is treated"
-          RESPONSE=$(post distributionuser testpassword)
+          # Positive control. alloweduser is in AllowedGroup, an ordinary security
+          # group named in this leg's configuration, so this leg admits at least
+          # one person. Without it, "distributionuser is refused" would also be
+          # satisfied by a group check that refuses everybody.
+          echo "Positive control: alloweduser must be PERMITTED via AllowedGroup"
+          RESPONSE=$(post alloweduser testpassword)
           echo "Response: $RESPONSE"
           CODE=$(echo "$RESPONSE" | jq -r '.errors[0].errorCode // empty')
           if [[ "$CODE" == "3" || "$CODE" == "4" || "$CODE" == "6" ]]; then
-            echo "FAIL: distributionuser returned $CODE, but current behaviour is that a"
-            echo "      distribution group matches, because GetGroups() includes them."
-            echo ""
-            echo "      If security-groups-only semantics were deliberately adopted, this"
-            echo "      expectation is meant to invert -- see the comment on this step."
-            echo "      Flip it deliberately; do not delete it."
+            echo "FAIL: alloweduser returned $CODE. A security group named in"
+            echo "      AllowedAdGroups must still admit, or this leg proves nothing"
+            echo "      about group TYPE -- only that the check refuses everyone."
             exit 1
           fi
-          restore distributionuser
+          restore alloweduser
+
+          echo "distributionuser must be REFUSED: a distribution group does not authorize"
+          RESPONSE=$(post distributionuser testpassword)
+          echo "Response: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)' >/dev/null; then
+            echo "FAIL: distributionuser was not refused with ChangeNotPermitted (6)."
+            echo "      DistributionGroup is named in AllowedAdGroups, but it is a"
+            echo "      distribution group: it cannot enter a Windows access token, so it"
+            echo "      carries no authorization, and it must not admit."
+            echo ""
+            echo "      Note the refusal must be 6, not 8. An 8 would mean membership came"
+            echo "      back UNDETERMINED -- the enumeration failed -- which is a different"
+            echo "      condition and not what this leg is asserting. Do not relax this to"
+            echo "      accept 8."
+            exit 1
+          fi
+          # No restore: the change was refused, so the password never changed.
 
       # Back to the baseline configuration before Test 1. Leg D left
-      # AllowedAdGroups=[DistributionGroup] in force, under which alloweduser is
-      # refused outright and never reaches the change path Test 1 exists to
-      # exercise.
+      # AllowedAdGroups=[DistributionGroup, AllowedGroup] in force. That would
+      # actually admit alloweduser, but Test 1 is about the change path rather
+      # than the group path, and it should not depend on a leg's leftover
+      # configuration to reach it.
       - name: Restart Passcore with no group lists
         shell: powershell
         run: |
@@ -1272,8 +1577,85 @@ jobs:
 
       - name: Check Samba AD DC logs
         if: always()
-        shell: powershell
-        run: wsl podman logs samba-ad
+        shell: wsl-bash {0}
+        run: |
+          # Container stdout carries supervisord and the provisioning script, and
+          # nothing about LDAP binds -- an earlier version of this step grepped it
+          # for auth events on the assumption that the AD DC logged here, which it
+          # does not. A short tail is kept because provisioning failures do show
+          # up here; the full dump is gone, since it was several hundred lines of
+          # samba_dnsupdate noise crowding out the assertions.
+          echo "=== container stdout (tail) ==="
+          podman logs samba-ad 2>&1 | tail -30 || true
+
+          # At log level 3 the interesting material -- bind attempts and the
+          # reasons they are rejected -- goes to Samba's own log files rather than
+          # to stdout, so dumping only `podman logs` would show none of it. This is
+          # the server-side view every round of the password-change investigation
+          # has been missing.
+          # The AD DC log location was established by enumeration and is recorded
+          # in TESTING.md: supervisord runs "/usr/sbin/samba -i", which stays in
+          # the foreground and writes to stderr, so the log is
+          # /var/log/supervisor/samba-stderr---supervisor-<random>.log. The
+          # supervisord-config and find dumps that established that are gone --
+          # they answered their question, and everything printed here competes for
+          # a job-log tail that is only a few thousand lines deep.
+          echo "=== /var/log/samba ==="
+          podman exec samba-ad sh -c 'ls -la /var/log/samba/ 2>/dev/null' || true
+          # 15 lines each, not 400. These are smbd/winbindd/samba-bgqd, which at
+          # log level 3 are large and carry nothing about LDAP binds -- the AD DC's
+          # own log is the supervisord stderr file dumped above. This loop was the
+          # last uncapped dump and was on its own consuming most of the job log's
+          # retrievable tail, which is what kept Test 1's result out of view.
+          podman exec samba-ad sh -c '
+            for f in /var/log/samba/*; do
+              [ -f "$f" ] || continue
+              echo "--- $f ---"
+              tail -15 "$f"
+            done' 2>/dev/null || true
+
+          # The bind rejections specifically, pulled out of the noise. If the
+          # strong-auth relaxation took effect, the "strong auth" refusals should
+          # be absent; if ADSI never reached LDAPS at all, there will be no bind
+          # attempt on 636 to find here either. Both are answers.
+          # THE AD DC'S LOG. Located by the enumeration above rather than guessed:
+          # supervisord runs "/usr/sbin/samba -i", which stays in the foreground
+          # and writes to STDERR, so supervisord captures it to
+          # samba-stderr---supervisor-<random>.log. It is not log.samba, it is not
+          # under /var/log/samba, and it is not on container stdout -- which is why
+          # three earlier attempts found nothing and why an empty result was never
+          # evidence about ADSI.
+          # The AUTHENTICATION SUMMARY first, and capped hard. At log level 3 with
+          # the auth classes the raw log is tens of thousands of lines -- enough
+          # to push every other step out of the retrievable tail of the job log,
+          # which happened the first time it worked. These "Auth:" lines are the
+          # entire value: one per bind, naming the service, the mechanism, the
+          # account as the server saw it, and the result.
+          echo "=== authentication events (one line per bind) ==="
+          podman exec samba-ad sh -c \
+            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -40' \
+            || echo "(none)"
+
+          echo "=== authentication failures only ==="
+          podman exec samba-ad sh -c \
+            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null \
+               | grep -v "NT_STATUS_OK" | tail -20' \
+            || echo "(none)"
+
+          echo "=== AD DC log tail (samba -i via supervisord, stderr) ==="
+          podman exec samba-ad sh -c \
+            'tail -40 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
+            || echo "(no samba stderr log found)"
+
+          # Bind-level detail, capped. Scoped to Samba's own logs -- an earlier
+          # version grepped all of /var/log and returned apt and dpkg install
+          # records, which buried the answer under package lists.
+          echo "=== bind detail ==="
+          podman exec samba-ad sh -c '
+            grep -hiE "ntlm_password_check|auth_check_password_recv|ntlmssp_server_auth_done|strong auth|simple bind" \
+              /var/log/supervisor/samba-stderr*.log /var/log/samba/log.* 2>/dev/null \
+              | tail -25' \
+            || echo "(nothing found)"
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
       # .NET buffers it, and Stop-Process -Force terminates without flushing, so
@@ -1285,11 +1667,26 @@ jobs:
           $stdout = Join-Path $env:GITHUB_WORKSPACE "passcore.log"
           $stderr = Join-Path $env:GITHUB_WORKSPACE "passcore-error.log"
 
-          Write-Host "=== Passcore Standard Output ==="
-          if (Test-Path $stdout) { Get-Content $stdout } else { Write-Host "(no $stdout)" }
+          # The provider's OWN failures first, and unabridged. These are the lines
+          # that explain a red assertion, and they must not be the thing that
+          # scrolls away.
+          Write-Host "=== Passcore warnings and errors ==="
+          if (Test-Path $stdout) {
+              Get-Content $stdout | Select-String -Pattern '^(warn|fail|crit):' -Context 0,4 |
+                Select-Object -Last 25 | Out-String | Write-Host
+          }
 
-          Write-Host "=== Passcore Error Output ==="
-          if (Test-Path $stderr) { Get-Content $stderr } else { Write-Host "(no $stderr)" }
+          # Capped. passcore.log accumulates across every leg's restart at Debug
+          # level, and together with the Samba dump it grew large enough to push
+          # the actual assertions -- Test 1's result, the group legs' response
+          # codes -- out of the retrievable tail of the job log. Losing the
+          # primary evidence to make room for supporting evidence is the wrong
+          # trade, and it was one I introduced.
+          Write-Host "=== Passcore Standard Output (tail) ==="
+          if (Test-Path $stdout) { Get-Content $stdout -Tail 120 } else { Write-Host "(no $stdout)" }
+
+          Write-Host "=== Passcore Error Output (tail) ==="
+          if (Test-Path $stderr) { Get-Content $stderr -Tail 60 } else { Write-Host "(no $stderr)" }
 
       - name: Stop Passcore
         if: always()
@@ -1300,15 +1697,20 @@ jobs:
             # /T because the pid is cmd.exe's and the app is its child; killing
             # the shell alone would leave the app holding port 5000.
             #
-            # No "2>&1": taskkill writes to stderr when the pid is already gone,
-            # and piping that into PowerShell turns it into an error record that
-            # fails the step -- which would let teardown fail a run whose tests
-            # all passed. Teardown of an already-dead process is a success here,
-            # so the exit code is reset rather than propagated.
+            # Run through cmd.exe with stderr folded into stdout THERE, so nothing
+            # taskkill writes reaches PowerShell's error stream. Teardown must not
+            # be able to fail a run whose tests all passed, and there are two ways
+            # it could: an already-dead pid, and a PARTIAL kill -- "The operation
+            # attempted is not supported" for one member of the tree -- which has
+            # been observed on this runner and did fail a step elsewhere.
+            # tests/samba-ad/restart-passcore.ps1 carries the same handling.
             Write-Host "Stopping Passcore process tree rooted at PID $passcorepid..."
-            & taskkill /F /T /PID $passcorepid
-            Write-Host "taskkill exit code: $LASTEXITCODE"
-            $LASTEXITCODE = 0
+            $taskkillOutput = cmd /c "taskkill /F /T /PID $passcorepid 2>&1"
+            $taskkillExit = $LASTEXITCODE
+            $taskkillOutput | ForEach-Object { Write-Host "  $_" }
+            Write-Host "taskkill exit code: $taskkillExit (advisory; teardown never fails the run)"
+            $global:LASTEXITCODE = 0
+            $Error.Clear()
           }
 
       - name: Cleanup Samba AD DC container

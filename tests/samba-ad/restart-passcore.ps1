@@ -58,11 +58,28 @@ foreach ($argument in $ExtraArgs) { Write-Host "  configuration argument: $argum
 if (Test-Path backend.pid) {
     $previousPid = (Get-Content backend.pid).Trim()
     Write-Host "Stopping previous Passcore tree rooted at PID $previousPid..."
-    # No "2>&1": taskkill writes to stderr when the pid is already gone, and
-    # piping that into PowerShell turns it into a terminating error.
-    & taskkill /F /T /PID $previousPid
-    Write-Host "taskkill exit code: $LASTEXITCODE"
-    $LASTEXITCODE = 0
+
+    # Run through cmd.exe with stderr folded into stdout THERE, so nothing
+    # taskkill writes ever reaches PowerShell's error stream.
+    #
+    # taskkill's exit code is advisory here and must not fail the step. It is
+    # non-zero when the pid is already gone, and it is also non-zero on a PARTIAL
+    # kill -- "The operation attempted is not supported" for one member of the
+    # tree while the rest terminate -- which has been observed on the runner and
+    # failed a leg whose restart had actually worked. Neither is the question the
+    # caller cares about.
+    #
+    # The real invariants are checked below and they are unforgiving: port 5000
+    # must be free before relaunching, and the new instance must answer. A leg
+    # cannot silently run against the previous configuration whatever taskkill
+    # reports.
+    $taskkillOutput = cmd /c "taskkill /F /T /PID $previousPid 2>&1"
+    $taskkillExit = $LASTEXITCODE
+    $taskkillOutput | ForEach-Object { Write-Host "  $_" }
+    Write-Host "taskkill exit code: $taskkillExit (advisory; the port check below is the gate)"
+
+    $global:LASTEXITCODE = 0
+    $Error.Clear()
 }
 
 # --- Confirm port 5000 is actually free ------------------------------------

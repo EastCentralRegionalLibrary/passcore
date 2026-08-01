@@ -114,7 +114,7 @@ artifacts when a job fails.
     options. No job exercises it.
   - The explicit-credentials path that *is* covered has already been found
     broken twice — the ADSI path defect behind `minPwdLength`, and a password
-    change that fails with `E_ACCESSDENIED`. The uncovered path should not be
+    change that fails with `0x80070547`. The uncovered path should not be
     assumed to be the safer one on the strength of having had fewer bugs
     found in it.
   - The password change itself does not succeed on the explicit-bind path.
@@ -128,10 +128,179 @@ artifacts when a job fails.
 
 ## The AD password change on the explicit-bind path
 
-**Status: open.** Against the containerised Samba AD DC, with
-`UseAutomaticContext: false` and explicit service-account credentials, reads
-work and the password change does not. `SDSUtils.ChangePassword` — the ADSI
-call behind `UserPrincipal.ChangePassword` — returns `E_ACCESSDENIED`.
+**Status: open, but no longer mysterious.** Against the containerised Samba AD DC,
+with `UseAutomaticContext: false` and explicit service-account credentials, reads
+work and the password change does not. `SDSUtils.ChangePassword` — the ADSI call
+behind `UserPrincipal.ChangePassword` — fails.
+
+**The short version, from server-side audit logging:** the directory records **no
+authentication attempt at all** for the change, while the service account's binds
+and the end user's credential verification both succeed against that same
+directory moments earlier. ADSI gives up *before it contacts the directory*. That
+is what `ERROR_CANT_ACCESS_DOMAIN_INFO` describes, and it is consistent with a
+runner that is not domain-joined and so has no domain configuration to read. It
+is **not** a transport problem, **not** a permissions problem, and **not**
+something the directory refused — the directory never sees it.
+
+Whether a **domain-joined** host running `UseAutomaticContext: false` is affected
+is untested, and is the one question worth spending a real machine on.
+
+**The exact error, captured once the group legs stopped blocking Test 1:**
+
+```
+DirectoryUnavailableException: The directory service could not complete the password change request
+ ---> PrincipalOperationException: Configuration information could not be read from the
+      domain controller, either because the machine is unavailable, or access has been
+      denied. (0x80070547)
+   at System.DirectoryServices.AccountManagement.SDSUtils.ChangePassword(DirectoryEntry de, ...)
+   at System.DirectoryServices.AccountManagement.ADStoreCtx.ChangePassword(...)
+   at System.DirectoryServices.AccountManagement.AuthenticablePrincipal.ChangePassword(...)
+```
+
+`0x80070547` is `ERROR_CANT_ACCESS_DOMAIN_INFO` (1351). Earlier notes recorded
+this as `E_ACCESSDENIED`; that was from a less precise capture, and this stack is
+the one to work from.
+
+**The distinction matters.** The failure is not "permission denied on the password
+write" — it is ADSI reporting that it could not read **configuration information**
+from the DC, i.e. the Configuration naming context.
+
+That looked like it might tie Test 1 to `Forest.GetForest()`, which also needs the
+Configuration NC and also fails here. **The probe below refuted that.** The
+Configuration NC is readable via `dc.example.com` and fails only via
+`example.com` — and `LdapHostnames` is `dc.example.com`, the name that
+*succeeds*. Test 1 never names `example.com` at all. So the Configuration NC is
+demonstrably readable with these credentials, over this channel, to this host,
+and the change still fails claiming it cannot read it.
+
+**Two failures, two causes.** Name resolution explains `Forest.GetForest()`. It
+explains nothing about Test 1. Anything suggesting otherwise is wrong and has
+been removed rather than softened.
+
+One thing that needs no action: **1351 is not in `Win32ErrorCode`**, so it falls
+to the default classification — `Infrastructure`, the same place
+`ERROR_ACCESS_DENIED` lands. That is why Test 1 reports code 8 and not something
+new, and the wire behaviour is unchanged. The catalog does not need an entry for
+it.
+
+### The Configuration NC probe
+
+The AD smoke test reads the Configuration naming context three ways, beside the
+existing sealed-bind and LDAPS diagnostics, using ADSI with
+`Secure | Signing | Sealing` — the same stack and channel the provider's own
+context uses, because a probe on a different channel answers a different
+question. The DN comes from rootDSE's `configurationNamingContext` rather than
+being constructed, for the same reason `AdsiPath` reads `defaultNamingContext`.
+
+How it was read at the time — **and note the first row's reading was wrong**, see
+below:
+
+| `dc.example.com` | `example.com` | Reading as written |
+| --- | --- | --- |
+| succeeds | fails | ~~Target naming, and both failures share a root cause.~~ Half right: it *is* target naming, but it does not make the causes shared. |
+| fails | fails | **Credentials or permissions, not naming.** `EXAMPLE\Administrator` should be able to read this, so the bind itself or Samba's provisioning is the suspect. |
+| succeeds | succeeds | **1351 comes from something else.** |
+
+The first row's reading did not survive contact with the result, and the mistake
+is worth naming: it assumed the change operation binds by the same name that
+failed. It does not. Reading a table row without checking which name the affected
+code path actually uses is how a probe designed to settle a question ends up
+confirming a prior instead.
+
+#### Result: target naming — which explains `GetForest()`, not Test 1
+
+```
+1. rootDSE configurationNamingContext: CN=Configuration,DC=example,DC=com
+2. Configuration NC via dc.example.com: SUCCEEDED -- read 'CN=Configuration,DC=example,DC=com'
+3. Configuration NC via example.com:   FAILED
+     inner: COMException: The user name or password is incorrect.
+     inner HRESULT: 0x8007052E
+```
+
+The Configuration NC is **readable with these credentials** — so this is not a
+permissions problem, and not a Samba provisioning problem. Readability depends
+entirely on **which name is used to bind**.
+
+The mechanism behind read 3 is target naming: a signed-and-sealed bind derives its
+service principal from the server string it was given, Samba registers
+`ldap/dc.example.com` and not `ldap/example.com`, and a name with no SPN behind it
+cannot authenticate. `0x8007052E` is 1326, `ERROR_LOGON_FAILURE` — the same code
+`Forest.GetForest()` fails with, and for the same reason: `GetForest()` builds its
+`DirectoryContext` around the **forest name**, which is exactly the name that has
+no SPN. That is the same root cause already documented for `LdapHostnames`, which
+was pointed at the DC to work around it.
+
+**This explains `Forest.GetForest()` and not Test 1**, and the distinction is the
+most useful thing the probe produced. `LdapHostnames` is `dc.example.com` — read 2,
+the one that *succeeded*. The change operation never names `example.com`. So Test 1
+runs entirely on the path where the Configuration NC is provably readable, and
+still reports that it cannot read it.
+
+Two failures, two causes. Do not fix one expecting the other to move. In
+particular, **do not register `ldap/example.com` on the Samba side**: it would
+repair `GetForest()` and the `example.com` bind, leave Test 1 untouched, and spend
+a fixture change on a dependency the security-groups-only work has already removed
+from production.
+
+That made a Kerberos realm mapping the interesting next test. **It was tested and
+it does not work — do not retry it.**
+
+#### The ksetup realm mapping, tested and rejected
+
+The reasoning was that with a KDC mapped for `EXAMPLE.COM`, the locator would
+resolve the realm to a DC before requesting a ticket, so `ldap/dc.example.com`
+would become the SPN in play even when the caller names the realm. **That
+reasoning was wrong**, and the run says so plainly.
+
+The mappings themselves took. `ksetup` before and after:
+
+```
+BEFORE: Machine is not configured to log on to an external KDC.  Probably a workgroup member
+        No user mappings defined.
+
+AFTER:  EXAMPLE.COM:
+            kdc = dc.example.com
+            kpasswd = dc.example.com
+```
+
+And the Kerberos bind genuinely **moved** — it no longer fails before reaching
+the wire:
+
+```
+before ksetup:  Kerberos bind FAILED: "A local error occurred."
+after ksetup:   Kerberos bind FAILED: LdapException: "The supplied credential is invalid."
+```
+
+"A local error occurred" is the client failing with no realm mapping. "The
+supplied credential is invalid" is an actual authentication exchange being
+refused. So the mappings work and Kerberos is live — and it still cannot
+authenticate against the realm name.
+
+**Why, and why no mapping can fix it.** A host-to-realm map tells the client
+which *realm* a host belongs to. It does not rewrite the *service principal* the
+client asks for. Naming `example.com` still requests `ldap/example.com@EXAMPLE.COM`,
+and Samba registers `ldap/dc.example.com` — not that. The KDC has no such
+principal, so the ticket request fails, which surfaces as invalid credentials.
+Note it is the identical error the NTLM sealed bind to `example.com:389` returns:
+Kerberos reaches the same wall by the same route.
+
+Nothing downstream moved. The Configuration NC read via `example.com` still
+failed with `0x8007052E`, `Forest.GetForest()` still failed with the same error,
+and Test 1 still failed. `Domain.GetCurrentDomain()` threw *"Current security
+context is not associated with an Active Directory domain or forest"*, which
+closes a separate question empirically: **realm mapping is not domain
+membership**, so a working Kerberos configuration would still not make
+`UseAutomaticContext: true` viable on this runner.
+
+The experiment was reverted. The only remaining ways through are a Samba-side
+change registering `ldap/example.com`, or not naming the realm at all — which is
+what `LdapHostnames` already does. Neither is reachable from the caller's
+configuration for the paths that build their own `DirectoryContext`.
+
+One hazard that did **not** materialise, worth recording since it was expected:
+a live-but-failing Kerberos did not make Negotiate stop falling back. The sealed
+bind to `dc.example.com` still succeeded, `minPwdLength` still read, and every
+group leg returned its usual code. There was no broad red.
 
 This is recorded here because the obvious explanations have been tested and
 are not the cause. Anyone picking it up should start after this list, not
@@ -166,28 +335,156 @@ SSL     (Negotiate|SecureSocketLayer) on dc.example.com:636
 ```
 
 EventId 108 never fired — no channel was ever established — and the run died at
-the first assertion, the `minPwdLength` read that passes on 389. The port is
-back to 389 and this hypothesis is closed.
+the first assertion, the `minPwdLength` read that passes on 389.
 
-The second error is the part worth keeping. **That was the first time the SSL
-fallback in `AcquirePrincipalContext` has ever been exercised**, because the
-sealed bind on 389 has always succeeded and short-circuited it — and it failed.
-So the fallback that the code advertises as its safety net is, against this DC,
-unproven at best. Note the contrast: a raw `LdapConnection` with SSL to the same
-host and port succeeds from the same runner in the same job. The difference is
-ADSI, not the network and not the certificate.
+**Retested, deliberately, and the result is identical.** The first attempt was
+discounted because the run died before Test 1 for a reason unrelated to the
+hypothesis, and because Leg A was separately blocking the job at the time. Both
+of those are fixed, so 636 was set again to see whether Test 1 would finally
+execute under it. It did not: same `0x8007203A`, same `0x80072028`, EventId 108
+absent again, dead at `minPwdLength` again.
 
-Two things follow, and they are separable:
+That closes the hypothesis rather than leaving it unproven. **The port cannot be
+tested this way at all**, because `LdapPort` governs both the context-acquisition
+port and the port in the `DirectoryEntry` path — and 636 breaks acquisition
+before any password change is attempted. If the SSL fallback cannot carry a
+*context*, it cannot carry a password change either. The port is back to 389, and
+the explicit-bind limitation is a known limitation with an **unidentified cause**
+rather than one with an untried fix.
 
-- **The fallback needs its own coverage.** It is currently reached only when the
-  primary channel fails, which in CI is never. Whatever is wrong with it is
-  invisible from a green run.
-- **`0x80072028` is `LDAP_STRONG_AUTH_REQUIRED`.** Samba's
-  `ldap server require strong auth` refusing the bind that ADSI actually sent is
-  the first thing to check — which means capturing what ADSI sent, rather than
-  reasoning about what it should have sent. This investigation has twice
-  produced a fix whose stated rationale turned out to be wrong, so the next step
-  is a packet capture or a Samba-side log, not another configuration guess.
+#### Both errors are now explained, and neither means what it first appeared to
+
+**`0x8007203A` was ours.** The provider chose channel options and port
+independently, so `LdapPort: 636` produced a *sealed, non-SSL* bind aimed at 636.
+Port 636 is TLS from the first byte; an LDAP BindRequest is not something it can
+answer, and "the server is not operational" is the client reporting that protocol
+mismatch. No directory would have behaved differently. This was a client-side
+pairing defect and is fixed — see `LdapChannelPorts`, which makes the invalid
+combination unrepresentable rather than merely discouraged. The SSL fallback then
+fired against a failure the code had manufactured for itself.
+
+**`0x80072028` is Samba behaving as designed, not a fault in the fallback.**
+Since CVE-2016-2112 the default is `ldap server require strong auth = yes`,
+documented as: simple binds only over TLS-encrypted connections, and unencrypted
+connections only with SASL sign or seal. `Negotiate | SecureSocketLayer` is a
+*SASL bind over TLS*, which that default excludes — deliberately. Samba does not
+implement LDAP channel binding, so there is no cryptographic tie between the NTLM
+or Kerberos token and the TLS layer, leaving a relay attack open; it refuses the
+combination rather than accept an unsafe session.
+
+**This is Samba-specific.** Real AD *does* implement channel binding — that is
+what ADV190023 concerns — so `Negotiate | SecureSocketLayer` is a valid
+combination against a real DC. An earlier version of this section called the SSL
+fallback "unproven at best" on the strength of that error. That overstated the
+evidence: the fallback is **untestable against Samba by design**, which is a
+different claim and not a defect in PassCore. The contrast that seemed damning —
+a raw `LdapConnection` with SSL succeeding to the same host and port in the same
+job — is explained too: that probe uses a *simple* bind over TLS, which the same
+Samba default explicitly permits.
+
+What does follow is narrower and still true: **the SSL fallback has no coverage.**
+It is reached only when the primary channel fails, which against a correctly
+paired 389 never happens, so nothing in CI exercises it either way.
+
+### Server-side evidence: what ADSI actually does
+
+Obtained once Samba's logging was genuinely in effect — see the note below on how
+long that took to achieve, because the failures along the way were all mine.
+
+Samba's authentication audit, one line per bind, across a full run:
+
+```
+33x Auth: [LDAP,NTLMSSP] user [EXAMPLE][Administrator] ... status [NT_STATUS_OK]
+ 4x Auth: [LDAP,simple bind/TLS] user [EXAMPLE][EXAMPLEAdministrator] ... status [NT_STATUS_OK]
+ 3x Auth: [Kerberos KDC,ENC-TS Pre-authentication] user [(null)][testuser@example.com] ... status [NT_STATUS_OK]
+ 3x Auth: [LDAP,NTLMSSP] user [][testuser@example.com] ... status [NT_STATUS_NOT_FOUND]
+```
+
+And the failing one in full:
+
+```
+Auth: [LDAP,NTLMSSP] user []\[testuser@example.com] with [NTLMv2]
+  status [NT_STATUS_NOT_FOUND]
+  workstation [runnervmhisb5]
+  remote host [ipv4:192.168.96.1:63475]   local host [ipv4:10.88.0.2:389]
+  clientDomain ""   clientAccount "testuser@example.com"
+
+ntlm_password_check: LM password and LMv2 failed for user testuser@example.com,
+  and NT MD4 password in LM field not permitted
+auth_check_password_recv: sam authentication for user [\testuser@example.com]
+  FAILED with error NT_STATUS_NOT_FOUND
+```
+
+**Correction to a first reading of this data.** The `NT_STATUS_NOT_FOUND` binds
+were initially reported as ADSI's password-change connection failing on username
+form. **That was wrong**, and the ordered sequence shows why. Every run produces
+this pattern, per permitted account:
+
+```
+22:48:57.750  Kerberos KDC,ENC-TS Pre-auth   testuser@example.com   NT_STATUS_OK
+22:48:58.110  Kerberos KDC,ENC-TS Pre-auth   testuser@example.com   NT_STATUS_WRONG_PASSWORD
+22:48:58.119  LDAP,NTLMSSP                   testuser@example.com   NT_STATUS_NOT_FOUND
+```
+
+Every single `NOT_FOUND` is preceded ~9ms earlier by a Kerberos
+`WRONG_PASSWORD` for the same account. Those pairs are the **`restore` cleanup**
+in the smoke test, which posts `NewPassword123!` as the current password — a
+password that was never set, because the change failed. Kerberos correctly
+rejects it, ADSI then retries over NTLM, and NTLM cannot resolve a bare UPN with
+an empty domain. It is an artefact of the test's own teardown, not the defect.
+
+**What the sequence actually establishes is stronger and simpler:**
+
+- The service account's sealed binds succeed — `LDAP,NTLMSSP` as
+  `[EXAMPLE][Administrator]`, `NT_STATUS_OK`, four per request.
+- The end user's credential verification succeeds — `Kerberos ENC-TS
+  Pre-authentication`, `NT_STATUS_OK`, immediately before the change is attempted.
+- **The password change itself produces no authentication event on the DC at
+  all.** Nothing between the successful verification and the failure. No LDAPS
+  bind, no `kpasswd`, no SAMR, no rejected bind of any kind.
+
+So `IADsUser::ChangePassword` is failing **before it authenticates to the
+directory** — which is exactly what `0x80070547` `ERROR_CANT_ACCESS_DOMAIN_INFO`
+describes: a client-side failure to read domain configuration, not a request the
+DC refused. The DC never sees the operation.
+
+That closes the transport question in the opposite direction from the one
+originally pursued. ADSI is not choosing badly among LDAPS, Kerberos and SMB and
+running out of options; it is not getting as far as choosing. Consistent with
+this, the SMB/445 line of enquiry is **not** worth pursuing: there is no
+fall-through to reach it.
+
+It also means the remaining explanation is a property of the client environment —
+a machine that is not domain-joined, with no computer account and no domain
+configuration to read — rather than of PassCore's code or of the directory. That
+matches the standing plan to verify against a real domain-joined host, and makes
+that verification the decisive test rather than one more CI round.
+
+### A note on how long the instrumentation took
+
+Five rounds, and the honest summary is that four of them were wasted on my own
+mistakes rather than on the problem:
+
+1. `log level = 3` — wrong debug class; LDAP binds are logged by `auth_audit`.
+2. Added the `auth_audit` classes — right classes, but looked for the output in
+   `/var/log/samba`, where the AD DC does not write.
+3. Enumerated instead of guessing, which found it: supervisord runs
+   `/usr/sbin/samba -i`, so the log is
+   `/var/log/supervisor/samba-stderr---supervisor-<random>.log`.
+4. Added `logging = file`, which redirected output away from that working capture.
+5. Added a `testparm` check — **and it immediately showed the settings had never
+   applied at all.** `podman restart` re-runs the image entrypoint, which
+   regenerates `smb.conf` and discarded every edit before Samba read it. The
+   `smb.conf` dump looked correct each time because it runs *before* the restart.
+
+The fix was `supervisorctl restart samba`, which re-execs the daemon without the
+entrypoint. **The lesson is round 5's:** every earlier round verified the *file*
+and inferred the *process state* from it. Asking the running system what it
+believes — `testparm` — broke the loop in one attempt and should have been first.
+
+It also means two things recorded earlier were wrong and are retracted:
+`allow_sasl_over_tls` was never in force, so it is **untested**, not refuted; and
+the empty logs were never evidence about ADSI.
 
 ### What the smoke test asserts about it
 
@@ -195,3 +492,18 @@ Test 1 asserts the password change **succeeds**, and it currently fails. The
 assertion has deliberately not been weakened to match the behaviour: it
 describes what the provider is supposed to do, and a failing assertion is the
 correct report of an open defect. Do not relax it to get a green run.
+
+Test 1 is now the **only** failing assertion in the AD smoke test. It spent a
+long time unreachable: the group legs run before it, and Leg A's non-member
+assertion could not be answered while membership resolution depended on
+`Forest.GetForest()`. Since the move to security-groups-only, Legs A–D pass and
+Test 1 executes, which is how the stack above was finally captured.
+
+The legs' own "must be permitted" assertions are unaffected by the change failing.
+They check that the account got **past the group check**, not that the password
+was written, so they treat anything other than `UserNotFound` (3),
+`InvalidCredentials` (4) or `ChangeNotPermitted` (6) as permitted. Their trailing
+`restore` calls do fail — the password was never changed, so restoring it with the
+new one cannot authenticate — and that is why `ERROR_LOGON_FAILURE (1326)` appears
+in the log alongside each of them. It is expected noise from `|| true` cleanup, not
+a second defect.
