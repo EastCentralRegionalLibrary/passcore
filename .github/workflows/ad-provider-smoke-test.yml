@@ -349,7 +349,6 @@ jobs:
                    print;
                    print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
-                   print \"\tlogging = file\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
@@ -386,6 +385,26 @@ jobs:
             exit 1
           fi
           echo "Samba is ready again."
+
+          # Ask Samba what it actually PARSED, rather than trusting that writing
+          # the file was enough. Four rounds went into getting server-side
+          # visibility and every empty result was ambiguous between "the setting
+          # did not apply" and "it applied and there is nothing to log". This
+          # removes that ambiguity permanently: if these echo the intended values
+          # and the log is still empty, the config is not the problem.
+          echo "=== what Samba parsed ==="
+          for p in "log level" "logging" "ldap server require strong auth"; do
+            printf '  %-38s ' "$p ="
+            podman exec samba-ad testparm -s --parameter-name="$p" 2>/dev/null | tr -d '\r' || echo "(could not read)"
+          done
+
+          # "logging" is deliberately NOT set. It was set to "file" in an earlier
+          # round and that is the likeliest reason the AD DC log stayed empty:
+          # samba -i writes debug output to stderr, which supervisord captures and
+          # the dump below reads, whereas "logging = file" redirects it to
+          # /var/log/samba/log.samba -- a file that was then never created. Leaving
+          # it unset keeps the output on the path that demonstrably works, since
+          # that capture already shows samba's startup banner.
 
           # Confirm the seed survived the restart, so that a later group assertion
           # failing cannot be quietly blamed on the restart having wiped fixtures.
