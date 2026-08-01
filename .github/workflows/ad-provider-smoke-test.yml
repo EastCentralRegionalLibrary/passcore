@@ -292,44 +292,24 @@ jobs:
       # at log level 3 records bind attempts and why it rejects them, which is the
       # capture this has needed throughout and is obtainable without tcpdump.
       #
-      # ---- Why the strong-auth relaxation (CI ONLY -- NEVER DO THIS FOR REAL) ----
-      # Samba defaults to "ldap server require strong auth = yes" since
-      # CVE-2016-2112. Documented behaviour: simple binds only over TLS, and
-      # unencrypted connections only with SASL sign or seal. A SASL bind OVER TLS
-      # -- which is exactly Negotiate | SecureSocketLayer -- is excluded by that
-      # default, and Samba excludes it deliberately: it does not implement LDAP
-      # channel binding, so there is no cryptographic tie between the NTLM or
-      # Kerberos token and the TLS layer, which leaves a relay attack open. It
-      # denies the combination rather than accept an unsafe session.
+      # ---- The strong-auth relaxation is GONE, and should stay gone ----
+      # This step briefly set "ldap server require strong auth = allow_sasl_over_tls"
+      # to test whether Samba's default hardening (yes, since CVE-2016-2112) was
+      # what blocked the password change. It was not, and the question is now
+      # moot: server-side audit logging shows the change producing NO
+      # authentication event at all, and a server-side auth policy cannot explain
+      # a failure the server never sees.
       #
-      # THIS IS SAMBA-SPECIFIC. Real AD does implement channel binding (that is
-      # what ADV190023 is about), so Negotiate | SecureSocketLayer is a valid
-      # combination against a real DC.
+      # It is removed rather than left in place because it made this DC diverge
+      # from a real one's default for no remaining benefit, and a test directory
+      # that is quietly more permissive than production is a good way to miss a
+      # regression later. Samba's own documentation says not to set it. If some
+      # future question genuinely needs it, set it deliberately for that run and
+      # take it out again.
       #
-      # The hypothesis being tested: IADsUser::ChangePassword opens its OWN
-      # connections rather than reusing the caller's channel, and its documented
-      # transports are LDAP over SSL, then Kerberos change-password, then
-      # NetUserChangePassword over SMB. Here LDAPS is reachable and trusted but a
-      # SASL bind over TLS is denied by the above; Kerberos authenticates only
-      # against dc.example.com and has no realm mapping; and 445 is not published
-      # because the Windows host binds it. All three refused would produce exactly
-      # the generic 0x80070547 the change reports -- and would explain the
-      # otherwise contradictory fact that the Configuration NC reads fine over the
-      # provider's own sealed 389 channel while the change claims it cannot read
-      # it. Different connection, different bind, different rule applied.
-      #
-      # allow_sasl_over_tls is the NARROW relaxation: it permits simple and SASL
-      # binds without sign or seal over TLS. Not "no", which would disable the
-      # protection wholesale. Samba's own documentation says not to set this at
-      # all, and that advice stands for anything that is not a throwaway test DC
-      # created and destroyed inside one CI job. It must never be suggested as a
-      # remedy for a real deployment.
-      #
-      # LdapPort stays at 389 deliberately. ADSI opens its own connections, so the
-      # context's port has no bearing on what ADSI does -- which means this tests
-      # the hypothesis at the documented default configuration, with no product
-      # change and nothing to revert if it works.
-      - name: EXPERIMENT - raise Samba's log level and relax its strong-auth default
+      # Note for anyone tempted to retry it: it must be applied with
+      # `supervisorctl restart samba`, NOT `podman restart`. See below.
+      - name: Raise Samba's log level for server-side visibility
         shell: wsl-bash {0}
         run: |
           echo "=== smb.conf BEFORE ==="
@@ -347,7 +327,6 @@ jobs:
           podman exec samba-ad sh -c '
             awk "/^\[global\]/{
                    print;
-                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
