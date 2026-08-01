@@ -340,25 +340,39 @@ before any password change is attempted. If the SSL fallback cannot carry a
 the explicit-bind limitation is a known limitation with an **unidentified cause**
 rather than one with an untried fix.
 
-The second error is the part worth keeping. **That was the first time the SSL
-fallback in `AcquirePrincipalContext` has ever been exercised**, because the
-sealed bind on 389 has always succeeded and short-circuited it — and it failed.
-So the fallback that the code advertises as its safety net is, against this DC,
-unproven at best. Note the contrast: a raw `LdapConnection` with SSL to the same
-host and port succeeds from the same runner in the same job. The difference is
-ADSI, not the network and not the certificate.
+#### Both errors are now explained, and neither means what it first appeared to
 
-Two things follow, and they are separable:
+**`0x8007203A` was ours.** The provider chose channel options and port
+independently, so `LdapPort: 636` produced a *sealed, non-SSL* bind aimed at 636.
+Port 636 is TLS from the first byte; an LDAP BindRequest is not something it can
+answer, and "the server is not operational" is the client reporting that protocol
+mismatch. No directory would have behaved differently. This was a client-side
+pairing defect and is fixed — see `LdapChannelPorts`, which makes the invalid
+combination unrepresentable rather than merely discouraged. The SSL fallback then
+fired against a failure the code had manufactured for itself.
 
-- **The fallback needs its own coverage.** It is currently reached only when the
-  primary channel fails, which in CI is never. Whatever is wrong with it is
-  invisible from a green run.
-- **`0x80072028` is `LDAP_STRONG_AUTH_REQUIRED`.** Samba's
-  `ldap server require strong auth` refusing the bind that ADSI actually sent is
-  the first thing to check — which means capturing what ADSI sent, rather than
-  reasoning about what it should have sent. This investigation has twice
-  produced a fix whose stated rationale turned out to be wrong, so the next step
-  is a packet capture or a Samba-side log, not another configuration guess.
+**`0x80072028` is Samba behaving as designed, not a fault in the fallback.**
+Since CVE-2016-2112 the default is `ldap server require strong auth = yes`,
+documented as: simple binds only over TLS-encrypted connections, and unencrypted
+connections only with SASL sign or seal. `Negotiate | SecureSocketLayer` is a
+*SASL bind over TLS*, which that default excludes — deliberately. Samba does not
+implement LDAP channel binding, so there is no cryptographic tie between the NTLM
+or Kerberos token and the TLS layer, leaving a relay attack open; it refuses the
+combination rather than accept an unsafe session.
+
+**This is Samba-specific.** Real AD *does* implement channel binding — that is
+what ADV190023 concerns — so `Negotiate | SecureSocketLayer` is a valid
+combination against a real DC. An earlier version of this section called the SSL
+fallback "unproven at best" on the strength of that error. That overstated the
+evidence: the fallback is **untestable against Samba by design**, which is a
+different claim and not a defect in PassCore. The contrast that seemed damning —
+a raw `LdapConnection` with SSL succeeding to the same host and port in the same
+job — is explained too: that probe uses a *simple* bind over TLS, which the same
+Samba default explicitly permits.
+
+What does follow is narrower and still true: **the SSL fallback has no coverage.**
+It is reached only when the primary channel fails, which against a correctly
+paired 389 never happens, so nothing in CI exercises it either way.
 
 ### What the smoke test asserts about it
 

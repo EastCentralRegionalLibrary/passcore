@@ -284,6 +284,121 @@ jobs:
           podman cp "${SEED_SCRIPT}" samba-ad:/tmp/seedusers.sh
           podman exec samba-ad /bin/sh /tmp/seedusers.sh
 
+      # TIME-BOXED EXPERIMENT plus a diagnostic that is worth keeping regardless.
+      #
+      # ---- Why the log level (keep this) ----
+      # Every round of the password-change investigation has been argued from the
+      # CLIENT's error text, because nothing on the server side was visible. Samba
+      # at log level 3 records bind attempts and why it rejects them, which is the
+      # capture this has needed throughout and is obtainable without tcpdump.
+      #
+      # ---- Why the strong-auth relaxation (CI ONLY -- NEVER DO THIS FOR REAL) ----
+      # Samba defaults to "ldap server require strong auth = yes" since
+      # CVE-2016-2112. Documented behaviour: simple binds only over TLS, and
+      # unencrypted connections only with SASL sign or seal. A SASL bind OVER TLS
+      # -- which is exactly Negotiate | SecureSocketLayer -- is excluded by that
+      # default, and Samba excludes it deliberately: it does not implement LDAP
+      # channel binding, so there is no cryptographic tie between the NTLM or
+      # Kerberos token and the TLS layer, which leaves a relay attack open. It
+      # denies the combination rather than accept an unsafe session.
+      #
+      # THIS IS SAMBA-SPECIFIC. Real AD does implement channel binding (that is
+      # what ADV190023 is about), so Negotiate | SecureSocketLayer is a valid
+      # combination against a real DC.
+      #
+      # The hypothesis being tested: IADsUser::ChangePassword opens its OWN
+      # connections rather than reusing the caller's channel, and its documented
+      # transports are LDAP over SSL, then Kerberos change-password, then
+      # NetUserChangePassword over SMB. Here LDAPS is reachable and trusted but a
+      # SASL bind over TLS is denied by the above; Kerberos authenticates only
+      # against dc.example.com and has no realm mapping; and 445 is not published
+      # because the Windows host binds it. All three refused would produce exactly
+      # the generic 0x80070547 the change reports -- and would explain the
+      # otherwise contradictory fact that the Configuration NC reads fine over the
+      # provider's own sealed 389 channel while the change claims it cannot read
+      # it. Different connection, different bind, different rule applied.
+      #
+      # allow_sasl_over_tls is the NARROW relaxation: it permits simple and SASL
+      # binds without sign or seal over TLS. Not "no", which would disable the
+      # protection wholesale. Samba's own documentation says not to set this at
+      # all, and that advice stands for anything that is not a throwaway test DC
+      # created and destroyed inside one CI job. It must never be suggested as a
+      # remedy for a real deployment.
+      #
+      # LdapPort stays at 389 deliberately. ADSI opens its own connections, so the
+      # context's port has no bearing on what ADSI does -- which means this tests
+      # the hypothesis at the documented default configuration, with no product
+      # change and nothing to revert if it works.
+      - name: EXPERIMENT - raise Samba's log level and relax its strong-auth default
+        shell: wsl-bash {0}
+        run: |
+          echo "=== smb.conf BEFORE ==="
+          podman exec samba-ad cat /etc/samba/smb.conf
+
+          # Inserted directly after [global] with awk rather than appended, because
+          # appending would land the settings in whatever section happens to be
+          # last and they would be silently ignored.
+          podman exec samba-ad sh -c '
+            awk "/^\[global\]/{
+                   print;
+                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
+                   print \"\tlog level = 3\";
+                   next
+                 } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
+              && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
+
+          echo "=== smb.conf AFTER ==="
+          podman exec samba-ad cat /etc/samba/smb.conf
+
+          # A restart is required: the AD DC reads these at startup and
+          # smbcontrol's reload does not cover the LDAP server's auth policy.
+          # The data survives -- this restarts the process tree in an existing
+          # container, it does not re-provision -- so the seeded users and groups
+          # are still there afterwards.
+          podman restart samba-ad
+
+          echo "Waiting for Samba to come back after the restart..."
+          READY=0
+          for attempt in $(seq 1 30); do
+            if [ "$(podman inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
+              echo "ERROR: container is not running after restart."
+              podman logs samba-ad | tail -50
+              exit 1
+            fi
+            if podman exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
+                 -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ $READY -ne 1 ]; then
+            echo "ERROR: Samba did not become ready within 60s of the restart."
+            podman logs samba-ad | tail -50
+            exit 1
+          fi
+          echo "Samba is ready again."
+
+          # Confirm the seed survived the restart, so that a later group assertion
+          # failing cannot be quietly blamed on the restart having wiped fixtures.
+          echo "=== fixture check after restart ==="
+          podman exec samba-ad samba-tool user list | sort | tr '\n' ' '
+          echo
+
+          # The container's address can change across a restart, and the static
+          # route on the Windows side is built from the file written when the
+          # container first started. Rewrite it so the route targets reality.
+          NETWORK_FILE="$(wslpath '${{ github.workspace }}')/podman-network.txt"
+          PODMAN_SUBNET="$(podman network inspect podman --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)"
+          if [ -z "${PODMAN_SUBNET}" ]; then
+            PODMAN_SUBNET="$(podman network inspect podman 2>/dev/null | grep -o '"subnet"[^,]*' | head -1 | sed 's/.*: *"//; s/"//')"
+          fi
+          CONTAINER_IP="$(podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' samba-ad 2>/dev/null)"
+          echo "podman bridge subnet : ${PODMAN_SUBNET:-<unknown>}"
+          echo "container address    : ${CONTAINER_IP:-<unknown>} (re-read after restart)"
+          printf '%s\n%s\n' "${PODMAN_SUBNET}" "${CONTAINER_IP}" > "${NETWORK_FILE}"
+
       # System.DirectoryServices.AccountManagement does not confine itself to the
       # server it was given. GetAuthorizationGroups() calls LoadDomainInfo(),
       # which resolves the domain by its DNS name and opens a fresh connection to
@@ -1438,8 +1553,33 @@ jobs:
 
       - name: Check Samba AD DC logs
         if: always()
-        shell: powershell
-        run: wsl podman logs samba-ad
+        shell: wsl-bash {0}
+        run: |
+          echo "=== container stdout ==="
+          podman logs samba-ad || true
+
+          # At log level 3 the interesting material -- bind attempts and the
+          # reasons they are rejected -- goes to Samba's own log files rather than
+          # to stdout, so dumping only `podman logs` would show none of it. This is
+          # the server-side view every round of the password-change investigation
+          # has been missing.
+          echo "=== /var/log/samba ==="
+          podman exec samba-ad sh -c 'ls -la /var/log/samba/ 2>/dev/null' || true
+          podman exec samba-ad sh -c '
+            for f in /var/log/samba/*; do
+              [ -f "$f" ] || continue
+              echo "--- $f ---"
+              tail -400 "$f"
+            done' 2>/dev/null || true
+
+          # The bind rejections specifically, pulled out of the noise. If the
+          # strong-auth relaxation took effect, the "strong auth" refusals should
+          # be absent; if ADSI never reached LDAPS at all, there will be no bind
+          # attempt on 636 to find here either. Both are answers.
+          echo "=== bind / auth lines ==="
+          podman exec samba-ad sh -c '
+            grep -riE "bind|strong auth|sasl|TLS|ldaps|kpasswd|SAMR|ChangePassword" \
+              /var/log/samba/ 2>/dev/null | tail -200' || true
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
       # .NET buffers it, and Stop-Process -Force terminates without flushing, so

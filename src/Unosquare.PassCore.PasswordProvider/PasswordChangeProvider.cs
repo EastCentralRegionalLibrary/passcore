@@ -47,6 +47,19 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
+        // Information, not a warning: skipping the sealed bind on the LDAPS port is
+        // correct behaviour, not a degradation. It exists so that EventId 108
+        // reporting "SSL" is not mistaken for sealing having been tried and refused
+        // by the directory -- which is exactly the misreading that sent this
+        // investigation after a non-existent fallback defect.
+        private static readonly Action<ILogger, string, int, Exception?> LogSealedBindSkippedForLdapsPort =
+            LoggerMessage.Define<string, int>(
+                LogLevel.Information,
+                new EventId(116, nameof(LogSealedBindSkippedForLdapsPort)),
+                "Skipping the signed-and-sealed bind to {Host}: LdapPort is {Port}, the LDAPS port, " +
+                "which is TLS from the first byte and cannot answer a plain LDAP bind. Connecting " +
+                "over SSL instead. This is expected for an LDAPS configuration.");
+
         // Warning, not error, and deliberately so. Everything else on this path
         // works and is covered end-to-end against a live directory: reads, binds,
         // credential verification, group membership, minPwdLength, policy
@@ -701,42 +714,72 @@ namespace Unosquare.PassCore.PasswordProvider
                 // security package and needs no certificate trust, so it asks
                 // nothing new of existing deployments. SSL covers directories
                 // that will not negotiate sealing.
-                try
-                {
-                    var context = CreateVerifiedContext(
-                        FormattableString.Invariant($"{host}:{_options.LdapPort}"),
-                        ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing);
+                //
+                // The PORT each mechanism targets is decided by LdapChannelPorts,
+                // not taken from configuration directly, because the two are not
+                // independent: 389 upgrades in band and is not listening for a TLS
+                // ClientHello, while 636 is TLS from the first byte and cannot
+                // answer an LDAP BindRequest. Pairing them wrongly produces
+                // 0x8007203A "the server is not operational" no matter which
+                // directory is on the other end -- a self-inflicted failure that
+                // was read as a directory problem for several rounds.
+                var sealedPort = LdapChannelPorts.SealedPortFor(_options.LdapPort);
+                var sslPort = LdapChannelPorts.SslPortFor(_options.LdapPort);
 
-                    LogSecureChannelEstablished(Logger, "sign-and-seal", host, _options.LdapPort, null);
-                    return context;
+                Exception? sealingFailure = null;
+
+                if (sealedPort is null)
+                {
+                    // LdapPort is the LDAPS port, so a sealed bind has nowhere
+                    // valid to go. Logged rather than passed over silently: without
+                    // it, EventId 108 reporting "SSL" instead of "sign-and-seal"
+                    // looks like sealing was tried and refused by the directory.
+                    LogSealedBindSkippedForLdapsPort(Logger, host, _options.LdapPort, null);
                 }
-                catch (Exception sealingFailure)
+                else
                 {
-                    // LDAPS runs on its own port. When the configured port is the
-                    // plaintext default the operator has not chosen one, so the
-                    // well-known 636 is used; any other value is taken as
-                    // deliberate and left alone.
-                    var sslPort = _options.LdapPort == PlaintextLdapPort ? SecureLdapPort : _options.LdapPort;
-
-                    LogSealingUnavailable(Logger, host, sslPort, sealingFailure);
-
                     try
                     {
                         var context = CreateVerifiedContext(
-                            FormattableString.Invariant($"{host}:{sslPort}"),
-                            ContextOptions.Negotiate | ContextOptions.SecureSocketLayer);
+                            FormattableString.Invariant($"{host}:{sealedPort.Value}"),
+                            ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing);
 
-                        LogSecureChannelEstablished(Logger, "SSL", host, sslPort, null);
+                        LogSecureChannelEstablished(Logger, "sign-and-seal", host, sealedPort.Value, null);
                         return context;
                     }
-                    catch (Exception sslFailure)
+                    catch (Exception failure)
                     {
-                        // Both channels reported, because "which one failed and
-                        // how" is the whole diagnostic value here.
-                        throw new InvalidOperationException(
-                            "Failed to create PrincipalContext over either a signed-and-sealed or an SSL channel.",
-                            new AggregateException(sealingFailure, sslFailure));
+                        sealingFailure = failure;
+                        LogSealingUnavailable(Logger, host, sslPort, failure);
                     }
+                }
+
+                try
+                {
+                    var context = CreateVerifiedContext(
+                        FormattableString.Invariant($"{host}:{sslPort}"),
+                        ContextOptions.Negotiate | ContextOptions.SecureSocketLayer);
+
+                    LogSecureChannelEstablished(Logger, "SSL", host, sslPort, null);
+                    return context;
+                }
+                catch (Exception sslFailure)
+                {
+                    // Both channels reported when both ran, because "which one
+                    // failed and how" is the whole diagnostic value here. When the
+                    // sealed attempt was skipped there is only one real failure to
+                    // report, and inventing a second would misrepresent it.
+                    if (sealingFailure is null)
+                    {
+                        throw new InvalidOperationException(
+                            FormattableString.Invariant(
+                                $"Failed to create PrincipalContext over an SSL channel to {host}:{sslPort}. A signed-and-sealed bind was not attempted because LdapPort is the LDAPS port."),
+                            sslFailure);
+                    }
+
+                    throw new InvalidOperationException(
+                        "Failed to create PrincipalContext over either a signed-and-sealed or an SSL channel.",
+                        new AggregateException(sealingFailure, sslFailure));
                 }
             }
         }
@@ -780,12 +823,6 @@ namespace Unosquare.PassCore.PasswordProvider
             }
         }
 
-
-        /// <summary>The standard plaintext LDAP port; the default for <c>LdapPort</c>.</summary>
-        private const int PlaintextLdapPort = 389;
-
-        /// <summary>The standard LDAPS port, used when falling back to SSL from an unset <c>LdapPort</c>.</summary>
-        private const int SecureLdapPort = 636;
 
         /// <summary>
         /// Builds a <see cref="PrincipalContext"/> and forces it to bind.
