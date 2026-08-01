@@ -356,12 +356,23 @@ jobs:
           echo "=== smb.conf AFTER ==="
           podman exec samba-ad cat /etc/samba/smb.conf
 
-          # A restart is required: the AD DC reads these at startup and
-          # smbcontrol's reload does not cover the LDAP server's auth policy.
-          # The data survives -- this restarts the process tree in an existing
-          # container, it does not re-provision -- so the seeded users and groups
-          # are still there afterwards.
-          podman restart samba-ad
+          # supervisorctl, NOT podman restart. This is the difference between the
+          # experiment running and only appearing to.
+          #
+          # `podman restart` re-runs the image's ENTRYPOINT, which regenerates
+          # /etc/samba/smb.conf from scratch -- discarding the edits above before
+          # Samba ever reads them. Earlier rounds did exactly that and were
+          # misread badly: the smb.conf dump showed the settings present (it runs
+          # before the restart), the run then proceeded with Samba's DEFAULTS, and
+          # "allow_sasl_over_tls did not fix the password change" was recorded as
+          # a result when the relaxation had never been in force at all. The empty
+          # auth logs had the same cause -- log level was still 1.
+          #
+          # supervisord owns the samba process (`[program:samba]`,
+          # `/usr/sbin/samba -i`), so restarting just that program re-execs the
+          # daemon against the smb.conf on disk without invoking the entrypoint.
+          # The testparm block below is what proves which of the two happened.
+          podman exec samba-ad supervisorctl restart samba
 
           echo "Waiting for Samba to come back after the restart..."
           READY=0
@@ -371,13 +382,19 @@ jobs:
               podman logs samba-ad | tail -50
               exit 1
             fi
-            if podman exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
-                 -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+            # supervisorctl reporting RUNNING is the real signal now: ldbsearch
+            # alone reads sam.ldb straight off disk and answers even while the
+            # daemon is down, so on its own it would gate on nothing.
+            if podman exec samba-ad supervisorctl status samba 2>/dev/null | grep -q RUNNING \
+               && podman exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
+                    -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
               READY=1
               break
             fi
             sleep 2
           done
+
+          podman exec samba-ad supervisorctl status || true
 
           if [ $READY -ne 1 ]; then
             echo "ERROR: Samba did not become ready within 60s of the restart."
@@ -412,9 +429,9 @@ jobs:
           podman exec samba-ad samba-tool user list | sort | tr '\n' ' '
           echo
 
-          # The container's address can change across a restart, and the static
-          # route on the Windows side is built from the file written when the
-          # container first started. Rewrite it so the route targets reality.
+          # The container itself is no longer restarted, so its address should be
+          # unchanged -- this re-read is cheap insurance rather than a necessity,
+          # and it keeps the route correct if that ever stops being true.
           NETWORK_FILE="$(wslpath '${{ github.workspace }}')/podman-network.txt"
           PODMAN_SUBNET="$(podman network inspect podman --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)"
           if [ -z "${PODMAN_SUBNET}" ]; then
