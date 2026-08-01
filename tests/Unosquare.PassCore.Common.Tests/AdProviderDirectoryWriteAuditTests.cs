@@ -373,6 +373,48 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     /// <summary>
+    /// A deployment running <c>UseAutomaticContext: false</c> must be told at
+    /// startup that the password change is unverified on that path, rather than
+    /// finding out when an end user receives a generic directory error.
+    ///
+    /// <para>Both the firing and the non-firing case are asserted, because the
+    /// scoping is the whole point: the warning must not reach the automatic-context
+    /// path, which is what most deployments run and where nothing is known to be
+    /// wrong. Warning every deployment would make it noise and get it suppressed.</para>
+    ///
+    /// <para>Audited from source rather than exercised, for the reason in the class
+    /// summary — the provider cannot be loaded here at all. The condition is a
+    /// single guarded call, so its shape is worth exactly as much as running it
+    /// would be.</para>
+    /// </summary>
+    [Fact]
+    public void ExplicitBindDeployments_AreWarnedAtStartup_AndAutomaticContextIsNot()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var constructorBody = ExtractMethodBody(code, "public PasswordChangeProvider(");
+
+        // Fires on the explicit-bind path...
+        Assert.Matches(
+            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)\s*"
+            + @"LogExplicitBindPasswordChangeUnverified\s*\(",
+            constructorBody);
+
+        // ...and the guard is negated, so it cannot also fire on the automatic
+        // path. A call without "!" would warn exactly the deployments that have no
+        // reported problem.
+        Assert.DoesNotMatch(
+            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)\s*"
+            + @"LogExplicitBindPasswordChangeUnverified\s*\(",
+            constructorBody);
+
+        // Warning, not a throw: reads, credential verification, group membership
+        // and policy evaluation all work on this path, so startup must succeed.
+        var declaration = code[code.IndexOf("LogExplicitBindPasswordChangeUnverified =", StringComparison.Ordinal)..];
+        Assert.Contains("LogLevel.Warning", declaration[..200], StringComparison.Ordinal);
+        Assert.Contains("EventId(115", declaration[..300], StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// EventId 105 described a group-enumeration failure as an expected fallback,
     /// logged at Debug. That is no longer what happens, so the delegate is gone —
     /// and the ID must stay retired rather than being recycled for something else.

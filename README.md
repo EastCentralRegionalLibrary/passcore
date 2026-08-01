@@ -128,6 +128,22 @@ The most relevant configuration entries are shown below. Make sure you make your
 
 > **Upgrading from a pre-unified-error-routing build?** See [`docs/UPGRADING-error-routing.md`](docs/UPGRADING-error-routing.md) for the behavior changes and the two situations that need a config change. For how a directory failure maps to what the user sees (and the rules for adding a provider), see [`docs/error-routing-matrix.md`](docs/error-routing-matrix.md).
 
+> ### ⚠️ AD provider: `UseAutomaticContext: false` and password changes
+>
+> **This affects the AD provider configured with `UseAutomaticContext: false` only.** It does **not** affect the default `true`, and it does not affect the LDAP provider.
+>
+> On that configuration the **password change itself is not verified to work**. Against a live directory it fails with `0x80070547` (`ERROR_CANT_ACCESS_DOMAIN_INFO`), and the user sees a generic message:
+>
+> > The directory service could not complete the password change request
+>
+> (`LdapProblem`, error code 8.) PassCore logs a warning about this at startup, EventId 115.
+>
+> **Everything else on that path is verified and works** — binding, credential verification, group membership including nested and primary groups, the domain minimum-length lookup, policy evaluation and error routing are all covered end-to-end against a live directory. It is the change operation specifically that is in question.
+>
+> **The workaround** is to run PassCore on a domain-joined host with `UseAutomaticContext: true`, which acquires its directory context by a different path.
+>
+> **The cause is not identified.** These have each been tested against a live directory and ruled out, so they are not worth retrying: transport reachability (all of 389, 636, 88, 464, 3268 confirmed reachable), certificate trust (LDAPS binds succeed), channel protection (the context is established over sign-and-seal, confirmed from the logs), Kerberos realm mapping, and `LdapPort` selection — setting `636` prevents any context being established at all and is not a workaround. Full detail and evidence: [`TESTING.md`](TESTING.md), "The AD password change on the explicit-bind path".
+
 - To enable reCAPTCHA
   1. Find the `PrivateKey` entry and enter your private key within double quotes (`"`)
   2. Find the `SiteKey` entry and enter your Site Key within double quotes (`"`)
@@ -189,7 +205,7 @@ icacls "<logfolder>/" /grant "IIS AppPool\<passcoreAppPoolAccount>:M" /t
 ### LDAP Support
 
 - If your users are having trouble changing passwords as in issues #8 or #9 : try configuring the section `PasswordChangeOptions` in the `/appsettings.json` file. Here are some guidelines:
-  1. Ensure `UseAutomaticContext` is set to `false`
+  1. Ensure `UseAutomaticContext` is set to `false` — **but read the warning above first if you are on the AD provider.** On that provider `false` is the configuration whose password change is unverified, so switching to it as a fix for a *different* problem can replace one failure with another. It is the right move for the LDAP provider, and for the AD provider only when the host cannot be domain-joined.
   1. Ensure `LdapUsername` is set to an AD user with enough permissions to reset user passwords
   1. Ensure `LdapPassword` is set to the correct password for the admin user mentioned above
   1. User @gadams65 suggests the following: Use the FQDN of your LDAP host. Enter the LDAP username without any other prefix or suffix such as `domain\\` or `@domain`. Only the username.

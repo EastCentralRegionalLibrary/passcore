@@ -47,6 +47,32 @@ namespace Unosquare.PassCore.PasswordProvider
                 "administrative reset with. Configure explicit LdapUsername/LdapPassword bind " +
                 "credentials (UseAutomaticContext=false) if the fallback is wanted.");
 
+        // Warning, not error, and deliberately so. Everything else on this path
+        // works and is covered end-to-end against a live directory: reads, binds,
+        // credential verification, group membership, minPwdLength, policy
+        // evaluation and error routing. Refusing to start would break deployments
+        // using all of that, and would claim more than the evidence supports.
+        //
+        // What is NOT claimed here is a cause. The change fails with 0x80070547
+        // and the reason is unidentified; reachability, certificate trust,
+        // channel protection, Kerberos realm mapping and port selection have each
+        // been tested and ruled out. The message says what is affected and what to
+        // do, not why.
+        private static readonly Action<ILogger, Exception?> LogExplicitBindPasswordChangeUnverified =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(115, nameof(LogExplicitBindPasswordChangeUnverified)),
+                "UseAutomaticContext is false, so password changes are performed over an " +
+                "explicitly-bound context. THE PASSWORD CHANGE ITSELF IS NOT VERIFIED TO WORK ON " +
+                "THIS PATH: against a live directory it fails with 0x80070547 " +
+                "(ERROR_CANT_ACCESS_DOMAIN_INFO), and the user receives a generic " +
+                "\"the directory service could not complete the password change request\" error. " +
+                "Everything else on this path is verified and unaffected - reads, credential " +
+                "verification, group membership and policy evaluation all work. If password " +
+                "changes fail this way, run PassCore on a domain-joined host with " +
+                "UseAutomaticContext=true, which acquires its context by a different path. " +
+                "See TESTING.md, \"The AD password change on the explicit-bind path\".");
+
         // Records which channel the service-account context actually got. With a
         // fallback in the path, "it worked" is not enough information: an
         // operator debugging a password-change failure needs to know whether the
@@ -91,6 +117,13 @@ namespace Unosquare.PassCore.PasswordProvider
 
             if (_options.AllowAdministrativeReset && _options.UseAutomaticContext)
                 LogAdminResetIgnoredInAutomaticContext(Logger, null);
+
+            // Told to the operator at startup rather than to the user at failure.
+            // Without this the first sign is an end user receiving a generic
+            // directory error, which reads as a transient outage rather than a
+            // configuration that may never have been able to change a password.
+            if (!_options.UseAutomaticContext)
+                LogExplicitBindPasswordChangeUnverified(Logger, null);
         }
 
         private static void ValidateOptions(PasswordChangeOptions opts)

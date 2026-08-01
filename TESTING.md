@@ -180,15 +180,22 @@ context uses, because a probe on a different channel answers a different
 question. The DN comes from rootDSE's `configurationNamingContext` rather than
 being constructed, for the same reason `AdsiPath` reads `defaultNamingContext`.
 
-How to read it:
+How it was read at the time — **and note the first row's reading was wrong**, see
+below:
 
-| `dc.example.com` | `example.com` | Reading |
+| `dc.example.com` | `example.com` | Reading as written |
 | --- | --- | --- |
-| succeeds | fails | **Target naming.** Both failures share a root cause: NTLM derives its target name from the server string, and the realm name has no SPN. A Kerberos realm mapping becomes well motivated. |
+| succeeds | fails | ~~Target naming, and both failures share a root cause.~~ Half right: it *is* target naming, but it does not make the causes shared. |
 | fails | fails | **Credentials or permissions, not naming.** `EXAMPLE\Administrator` should be able to read this, so the bind itself or Samba's provisioning is the suspect. |
-| succeeds | succeeds | **Hypothesis dead.** 1351 comes from something else, and `LdapPort: 636` regains standing as the next thing to try. |
+| succeeds | succeeds | **1351 comes from something else.** |
 
-#### Result: target naming (the first row)
+The first row's reading did not survive contact with the result, and the mistake
+is worth naming: it assumed the change operation binds by the same name that
+failed. It does not. Reading a table row without checking which name the affected
+code path actually uses is how a probe designed to settle a question ends up
+confirming a prior instead.
+
+#### Result: target naming — which explains `GetForest()`, not Test 1
 
 ```
 1. rootDSE configurationNamingContext: CN=Configuration,DC=example,DC=com
@@ -316,8 +323,22 @@ SSL     (Negotiate|SecureSocketLayer) on dc.example.com:636
 ```
 
 EventId 108 never fired — no channel was ever established — and the run died at
-the first assertion, the `minPwdLength` read that passes on 389. The port is
-back to 389 and this hypothesis is closed.
+the first assertion, the `minPwdLength` read that passes on 389.
+
+**Retested, deliberately, and the result is identical.** The first attempt was
+discounted because the run died before Test 1 for a reason unrelated to the
+hypothesis, and because Leg A was separately blocking the job at the time. Both
+of those are fixed, so 636 was set again to see whether Test 1 would finally
+execute under it. It did not: same `0x8007203A`, same `0x80072028`, EventId 108
+absent again, dead at `minPwdLength` again.
+
+That closes the hypothesis rather than leaving it unproven. **The port cannot be
+tested this way at all**, because `LdapPort` governs both the context-acquisition
+port and the port in the `DirectoryEntry` path — and 636 breaks acquisition
+before any password change is attempted. If the SSL fallback cannot carry a
+*context*, it cannot carry a password change either. The port is back to 389, and
+the explicit-bind limitation is a known limitation with an **unidentified cause**
+rather than one with an untried fix.
 
 The second error is the part worth keeping. **That was the first time the SSL
 fallback in `AcquirePrincipalContext` has ever been exercised**, because the
