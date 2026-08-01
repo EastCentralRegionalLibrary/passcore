@@ -338,11 +338,17 @@ jobs:
           # Inserted directly after [global] with awk rather than appended, because
           # appending would land the settings in whatever section happens to be
           # last and they would be silently ignored.
+          # "log level = 3" ALONE IS NOT ENOUGH and the first attempt proved it:
+          # it produced no bind logging at all, because LDAP bind attempts are
+          # recorded by Samba's auth_audit debug class rather than by the global
+          # level. Without the per-class levels the dump below shows only daemon
+          # startup lines, which is an absence of instrumentation and must not be
+          # mistaken for an absence of bind attempts.
           podman exec samba-ad sh -c '
             awk "/^\[global\]/{
                    print;
                    print \"\tldap server require strong auth = allow_sasl_over_tls\";
-                   print \"\tlog level = 3\";
+                   print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
@@ -1555,7 +1561,17 @@ jobs:
         if: always()
         shell: wsl-bash {0}
         run: |
-          echo "=== container stdout ==="
+          # The AD DC daemon runs in the foreground in this image and does not
+          # write a log.samba file, so its auth_audit output arrives on container
+          # stdout rather than under /var/log/samba. Both are dumped because which
+          # one carries the material depends on how the image starts samba, and
+          # guessing wrong once already cost a round.
+          echo "=== container stdout: auth / bind lines ==="
+          podman logs samba-ad 2>&1 \
+            | grep -iE "auth event|authentication|bind|sasl|strong auth|ldaps|gensec|kpasswd|samr" \
+            | tail -200 || echo "(no auth or bind lines on stdout)"
+
+          echo "=== container stdout: full ==="
           podman logs samba-ad || true
 
           # At log level 3 the interesting material -- bind attempts and the
