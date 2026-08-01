@@ -1616,23 +1616,13 @@ jobs:
           # to stdout, so dumping only `podman logs` would show none of it. This is
           # the server-side view every round of the password-change investigation
           # has been missing.
-          # THIRD attempt at locating the AD DC's log, and this one stops guessing.
-          # /var/log/samba holds only smbd and winbindd -- there is no log.samba --
-          # and container stdout carries only supervisord and the provisioning
-          # script. The image runs samba under supervisord, so its output goes
-          # wherever supervisord was told to put it. Enumerate rather than assume.
-          echo "=== how samba is started, and where its output goes ==="
-          podman exec samba-ad sh -c '
-            for f in /etc/supervisor/supervisord.conf /etc/supervisor/conf.d/*.conf /etc/supervisord.conf; do
-              [ -f "$f" ] || continue
-              echo "--- $f ---"
-              cat "$f"
-            done' 2>/dev/null || true
-
-          echo "=== every log file in the container ==="
-          podman exec samba-ad sh -c \
-            'find /var/log /var/lib/samba -type f \( -name "*.log" -o -name "log.*" \) -size +0 2>/dev/null | head -40' || true
-
+          # The AD DC log location was established by enumeration and is recorded
+          # in TESTING.md: supervisord runs "/usr/sbin/samba -i", which stays in
+          # the foreground and writes to stderr, so the log is
+          # /var/log/supervisor/samba-stderr---supervisor-<random>.log. The
+          # supervisord-config and find dumps that established that are gone --
+          # they answered their question, and everything printed here competes for
+          # a job-log tail that is only a few thousand lines deep.
           echo "=== /var/log/samba ==="
           podman exec samba-ad sh -c 'ls -la /var/log/samba/ 2>/dev/null' || true
           podman exec samba-ad sh -c '
@@ -1661,18 +1651,18 @@ jobs:
           # account as the server saw it, and the result.
           echo "=== authentication events (one line per bind) ==="
           podman exec samba-ad sh -c \
-            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -80' \
+            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -40' \
             || echo "(none)"
 
           echo "=== authentication failures only ==="
           podman exec samba-ad sh -c \
             'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null \
-               | grep -v "NT_STATUS_OK" | tail -40' \
+               | grep -v "NT_STATUS_OK" | tail -20' \
             || echo "(none)"
 
           echo "=== AD DC log tail (samba -i via supervisord, stderr) ==="
           podman exec samba-ad sh -c \
-            'tail -120 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
+            'tail -40 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
             || echo "(no samba stderr log found)"
 
           # Bind-level detail, capped. Scoped to Samba's own logs -- an earlier
@@ -1682,7 +1672,7 @@ jobs:
           podman exec samba-ad sh -c '
             grep -hiE "ntlm_password_check|auth_check_password_recv|ntlmssp_server_auth_done|strong auth|simple bind" \
               /var/log/supervisor/samba-stderr*.log /var/log/samba/log.* 2>/dev/null \
-              | tail -60' \
+              | tail -25' \
             || echo "(nothing found)"
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
@@ -1700,8 +1690,8 @@ jobs:
           # scrolls away.
           Write-Host "=== Passcore warnings and errors ==="
           if (Test-Path $stdout) {
-              Get-Content $stdout | Select-String -Pattern '^(warn|fail|crit):' -Context 0,6 |
-                Select-Object -Last 60 | Out-String | Write-Host
+              Get-Content $stdout | Select-String -Pattern '^(warn|fail|crit):' -Context 0,4 |
+                Select-Object -Last 25 | Out-String | Write-Host
           }
 
           # Capped. passcore.log accumulates across every leg's restart at Debug
@@ -1711,10 +1701,10 @@ jobs:
           # primary evidence to make room for supporting evidence is the wrong
           # trade, and it was one I introduced.
           Write-Host "=== Passcore Standard Output (tail) ==="
-          if (Test-Path $stdout) { Get-Content $stdout -Tail 250 } else { Write-Host "(no $stdout)" }
+          if (Test-Path $stdout) { Get-Content $stdout -Tail 120 } else { Write-Host "(no $stdout)" }
 
-          Write-Host "=== Passcore Error Output ==="
-          if (Test-Path $stderr) { Get-Content $stderr } else { Write-Host "(no $stderr)" }
+          Write-Host "=== Passcore Error Output (tail) ==="
+          if (Test-Path $stderr) { Get-Content $stderr -Tail 60 } else { Write-Host "(no $stderr)" }
 
       - name: Stop Passcore
         if: always()
