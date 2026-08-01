@@ -218,10 +218,65 @@ cannot authenticate. This is the same root cause already documented for
 remaining failures are the paths that build their *own* `DirectoryContext` around
 the domain or forest name, where configuration cannot reach.
 
-That makes a Kerberos realm mapping the interesting next test: with a KDC mapped
-for `EXAMPLE.COM`, the locator resolves the realm to a DC before requesting a
-ticket, so `ldap/dc.example.com` becomes the SPN in play even when the caller
-names the realm.
+That made a Kerberos realm mapping the interesting next test. **It was tested and
+it does not work — do not retry it.**
+
+#### The ksetup realm mapping, tested and rejected
+
+The reasoning was that with a KDC mapped for `EXAMPLE.COM`, the locator would
+resolve the realm to a DC before requesting a ticket, so `ldap/dc.example.com`
+would become the SPN in play even when the caller names the realm. **That
+reasoning was wrong**, and the run says so plainly.
+
+The mappings themselves took. `ksetup` before and after:
+
+```
+BEFORE: Machine is not configured to log on to an external KDC.  Probably a workgroup member
+        No user mappings defined.
+
+AFTER:  EXAMPLE.COM:
+            kdc = dc.example.com
+            kpasswd = dc.example.com
+```
+
+And the Kerberos bind genuinely **moved** — it no longer fails before reaching
+the wire:
+
+```
+before ksetup:  Kerberos bind FAILED: "A local error occurred."
+after ksetup:   Kerberos bind FAILED: LdapException: "The supplied credential is invalid."
+```
+
+"A local error occurred" is the client failing with no realm mapping. "The
+supplied credential is invalid" is an actual authentication exchange being
+refused. So the mappings work and Kerberos is live — and it still cannot
+authenticate against the realm name.
+
+**Why, and why no mapping can fix it.** A host-to-realm map tells the client
+which *realm* a host belongs to. It does not rewrite the *service principal* the
+client asks for. Naming `example.com` still requests `ldap/example.com@EXAMPLE.COM`,
+and Samba registers `ldap/dc.example.com` — not that. The KDC has no such
+principal, so the ticket request fails, which surfaces as invalid credentials.
+Note it is the identical error the NTLM sealed bind to `example.com:389` returns:
+Kerberos reaches the same wall by the same route.
+
+Nothing downstream moved. The Configuration NC read via `example.com` still
+failed with `0x8007052E`, `Forest.GetForest()` still failed with the same error,
+and Test 1 still failed. `Domain.GetCurrentDomain()` threw *"Current security
+context is not associated with an Active Directory domain or forest"*, which
+closes a separate question empirically: **realm mapping is not domain
+membership**, so a working Kerberos configuration would still not make
+`UseAutomaticContext: true` viable on this runner.
+
+The experiment was reverted. The only remaining ways through are a Samba-side
+change registering `ldap/example.com`, or not naming the realm at all — which is
+what `LdapHostnames` already does. Neither is reachable from the caller's
+configuration for the paths that build their own `DirectoryContext`.
+
+One hazard that did **not** materialise, worth recording since it was expected:
+a live-but-failing Kerberos did not make Negotiate stop falling back. The sealed
+bind to `dc.example.com` still succeeded, `minPwdLength` still read, and every
+group leg returned its usual code. There was no broad red.
 
 This is recorded here because the obvious explanations have been tested and
 are not the cause. Anyone picking it up should start after this list, not
