@@ -664,6 +664,7 @@ jobs:
                   "EXAMPLE\Administrator",
                   "AdminPassword123!",
                   $authTypes)
+              $rootDse.RefreshCache(@("configurationNamingContext"))
               $configurationNc = $rootDse.Properties["configurationNamingContext"].Value
               Write-Host "  1. rootDSE configurationNamingContext: $configurationNc"
               $rootDse.Dispose()
@@ -685,7 +686,14 @@ jobs:
                           "EXAMPLE\Administrator",
                           "AdminPassword123!",
                           $authTypes)
-                      # Accessing a property is what actually binds.
+                      # RefreshCache, not a property read, and the difference is the
+                      # whole value of this probe. Reading $entry.Properties[...] goes
+                      # through PowerShell's ADSI adapter, which on a failed bind
+                      # yields a null collection -- so the failure surfaces as
+                      # "Cannot index into a null array" and the directory's actual
+                      # error is lost. RefreshCache calls straight through and throws
+                      # the COMException, whose HRESULT is the answer being sought.
+                      $entry.RefreshCache(@("distinguishedName"))
                       $dn = $entry.Properties["distinguishedName"].Value
                       Write-Host "  ${probeIndex}. Configuration NC via ${target}: SUCCEEDED -- read '$dn'"
                       $entry.Dispose()
@@ -1430,15 +1438,20 @@ jobs:
             # /T because the pid is cmd.exe's and the app is its child; killing
             # the shell alone would leave the app holding port 5000.
             #
-            # No "2>&1": taskkill writes to stderr when the pid is already gone,
-            # and piping that into PowerShell turns it into an error record that
-            # fails the step -- which would let teardown fail a run whose tests
-            # all passed. Teardown of an already-dead process is a success here,
-            # so the exit code is reset rather than propagated.
+            # Run through cmd.exe with stderr folded into stdout THERE, so nothing
+            # taskkill writes reaches PowerShell's error stream. Teardown must not
+            # be able to fail a run whose tests all passed, and there are two ways
+            # it could: an already-dead pid, and a PARTIAL kill -- "The operation
+            # attempted is not supported" for one member of the tree -- which has
+            # been observed on this runner and did fail a step elsewhere.
+            # tests/samba-ad/restart-passcore.ps1 carries the same handling.
             Write-Host "Stopping Passcore process tree rooted at PID $passcorepid..."
-            & taskkill /F /T /PID $passcorepid
-            Write-Host "taskkill exit code: $LASTEXITCODE"
-            $LASTEXITCODE = 0
+            $taskkillOutput = cmd /c "taskkill /F /T /PID $passcorepid 2>&1"
+            $taskkillExit = $LASTEXITCODE
+            $taskkillOutput | ForEach-Object { Write-Host "  $_" }
+            Write-Host "taskkill exit code: $taskkillExit (advisory; teardown never fails the run)"
+            $global:LASTEXITCODE = 0
+            $Error.Clear()
           }
 
       - name: Cleanup Samba AD DC container
