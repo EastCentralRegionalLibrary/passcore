@@ -187,6 +187,42 @@ How to read it:
 | fails | fails | **Credentials or permissions, not naming.** `EXAMPLE\Administrator` should be able to read this, so the bind itself or Samba's provisioning is the suspect. |
 | succeeds | succeeds | **Hypothesis dead.** 1351 comes from something else, and `LdapPort: 636` regains standing as the next thing to try. |
 
+#### Result: target naming (the first row)
+
+```
+1. rootDSE configurationNamingContext: CN=Configuration,DC=example,DC=com
+2. Configuration NC via dc.example.com: SUCCEEDED -- read 'CN=Configuration,DC=example,DC=com'
+3. Configuration NC via example.com:   FAILED
+     inner: COMException: The user name or password is incorrect.
+     inner HRESULT: 0x8007052E
+```
+
+The Configuration NC is **readable with these credentials** — so this is not a
+permissions problem, and not a Samba provisioning problem. Readability depends
+entirely on **which name is used to bind**.
+
+The inner code is the part worth noting: `0x8007052E` is 1326,
+`ERROR_LOGON_FAILURE` — **the same code `Forest.GetForest()` fails with.** The
+earlier objection to the shared-root-cause hypothesis was that the two failures
+carried different codes (1326 versus 1351). They do not. Reading the Configuration
+NC *by the realm name* fails with exactly 1326, which is what `GetForest()` does
+internally, and 1351 is the wrapper ADSI puts on it when the read happens inside
+`SDSUtils.ChangePassword`. The hypothesis now has direct evidence rather than
+plausibility.
+
+The mechanism is target naming: a signed-and-sealed bind derives its service
+principal from the server string it was given, Samba registers
+`ldap/dc.example.com` and not `ldap/example.com`, and a name with no SPN behind it
+cannot authenticate. This is the same root cause already documented for
+`LdapHostnames` — and `LdapHostnames` was pointed at the DC to work around it. The
+remaining failures are the paths that build their *own* `DirectoryContext` around
+the domain or forest name, where configuration cannot reach.
+
+That makes a Kerberos realm mapping the interesting next test: with a KDC mapped
+for `EXAMPLE.COM`, the locator resolves the realm to a DC before requesting a
+ticket, so `ldap/dc.example.com` becomes the SPN in play even when the caller
+names the realm.
+
 This is recorded here because the obvious explanations have been tested and
 are not the cause. Anyone picking it up should start after this list, not
 before it.
