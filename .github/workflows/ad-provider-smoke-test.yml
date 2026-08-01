@@ -349,6 +349,7 @@ jobs:
                    print;
                    print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   print \"\tlogging = file\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
@@ -1579,6 +1580,23 @@ jobs:
           # to stdout, so dumping only `podman logs` would show none of it. This is
           # the server-side view every round of the password-change investigation
           # has been missing.
+          # THIRD attempt at locating the AD DC's log, and this one stops guessing.
+          # /var/log/samba holds only smbd and winbindd -- there is no log.samba --
+          # and container stdout carries only supervisord and the provisioning
+          # script. The image runs samba under supervisord, so its output goes
+          # wherever supervisord was told to put it. Enumerate rather than assume.
+          echo "=== how samba is started, and where its output goes ==="
+          podman exec samba-ad sh -c '
+            for f in /etc/supervisor/supervisord.conf /etc/supervisor/conf.d/*.conf /etc/supervisord.conf; do
+              [ -f "$f" ] || continue
+              echo "--- $f ---"
+              cat "$f"
+            done' 2>/dev/null || true
+
+          echo "=== every log file in the container ==="
+          podman exec samba-ad sh -c \
+            'find /var/log /var/lib/samba -type f \( -name "*.log" -o -name "log.*" \) -size +0 2>/dev/null | head -40' || true
+
           echo "=== /var/log/samba ==="
           podman exec samba-ad sh -c 'ls -la /var/log/samba/ 2>/dev/null' || true
           podman exec samba-ad sh -c '
@@ -1592,10 +1610,13 @@ jobs:
           # strong-auth relaxation took effect, the "strong auth" refusals should
           # be absent; if ADSI never reached LDAPS at all, there will be no bind
           # attempt on 636 to find here either. Both are answers.
-          echo "=== bind / auth lines ==="
+          # Searched across every log directory rather than just /var/log/samba,
+          # for the same reason as above.
+          echo "=== bind / auth lines, anywhere ==="
           podman exec samba-ad sh -c '
-            grep -riE "bind|strong auth|sasl|TLS|ldaps|kpasswd|SAMR|ChangePassword" \
-              /var/log/samba/ 2>/dev/null | tail -200' || true
+            grep -riE "auth event|bind|strong auth|sasl|gensec|ldaps|kpasswd|SAMR|ChangePassword" \
+              /var/log/ 2>/dev/null | grep -viE "unix_http_server|ntpd|dnsupdate" | tail -200' \
+            || echo "(nothing found)"
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
       # .NET buffers it, and Stop-Process -Force terminates without flushing, so
