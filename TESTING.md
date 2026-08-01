@@ -403,31 +403,50 @@ auth_check_password_recv: sam authentication for user [\testuser@example.com]
   FAILED with error NT_STATUS_NOT_FOUND
 ```
 
-**This overturns the transport theory the investigation was built on.** ADSI is
-not exhausting LDAPS, then Kerberos, then SMB and giving up. It opens a direct
-connection from the runner to the container's own address on **plain LDAP 389**
-and binds with **NTLMSSP**, passing the account as `testuser@example.com` with an
-**empty domain**. Samba's NTLM stack cannot resolve a bare UPN with no domain, so
-it answers `NT_STATUS_NOT_FOUND` — which is not a password failure and not a
-permissions failure, but a name it cannot look up.
+**Correction to a first reading of this data.** The `NT_STATUS_NOT_FOUND` binds
+were initially reported as ADSI's password-change connection failing on username
+form. **That was wrong**, and the ordered sequence shows why. Every run produces
+this pattern, per permitted account:
 
-Two details worth keeping:
+```
+22:48:57.750  Kerberos KDC,ENC-TS Pre-auth   testuser@example.com   NT_STATUS_OK
+22:48:58.110  Kerberos KDC,ENC-TS Pre-auth   testuser@example.com   NT_STATUS_WRONG_PASSWORD
+22:48:58.119  LDAP,NTLMSSP                   testuser@example.com   NT_STATUS_NOT_FOUND
+```
 
-- **Kerberos pre-authentication for the same account, in the same run, succeeds**
-  (`NT_STATUS_OK`, `aes256-cts-hmac-sha1-96`). So the UPN form is fine for
-  Kerberos and only fails for NTLM. That is consistent with the earlier finding
-  that Kerberos here authenticates against `dc.example.com` and not the realm
-  name.
-- **The connection reaches `10.88.0.2:389` directly**, which is the container's
-  own address — so the static route added for reachability is what carries it.
-  Without that route this bind would have failed as a timeout instead, and looked
-  like something else entirely.
+Every single `NOT_FOUND` is preceded ~9ms earlier by a Kerberos
+`WRONG_PASSWORD` for the same account. Those pairs are the **`restore` cleanup**
+in the smoke test, which posts `NewPassword123!` as the current password — a
+password that was never set, because the change failed. Kerberos correctly
+rejects it, ADSI then retries over NTLM, and NTLM cannot resolve a bare UPN with
+an empty domain. It is an artefact of the test's own teardown, not the defect.
 
-This is strong evidence rather than a settled cause: the `NOT_FOUND` binds
-correlate with the permitted accounts and with Test 1's timestamp, but it has not
-yet been shown that this specific bind is the one whose failure surfaces as
-`0x80070547`. That is the next thing to establish, and it is now a narrow
-question about username form rather than a broad one about transports.
+**What the sequence actually establishes is stronger and simpler:**
+
+- The service account's sealed binds succeed — `LDAP,NTLMSSP` as
+  `[EXAMPLE][Administrator]`, `NT_STATUS_OK`, four per request.
+- The end user's credential verification succeeds — `Kerberos ENC-TS
+  Pre-authentication`, `NT_STATUS_OK`, immediately before the change is attempted.
+- **The password change itself produces no authentication event on the DC at
+  all.** Nothing between the successful verification and the failure. No LDAPS
+  bind, no `kpasswd`, no SAMR, no rejected bind of any kind.
+
+So `IADsUser::ChangePassword` is failing **before it authenticates to the
+directory** — which is exactly what `0x80070547` `ERROR_CANT_ACCESS_DOMAIN_INFO`
+describes: a client-side failure to read domain configuration, not a request the
+DC refused. The DC never sees the operation.
+
+That closes the transport question in the opposite direction from the one
+originally pursued. ADSI is not choosing badly among LDAPS, Kerberos and SMB and
+running out of options; it is not getting as far as choosing. Consistent with
+this, the SMB/445 line of enquiry is **not** worth pursuing: there is no
+fall-through to reach it.
+
+It also means the remaining explanation is a property of the client environment —
+a machine that is not domain-joined, with no computer account and no domain
+configuration to read — rather than of PassCore's code or of the directory. That
+matches the standing plan to verify against a real domain-joined host, and makes
+that verification the decisive test rather than one more CI round.
 
 ### A note on how long the instrumentation took
 
