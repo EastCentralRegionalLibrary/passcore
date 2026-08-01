@@ -374,6 +374,87 @@ What does follow is narrower and still true: **the SSL fallback has no coverage.
 It is reached only when the primary channel fails, which against a correctly
 paired 389 never happens, so nothing in CI exercises it either way.
 
+### Server-side evidence: what ADSI actually does
+
+Obtained once Samba's logging was genuinely in effect — see the note below on how
+long that took to achieve, because the failures along the way were all mine.
+
+Samba's authentication audit, one line per bind, across a full run:
+
+```
+33x Auth: [LDAP,NTLMSSP] user [EXAMPLE][Administrator] ... status [NT_STATUS_OK]
+ 4x Auth: [LDAP,simple bind/TLS] user [EXAMPLE][EXAMPLEAdministrator] ... status [NT_STATUS_OK]
+ 3x Auth: [Kerberos KDC,ENC-TS Pre-authentication] user [(null)][testuser@example.com] ... status [NT_STATUS_OK]
+ 3x Auth: [LDAP,NTLMSSP] user [][testuser@example.com] ... status [NT_STATUS_NOT_FOUND]
+```
+
+And the failing one in full:
+
+```
+Auth: [LDAP,NTLMSSP] user []\[testuser@example.com] with [NTLMv2]
+  status [NT_STATUS_NOT_FOUND]
+  workstation [runnervmhisb5]
+  remote host [ipv4:192.168.96.1:63475]   local host [ipv4:10.88.0.2:389]
+  clientDomain ""   clientAccount "testuser@example.com"
+
+ntlm_password_check: LM password and LMv2 failed for user testuser@example.com,
+  and NT MD4 password in LM field not permitted
+auth_check_password_recv: sam authentication for user [\testuser@example.com]
+  FAILED with error NT_STATUS_NOT_FOUND
+```
+
+**This overturns the transport theory the investigation was built on.** ADSI is
+not exhausting LDAPS, then Kerberos, then SMB and giving up. It opens a direct
+connection from the runner to the container's own address on **plain LDAP 389**
+and binds with **NTLMSSP**, passing the account as `testuser@example.com` with an
+**empty domain**. Samba's NTLM stack cannot resolve a bare UPN with no domain, so
+it answers `NT_STATUS_NOT_FOUND` — which is not a password failure and not a
+permissions failure, but a name it cannot look up.
+
+Two details worth keeping:
+
+- **Kerberos pre-authentication for the same account, in the same run, succeeds**
+  (`NT_STATUS_OK`, `aes256-cts-hmac-sha1-96`). So the UPN form is fine for
+  Kerberos and only fails for NTLM. That is consistent with the earlier finding
+  that Kerberos here authenticates against `dc.example.com` and not the realm
+  name.
+- **The connection reaches `10.88.0.2:389` directly**, which is the container's
+  own address — so the static route added for reachability is what carries it.
+  Without that route this bind would have failed as a timeout instead, and looked
+  like something else entirely.
+
+This is strong evidence rather than a settled cause: the `NOT_FOUND` binds
+correlate with the permitted accounts and with Test 1's timestamp, but it has not
+yet been shown that this specific bind is the one whose failure surfaces as
+`0x80070547`. That is the next thing to establish, and it is now a narrow
+question about username form rather than a broad one about transports.
+
+### A note on how long the instrumentation took
+
+Five rounds, and the honest summary is that four of them were wasted on my own
+mistakes rather than on the problem:
+
+1. `log level = 3` — wrong debug class; LDAP binds are logged by `auth_audit`.
+2. Added the `auth_audit` classes — right classes, but looked for the output in
+   `/var/log/samba`, where the AD DC does not write.
+3. Enumerated instead of guessing, which found it: supervisord runs
+   `/usr/sbin/samba -i`, so the log is
+   `/var/log/supervisor/samba-stderr---supervisor-<random>.log`.
+4. Added `logging = file`, which redirected output away from that working capture.
+5. Added a `testparm` check — **and it immediately showed the settings had never
+   applied at all.** `podman restart` re-runs the image entrypoint, which
+   regenerates `smb.conf` and discarded every edit before Samba read it. The
+   `smb.conf` dump looked correct each time because it runs *before* the restart.
+
+The fix was `supervisorctl restart samba`, which re-execs the daemon without the
+entrypoint. **The lesson is round 5's:** every earlier round verified the *file*
+and inferred the *process state* from it. Asking the running system what it
+believes — `testparm` — broke the loop in one attempt and should have been first.
+
+It also means two things recorded earlier were wrong and are retracted:
+`allow_sasl_over_tls` was never in force, so it is **untested**, not refuted; and
+the empty logs were never evidence about ADSI.
+
 ### What the smoke test asserts about it
 
 Test 1 asserts the password change **succeeds**, and it currently fails. The

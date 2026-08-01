@@ -1653,18 +1653,36 @@ jobs:
           # under /var/log/samba, and it is not on container stdout -- which is why
           # three earlier attempts found nothing and why an empty result was never
           # evidence about ADSI.
-          echo "=== AD DC log (samba -i via supervisord, stderr) ==="
+          # The AUTHENTICATION SUMMARY first, and capped hard. At log level 3 with
+          # the auth classes the raw log is tens of thousands of lines -- enough
+          # to push every other step out of the retrievable tail of the job log,
+          # which happened the first time it worked. These "Auth:" lines are the
+          # entire value: one per bind, naming the service, the mechanism, the
+          # account as the server saw it, and the result.
+          echo "=== authentication events (one line per bind) ==="
           podman exec samba-ad sh -c \
-            'tail -600 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
+            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -80' \
+            || echo "(none)"
+
+          echo "=== authentication failures only ==="
+          podman exec samba-ad sh -c \
+            'grep -h "^Auth: " /var/log/supervisor/samba-stderr*.log 2>/dev/null \
+               | grep -v "NT_STATUS_OK" | tail -40' \
+            || echo "(none)"
+
+          echo "=== AD DC log tail (samba -i via supervisord, stderr) ==="
+          podman exec samba-ad sh -c \
+            'tail -120 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
             || echo "(no samba stderr log found)"
 
-          # Scoped to Samba's own logs. An earlier version grepped all of /var/log
-          # and returned apt and dpkg install records, which buried the answer.
-          echo "=== bind / auth lines ==="
+          # Bind-level detail, capped. Scoped to Samba's own logs -- an earlier
+          # version grepped all of /var/log and returned apt and dpkg install
+          # records, which buried the answer under package lists.
+          echo "=== bind detail ==="
           podman exec samba-ad sh -c '
-            grep -hiE "auth event|bind|strong auth|sasl|gensec|ldaps|kpasswd|SAMR|ChangePassword" \
+            grep -hiE "ntlm_password_check|auth_check_password_recv|ntlmssp_server_auth_done|strong auth|simple bind" \
               /var/log/supervisor/samba-stderr*.log /var/log/samba/log.* 2>/dev/null \
-              | tail -200' \
+              | tail -60' \
             || echo "(nothing found)"
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
