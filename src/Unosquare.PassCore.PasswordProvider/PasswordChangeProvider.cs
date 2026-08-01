@@ -66,24 +66,37 @@ namespace Unosquare.PassCore.PasswordProvider
         // evaluation and error routing. Refusing to start would break deployments
         // using all of that, and would claim more than the evidence supports.
         //
-        // What is NOT claimed here is a cause. The change fails with 0x80070547
-        // and the reason is unidentified; reachability, certificate trust,
-        // channel protection, Kerberos realm mapping and port selection have each
-        // been tested and ruled out. The message says what is affected and what to
-        // do, not why.
+        // The wording is scoped tightly to what has actually been observed, which
+        // is narrower than the first version of this warning claimed. Server-side
+        // audit logging on the test DC shows the change producing NO
+        // authentication event at all -- no bind, no kpasswd, no SAMR -- while the
+        // service account's binds and the user's own credential verification both
+        // succeed against that same directory moments earlier. So ADSI fails
+        // before it contacts the directory, which is what ERROR_CANT_ACCESS_-
+        // DOMAIN_INFO says, and the observation was made on a host that is not
+        // domain-joined and therefore has no domain configuration to read.
+        //
+        // What is deliberately NOT claimed: that this affects a domain-joined host
+        // running UseAutomaticContext=false. That combination is untested, and
+        // saying otherwise would implicate deployments with no evidence against
+        // them. An operator on a domain-joined host who sees this warning and no
+        // failures should ignore it.
         private static readonly Action<ILogger, Exception?> LogExplicitBindPasswordChangeUnverified =
             LoggerMessage.Define(
                 LogLevel.Warning,
                 new EventId(115, nameof(LogExplicitBindPasswordChangeUnverified)),
                 "UseAutomaticContext is false, so password changes are performed over an " +
-                "explicitly-bound context. THE PASSWORD CHANGE ITSELF IS NOT VERIFIED TO WORK ON " +
-                "THIS PATH: against a live directory it fails with 0x80070547 " +
-                "(ERROR_CANT_ACCESS_DOMAIN_INFO), and the user receives a generic " +
+                "explicitly-bound context. On a host that is NOT domain-joined, that operation " +
+                "has been observed to fail with 0x80070547 (ERROR_CANT_ACCESS_DOMAIN_INFO): ADSI " +
+                "gives up before contacting the directory - the domain controller records no " +
+                "authentication attempt for it at all - and the user receives a generic " +
                 "\"the directory service could not complete the password change request\" error. " +
-                "Everything else on this path is verified and unaffected - reads, credential " +
-                "verification, group membership and policy evaluation all work. If password " +
-                "changes fail this way, run PassCore on a domain-joined host with " +
-                "UseAutomaticContext=true, which acquires its context by a different path. " +
+                "Everything else on this path is verified and unaffected: reads, credential " +
+                "verification, group membership, the minimum-length lookup and policy evaluation " +
+                "all work against the same directory. If password changes fail this way, run " +
+                "PassCore on a domain-joined host. Whether a domain-joined host with " +
+                "UseAutomaticContext=false is affected has not been tested - if you are on one " +
+                "and password changes work, this warning does not apply to you. " +
                 "See TESTING.md, \"The AD password change on the explicit-bind path\".");
 
         // Records which channel the service-account context actually got. With a

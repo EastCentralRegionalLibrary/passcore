@@ -128,10 +128,22 @@ artifacts when a job fails.
 
 ## The AD password change on the explicit-bind path
 
-**Status: open.** Against the containerised Samba AD DC, with
-`UseAutomaticContext: false` and explicit service-account credentials, reads
-work and the password change does not. `SDSUtils.ChangePassword` — the ADSI
-call behind `UserPrincipal.ChangePassword` — fails.
+**Status: open, but no longer mysterious.** Against the containerised Samba AD DC,
+with `UseAutomaticContext: false` and explicit service-account credentials, reads
+work and the password change does not. `SDSUtils.ChangePassword` — the ADSI call
+behind `UserPrincipal.ChangePassword` — fails.
+
+**The short version, from server-side audit logging:** the directory records **no
+authentication attempt at all** for the change, while the service account's binds
+and the end user's credential verification both succeed against that same
+directory moments earlier. ADSI gives up *before it contacts the directory*. That
+is what `ERROR_CANT_ACCESS_DOMAIN_INFO` describes, and it is consistent with a
+runner that is not domain-joined and so has no domain configuration to read. It
+is **not** a transport problem, **not** a permissions problem, and **not**
+something the directory refused — the directory never sees it.
+
+Whether a **domain-joined** host running `UseAutomaticContext: false` is affected
+is untested, and is the one question worth spending a real machine on.
 
 **The exact error, captured once the group legs stopped blocking Test 1:**
 
