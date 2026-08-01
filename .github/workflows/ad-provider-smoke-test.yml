@@ -1068,10 +1068,12 @@ jobs:
               # force-kill discards whatever the app had buffered but not
               # flushed, so this is the last point the output is guaranteed
               # to still be readable.
-              Write-Host "=== Passcore Standard Output ==="
-              if (Test-Path "$env:GITHUB_WORKSPACE\passcore.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore.log" }
-              Write-Host "=== Passcore Error Output ==="
-              if (Test-Path "$env:GITHUB_WORKSPACE\passcore-error.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore-error.log" }
+              # Tailed: passcore.log accumulates across every leg's restart, so
+              # the whole file is mostly earlier legs that already succeeded.
+              Write-Host "=== Passcore Standard Output (tail) ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore.log" -Tail 150 }
+              Write-Host "=== Passcore Error Output (tail) ==="
+              if (Test-Path "$env:GITHUB_WORKSPACE\passcore-error.log") { Get-Content "$env:GITHUB_WORKSPACE\passcore-error.log" -Tail 80 }
 
               throw "Passcore failed to become ready within 90 seconds."
           }
@@ -1598,18 +1600,14 @@ jobs:
         if: always()
         shell: wsl-bash {0}
         run: |
-          # The AD DC daemon runs in the foreground in this image and does not
-          # write a log.samba file, so its auth_audit output arrives on container
-          # stdout rather than under /var/log/samba. Both are dumped because which
-          # one carries the material depends on how the image starts samba, and
-          # guessing wrong once already cost a round.
-          echo "=== container stdout: auth / bind lines ==="
-          podman logs samba-ad 2>&1 \
-            | grep -iE "auth event|authentication|bind|sasl|strong auth|ldaps|gensec|kpasswd|samr" \
-            | tail -200 || echo "(no auth or bind lines on stdout)"
-
-          echo "=== container stdout: full ==="
-          podman logs samba-ad || true
+          # Container stdout carries supervisord and the provisioning script, and
+          # nothing about LDAP binds -- an earlier version of this step grepped it
+          # for auth events on the assumption that the AD DC logged here, which it
+          # does not. A short tail is kept because provisioning failures do show
+          # up here; the full dump is gone, since it was several hundred lines of
+          # samba_dnsupdate noise crowding out the assertions.
+          echo "=== container stdout (tail) ==="
+          podman logs samba-ad 2>&1 | tail -30 || true
 
           # At log level 3 the interesting material -- bind attempts and the
           # reasons they are rejected -- goes to Samba's own log files rather than
@@ -1625,11 +1623,16 @@ jobs:
           # a job-log tail that is only a few thousand lines deep.
           echo "=== /var/log/samba ==="
           podman exec samba-ad sh -c 'ls -la /var/log/samba/ 2>/dev/null' || true
+          # 15 lines each, not 400. These are smbd/winbindd/samba-bgqd, which at
+          # log level 3 are large and carry nothing about LDAP binds -- the AD DC's
+          # own log is the supervisord stderr file dumped above. This loop was the
+          # last uncapped dump and was on its own consuming most of the job log's
+          # retrievable tail, which is what kept Test 1's result out of view.
           podman exec samba-ad sh -c '
             for f in /var/log/samba/*; do
               [ -f "$f" ] || continue
               echo "--- $f ---"
-              tail -400 "$f"
+              tail -15 "$f"
             done' 2>/dev/null || true
 
           # The bind rejections specifically, pulled out of the noise. If the
