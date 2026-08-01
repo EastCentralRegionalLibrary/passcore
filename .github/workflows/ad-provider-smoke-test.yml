@@ -1695,8 +1695,23 @@ jobs:
           $stdout = Join-Path $env:GITHUB_WORKSPACE "passcore.log"
           $stderr = Join-Path $env:GITHUB_WORKSPACE "passcore-error.log"
 
-          Write-Host "=== Passcore Standard Output ==="
-          if (Test-Path $stdout) { Get-Content $stdout } else { Write-Host "(no $stdout)" }
+          # The provider's OWN failures first, and unabridged. These are the lines
+          # that explain a red assertion, and they must not be the thing that
+          # scrolls away.
+          Write-Host "=== Passcore warnings and errors ==="
+          if (Test-Path $stdout) {
+              Get-Content $stdout | Select-String -Pattern '^(warn|fail|crit):' -Context 0,6 |
+                Select-Object -Last 60 | Out-String | Write-Host
+          }
+
+          # Capped. passcore.log accumulates across every leg's restart at Debug
+          # level, and together with the Samba dump it grew large enough to push
+          # the actual assertions -- Test 1's result, the group legs' response
+          # codes -- out of the retrievable tail of the job log. Losing the
+          # primary evidence to make room for supporting evidence is the wrong
+          # trade, and it was one I introduced.
+          Write-Host "=== Passcore Standard Output (tail) ==="
+          if (Test-Path $stdout) { Get-Content $stdout -Tail 250 } else { Write-Host "(no $stdout)" }
 
           Write-Host "=== Passcore Error Output ==="
           if (Test-Path $stderr) { Get-Content $stderr } else { Write-Host "(no $stderr)" }
