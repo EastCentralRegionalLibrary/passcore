@@ -459,6 +459,143 @@ jobs:
               Write-Host "WARNING: SRV records did not resolve. Forest discovery will fail and the group-membership tests will refuse closed."
           }
 
+      # TIME-BOXED EXPERIMENT, two CI rounds. If inconclusive it is reverted in
+      # one commit. It is not on the path to green and Test 1 is expected to keep
+      # failing; this exists to close a question, not to fix the build.
+      #
+      # Motivated by the Configuration NC probe below, which returned the
+      # "target naming" outcome:
+      #
+      #   Configuration NC via dc.example.com  SUCCEEDED
+      #   Configuration NC via example.com     FAILED, inner 0x8007052E (1326)
+      #
+      # So the Configuration NC is readable with these credentials and the only
+      # variable is which NAME is used to bind. A sealed bind derives its service
+      # principal from the server string; Samba registers ldap/dc.example.com and
+      # not ldap/example.com; a name with no SPN cannot authenticate. That is
+      # already worked around for LdapHostnames by naming the DC. It cannot be
+      # worked around for the paths that build their OWN DirectoryContext around
+      # the domain or forest name -- Forest.GetForest(), and the Configuration NC
+      # read inside SDSUtils.ChangePassword that surfaces as 1351.
+      #
+      # Kerberos is the one mechanism that would fix those without a code change:
+      # with a KDC mapped for EXAMPLE.COM the locator resolves the realm to a DC
+      # before requesting a ticket, so ldap/dc.example.com becomes the SPN in play
+      # even when the caller names the realm.
+      #
+      # The earlier AuthType.Kerberos probe failed with "A local error occurred"
+      # -- the client failing before anything reached the wire, which is what a
+      # machine with no EXAMPLE.COM realm mapping does. ksetup is the tool for
+      # exactly that, and the subset used here needs no reboot.
+      #
+      # NO /setrealm. It requires a reboot, and a reboot means re-provisioning the
+      # container and the WSL state mid-job. If the no-reboot subset is
+      # insufficient, that is the stop condition rather than the next step.
+      #
+      # No topology change is needed or made: 88 and 464 are already published and
+      # dc.example.com already resolves to the WSL VM through the hosts entries.
+      #
+      # WATCH ITEM. If Kerberos becomes partially viable, Negotiate may start
+      # preferring it and failing rather than falling back to NTLM, and EVERY bind
+      # goes red at once -- minPwdLength, the canaries, all of it. That is the
+      # hazard from 4620263, retired because LdapHostnames names a DC with an SPN.
+      # A sudden broad red here is this experiment, not a new fault. Revert.
+      - name: EXPERIMENT - map the EXAMPLE.COM Kerberos realm (ksetup)
+        shell: powershell
+        run: |
+          # Native command output is routed through cmd.exe with 2>&1 applied
+          # THERE, so nothing ksetup writes reaches PowerShell's error stream.
+          # ksetup reports through stderr routinely and its exit codes are not
+          # uniformly meaningful; this is a diagnostic and must not fail the job.
+          # Same lesson as taskkill, which failed a leg for this exact reason.
+          function Invoke-Ksetup {
+              param([string] $KsetupArgs)
+              $output = cmd /c "ksetup $KsetupArgs 2>&1"
+              $exit = $LASTEXITCODE
+              Write-Host "  ksetup $KsetupArgs   (exit $exit)"
+              $output | ForEach-Object { Write-Host "    $_" }
+              $global:LASTEXITCODE = 0
+              $Error.Clear()
+          }
+
+          Write-Host "=== ksetup BEFORE ==="
+          Invoke-Ksetup ""
+
+          Write-Host "=== applying realm mappings ==="
+          Invoke-Ksetup "/addkdc EXAMPLE.COM dc.example.com"
+          Invoke-Ksetup "/addhosttorealmmap dc.example.com EXAMPLE.COM"
+          Invoke-Ksetup "/addhosttorealmmap example.com EXAMPLE.COM"
+          # The change-password transport specifically. Without this, even a
+          # working Kerberos bind would leave Test 1 where it is.
+          Invoke-Ksetup "/addkpasswd EXAMPLE.COM dc.example.com"
+
+          Write-Host "=== ksetup AFTER ==="
+          Invoke-Ksetup ""
+
+          # --- Probe 1: explicit Kerberos bind --------------------------------
+          # AuthType.Kerberos, so NTLM cannot satisfy it and a success means what
+          # it says. The signal is MOVEMENT from "A local error occurred":
+          #   still a local error -> the mappings did not take
+          #   a KDC error        -> they took, and the remaining problem is
+          #                         Samba-side or an encryption-type question
+          #   success            -> run the rest and record everything
+          Write-Host "=== Probe 1: explicit Kerberos bind to example.com:389 ==="
+          try {
+              Add-Type -AssemblyName System.DirectoryServices.Protocols
+              $identifier = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier("example.com", 389)
+              $connection = New-Object System.DirectoryServices.Protocols.LdapConnection($identifier)
+              $connection.SessionOptions.ProtocolVersion = 3
+              $connection.SessionOptions.Sealing = $true
+              $connection.SessionOptions.Signing = $true
+              $connection.AuthType = [System.DirectoryServices.Protocols.AuthType]::Kerberos
+              $connection.Credential = New-Object System.Net.NetworkCredential(
+                  "Administrator", "AdminPassword123!", "EXAMPLE")
+              $connection.Timeout = [TimeSpan]::FromSeconds(20)
+              $connection.Bind()
+              Write-Host "  Probe 1: Kerberos bind SUCCEEDED"
+              $connection.Dispose()
+          }
+          catch {
+              Write-Host "  Probe 1: Kerberos bind FAILED: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+              $inner = $_.Exception.InnerException
+              while ($inner) {
+                  Write-Host "  Probe 1:   inner: $($inner.GetType().Name): $($inner.Message)"
+                  if ($inner.HResult) {
+                      Write-Host "  Probe 1:   inner HRESULT: 0x$('{0:X8}' -f $inner.HResult)"
+                  }
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # --- Probe 5: does any of this resemble domain membership? ----------
+          # Run here rather than last because it needs no other state. It is
+          # EXPECTED TO THROW: realm mapping is not domain membership, and
+          # GetCurrentDomain() resolves through the machine's join state, not
+          # through the LSA's Kerberos configuration. Recorded either way so the
+          # question is closed empirically instead of by argument -- and so that
+          # nobody later reads a working Kerberos bind as a reason to try
+          # UseAutomaticContext: true, which needs domain membership and a process
+          # identity in the domain that ksetup does not provide.
+          Write-Host "=== Probe 5: Domain::GetCurrentDomain() ==="
+          try {
+              $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+              Write-Host "  Probe 5: SUCCEEDED -- $($domain.Name)"
+              Write-Host "  Probe 5: NOTE this does not imply domain membership; see the step comment."
+          }
+          catch {
+              Write-Host "  Probe 5: threw (expected): $($_.Exception.GetType().Name): $($_.Exception.Message)"
+              $inner = $_.Exception.InnerException
+              while ($inner) {
+                  Write-Host "  Probe 5:   inner: $($inner.GetType().Name): $($inner.Message)"
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # Probe 2 (Configuration NC via example.com) is the existing probe in
+          # "Trust the Samba AD DC certificate authority", which runs after this
+          # step and therefore reports post-ksetup. Probe 3 is Forest.GetForest()
+          # in the prerequisites step. Probe 4 is Test 1. None are duplicated here.
+
       # The backend is published framework-dependent against net8.0-windows, so
       # the ASP.NET Core 8 shared runtime has to be on the machine or the apphost
       # cannot start at all. Installing only the 10.0 SDK does not provide it:
