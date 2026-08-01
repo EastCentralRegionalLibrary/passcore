@@ -1610,12 +1610,25 @@ jobs:
           # strong-auth relaxation took effect, the "strong auth" refusals should
           # be absent; if ADSI never reached LDAPS at all, there will be no bind
           # attempt on 636 to find here either. Both are answers.
-          # Searched across every log directory rather than just /var/log/samba,
-          # for the same reason as above.
-          echo "=== bind / auth lines, anywhere ==="
+          # THE AD DC'S LOG. Located by the enumeration above rather than guessed:
+          # supervisord runs "/usr/sbin/samba -i", which stays in the foreground
+          # and writes to STDERR, so supervisord captures it to
+          # samba-stderr---supervisor-<random>.log. It is not log.samba, it is not
+          # under /var/log/samba, and it is not on container stdout -- which is why
+          # three earlier attempts found nothing and why an empty result was never
+          # evidence about ADSI.
+          echo "=== AD DC log (samba -i via supervisord, stderr) ==="
+          podman exec samba-ad sh -c \
+            'tail -600 /var/log/supervisor/samba-stderr*.log 2>/dev/null' \
+            || echo "(no samba stderr log found)"
+
+          # Scoped to Samba's own logs. An earlier version grepped all of /var/log
+          # and returned apt and dpkg install records, which buried the answer.
+          echo "=== bind / auth lines ==="
           podman exec samba-ad sh -c '
-            grep -riE "auth event|bind|strong auth|sasl|gensec|ldaps|kpasswd|SAMR|ChangePassword" \
-              /var/log/ 2>/dev/null | grep -viE "unix_http_server|ntpd|dnsupdate" | tail -200' \
+            grep -hiE "auth event|bind|strong auth|sasl|gensec|ldaps|kpasswd|SAMR|ChangePassword" \
+              /var/log/supervisor/samba-stderr*.log /var/log/samba/log.* 2>/dev/null \
+              | tail -200' \
             || echo "(nothing found)"
 
       # Before Stop Passcore, deliberately. When stdout is redirected to a file
