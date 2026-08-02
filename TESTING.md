@@ -518,6 +518,63 @@ inspects what ADSI actually passes internally, and it remains consistent with th
 established fact that the DC sees no authentication event for the change — a name
 that cannot be resolved to a domain never becomes a connection.
 
+### `SetPassword` works — when the entry is bound over LDAPS
+
+Two variants of the same call, in the **same run against the same server
+configuration**, so the only variable is the connection the `DirectoryEntry` is
+bound on:
+
+```
+Probe A   entry bound LDAP://dc.example.com:389/…  Secure|Signing|Sealing
+  FAILED: COMException 0x800706BA "The RPC server is unavailable."
+
+Probe A2  entry bound LDAP://dc.example.com:636/…  Secure|SecureSocketsLayer
+  SUCCEEDED — SetPassword changed probeuser's password, and the restore
+  changed it back.
+```
+
+**The bound connection determines whether the write succeeds.** That contradicts
+the assumption this probe was written under — the comment in the workflow said
+ADSI opens its own connection for the write regardless, so A2 "should" have
+matched A. It did not, and that difference is the finding.
+
+It also explains `0x800706BA` properly. `SetPassword` tries LDAP over a 128-bit
+SSL connection, then Kerberos, then `NetUserSetInfo` over RPC. Reaching an RPC
+error means the first two had already failed. Give it an entry that is *already*
+on an SSL connection and the first method succeeds, so it never reaches RPC.
+
+#### What this means for `AllowAdministrativeReset`
+
+PR 63 recorded that feature as non-functional on this path. It is more precise
+than that: **it is non-functional as PassCore currently binds.**
+`AcquirePrincipalContext` binds sign-and-seal on `LdapPort` (389), and
+`GetDirectoryEntry` builds its path from the same port, so the entry the reset
+would act on is a 389-bound one — exactly Probe A, exactly the RPC failure.
+
+So the requirement is not merely "LDAPS reachable and the certificate trusted".
+It is that **the `DirectoryEntry` the reset operates on must itself be bound over
+LDAPS**. PassCore does not do that today, and no configuration value makes it do
+so: setting `LdapPort: 636` breaks context acquisition outright, as recorded
+above.
+
+That is a product change rather than a documentation fix, and it is a small and
+well-targeted one — the reset path already builds its own entry.
+
+#### What is not yet separated
+
+Both probes ran with Samba's `ldap server require strong auth` relaxed to
+`allow_sasl_over_tls`. So while the A-versus-A2 comparison is controlled and the
+LDAPS binding is definitively the discriminating variable, **whether A2 would
+also succeed against Samba's default is untested**. Prior evidence suggests it
+would not: the `LdapPort: 636` experiment showed `Negotiate | SecureSocketLayer`
+refused with `0x80072028`, which is that same default denying a SASL bind over
+TLS.
+
+This distinction is CI-only. Real AD implements LDAP channel binding — which is
+what Samba lacks and why it refuses — so SASL over TLS is accepted there
+natively. The production requirement is the same either way: an LDAPS-bound entry
+and a trusted certificate.
+
 ### Assessment: should PassCore adopt `NetUserChangePassword`?
 
 **Recommendation: adopt behind an explicit opt-in option, gated on the specific
