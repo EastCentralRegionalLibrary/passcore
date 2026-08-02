@@ -1373,6 +1373,86 @@ jobs:
               }
           }
 
+          # --- Probes C1/C2: does the ORDINARY change work on an LDAPS entry? --
+          # The bigger question, and the reason A2's result matters beyond the
+          # reset. IADsUser::ChangePassword uses the same three methods in the
+          # same order as SetPassword. A2 established that the bound connection
+          # decides which method is reached -- so the evidence behind "requires a
+          # domain-joined host" may be an artefact of having only ever measured a
+          # 389-BOUND entry. 0x80070547 with no server-side event is a sound
+          # reading of a local domain-resolution failure, but ADSI may never reach
+          # the code that resolves a domain if the first method succeeds.
+          #
+          # If either of these works, PassCore's ordinary user-initiated change
+          # functions on a non-domain-joined explicit-bind host and the
+          # administrative reset is not needed to compensate for anything.
+          #
+          # C1 binds as the SERVICE ACCOUNT; C2 binds as the USER'S OWN
+          # credentials, which is the closer analogue of a user-initiated change
+          # and mirrors how the LDAP provider already works -- verify as the user,
+          # then write.
+          #
+          # ACCOUNTS TOUCHED: probeuser only, same as A/A2, restored after each.
+          Write-Host "=== Probe C1: IADsUser::ChangePassword, LDAPS entry, service account ==="
+          $c1Worked = $false
+          try {
+              $c1Entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+              $c1Entry.RefreshCache(@("distinguishedName"))
+              $c1Entry.Invoke("ChangePassword", @($probeOldPass, $probeNewPass)) | Out-Null
+              Write-Host "  Probe C1: ChangePassword SUCCEEDED for $probeUser"
+              $c1Worked = $true
+              $c1Entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe C1:"
+          }
+
+          if ($c1Worked) {
+              try {
+                  $c1Back = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+                  $c1Back.RefreshCache(@("distinguishedName"))
+                  $c1Back.Invoke("ChangePassword", @($probeNewPass, $probeOldPass)) | Out-Null
+                  Write-Host "  Probe C1: restored $probeUser to its seeded password"
+                  $c1Back.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe C1 restore:"
+                  Write-Host "  Probe C1: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          Write-Host "=== Probe C2: IADsUser::ChangePassword, LDAPS entry, user's own credentials ==="
+          $c2Worked = $false
+          try {
+              $c2Entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", "EXAMPLE\${probeUser}", $probeOldPass, $sslAuthTypes)
+              $c2Entry.RefreshCache(@("distinguishedName"))
+              $c2Entry.Invoke("ChangePassword", @($probeOldPass, $probeNewPass)) | Out-Null
+              Write-Host "  Probe C2: ChangePassword SUCCEEDED for $probeUser"
+              $c2Worked = $true
+              $c2Entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe C2:"
+          }
+
+          if ($c2Worked) {
+              try {
+                  $c2Back = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", "EXAMPLE\${probeUser}", $probeNewPass, $sslAuthTypes)
+                  $c2Back.RefreshCache(@("distinguishedName"))
+                  $c2Back.Invoke("ChangePassword", @($probeNewPass, $probeOldPass)) | Out-Null
+                  Write-Host "  Probe C2: restored $probeUser to its seeded password"
+                  $c2Back.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe C2 restore:"
+                  Write-Host "  Probe C2: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
           # --- SMB reachability, checked before Probe B is interpreted --------
           # 445 is not published by podman -- the Windows host binds it -- but the
           # static route makes the container's OWN address reachable, and nothing
