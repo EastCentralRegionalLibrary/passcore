@@ -1191,6 +1191,182 @@ jobs:
       # and a configuration override cannot shrink an array, so neither of the
       # obvious alternatives works. See tests/samba-ad/restart-passcore.ps1.
       #
+      # DIAGNOSTIC, not an assertion, and it must never fail the job.
+      #
+      # The question: PassCore's user-context password change does not work in
+      # this configuration, and it is established that ADSI gives up BEFORE
+      # contacting the directory -- the DC records no authentication event for it
+      # at all, while the service account's binds and the user's own credential
+      # verification succeed seconds earlier. IADsUser::ChangePassword takes only
+      # an old and a new password; there is no domain argument to correct, and the
+      # derivation it does internally is what fails.
+      #
+      # So: does ANY write path work from here, and is it one PassCore could use?
+      # Two candidates, chosen because they fail differently from ChangePassword:
+      #
+      #   A. IADsUser::SetPassword  -- writes as the SERVICE ACCOUNT, which is
+      #      already binding successfully over a channel known to work. This is
+      #      what the shipped AllowAdministrativeReset feature calls, so its
+      #      result decides whether that feature functions here at all.
+      #   B. NetUserChangePassword  -- the one API in this space that TAKES the
+      #      domain as an argument instead of deriving it, and which authenticates
+      #      with the user's own old password rather than the service account.
+      #
+      # This runs directly on the runner rather than through PassCore, because the
+      # subject under test is the platform, not the provider.
+      #
+      # ACCOUNTS TOUCHED: probeuser, and only probeuser. It is seeded for exactly
+      # this purpose, belongs to no group beyond Domain Users, and no assertion
+      # reads it -- so a probe that leaves its password changed cannot break an
+      # unrelated leg. Do not point these probes at testuser or any leg account.
+      - name: Probe whether any password write path works from this host
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          $dcName        = "dc.example.com"
+          $serviceUser   = "EXAMPLE\Administrator"
+          $servicePass   = "AdminPassword123!"
+          $probeUser     = "probeuser"
+          $probeOldPass  = "testpassword"
+          $probeNewPass  = "ProbeNewPassword123!"
+          $probeDn       = "CN=probeuser,OU=people,DC=example,DC=com"
+
+          function Report-Failure {
+              param($ErrorRecord, [string] $Prefix)
+              $ex = $ErrorRecord.Exception
+              Write-Host "${Prefix} FAILED: $($ex.GetType().Name): $($ex.Message)"
+              if ($ex.HResult) { Write-Host "${Prefix}   HRESULT: 0x$('{0:X8}' -f $ex.HResult)" }
+              $inner = $ex.InnerException
+              while ($inner) {
+                  Write-Host "${Prefix}   inner: $($inner.GetType().Name): $($inner.Message)"
+                  if ($inner.HResult) { Write-Host "${Prefix}   inner HRESULT: 0x$('{0:X8}' -f $inner.HResult)" }
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # --- Probe A: IADsUser::SetPassword as the service account ----------
+          # Sealed on 389, the same channel and credentials the provider's own
+          # context uses and which EventId 108 confirms working. If this succeeds,
+          # the directory write path is fine and the fault is specific to
+          # ChangePassword's domain derivation.
+          Write-Host "=== Probe A: IADsUser::SetPassword as the service account ==="
+          $probeAWorked = $false
+          try {
+              $authTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                           [System.DirectoryServices.AuthenticationTypes]::Signing -bor `
+                           [System.DirectoryServices.AuthenticationTypes]::Sealing
+              $entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:389/${probeDn}", $serviceUser, $servicePass, $authTypes)
+              $entry.RefreshCache(@("distinguishedName"))
+              $entry.Invoke("SetPassword", @($probeNewPass)) | Out-Null
+              $entry.CommitChanges()
+              Write-Host "  Probe A: SetPassword SUCCEEDED for $probeUser"
+              $probeAWorked = $true
+              $entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe A:"
+          }
+
+          # Restore immediately, whether or not it reported success, so the
+          # account is left as seeded and Probe B starts from a known password.
+          if ($probeAWorked) {
+              try {
+                  $restore = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:389/${probeDn}", $serviceUser, $servicePass, $authTypes)
+                  $restore.RefreshCache(@("distinguishedName"))
+                  $restore.Invoke("SetPassword", @($probeOldPass)) | Out-Null
+                  $restore.CommitChanges()
+                  Write-Host "  Probe A: restored $probeUser to its seeded password"
+                  $restore.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe A restore:"
+                  Write-Host "  Probe A: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          # --- SMB reachability, checked before Probe B is interpreted --------
+          # 445 is not published by podman -- the Windows host binds it -- but the
+          # static route makes the container's OWN address reachable, and nothing
+          # of the host's is bound there. Whether that is enough is the question.
+          # Reported separately so that "SMB unreachable" is never mistaken for
+          # "NetUserChangePassword does not work", which are different answers and
+          # lead to different conclusions.
+          Write-Host "=== SMB reachability (decides how to read Probe B) ==="
+          $containerIp = $null
+          $networkFile = Join-Path $env:GITHUB_WORKSPACE "podman-network.txt"
+          if (Test-Path $networkFile) {
+              $facts = @(Get-Content $networkFile)
+              if ($facts.Count -ge 2) { $containerIp = $facts[1].Trim() }
+          }
+
+          $smbReachable = $false
+          if ($containerIp) {
+              try {
+                  $client = New-Object System.Net.Sockets.TcpClient
+                  $connect = $client.BeginConnect($containerIp, 445, $null, $null)
+                  if ($connect.AsyncWaitHandle.WaitOne(5000, $false) -and $client.Connected) {
+                      Write-Host "  ${containerIp}:445 REACHABLE"
+                      $smbReachable = $true
+                  }
+                  else {
+                      Write-Host "  ${containerIp}:445 NOT reachable"
+                  }
+                  $client.Close()
+              }
+              catch {
+                  Write-Host "  ${containerIp}:445 NOT reachable: $($_.Exception.Message)"
+              }
+          }
+          else {
+              Write-Host "  container address unknown; cannot test SMB reachability"
+          }
+
+          # --- Probe B: NetUserChangePassword with an EXPLICIT domain ---------
+          # Both names are tried because they have behaved differently throughout:
+          # dc.example.com has a service principal behind it and example.com does
+          # not. The return value is a NET_API_STATUS, not an HRESULT -- 0 is
+          # success, 2221 is NERR_UserNotFound, 86 is ERROR_INVALID_PASSWORD,
+          # 53/1722 are the RPC server unreachable -- and it is reported as a
+          # number precisely because that distinction is the whole value here.
+          Write-Host "=== Probe B: NetUserChangePassword with an explicit domain ==="
+          # Signature on one line, not a here-string: a here-string's closing '@
+          # must sit at column 0, which would terminate this YAML block scalar.
+          $netApiSignature = '[System.Runtime.InteropServices.DllImport("netapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int NetUserChangePassword(string domainname, string username, string oldpassword, string newpassword);'
+          Add-Type -Namespace PassCoreProbe -Name NetApi -MemberDefinition $netApiSignature
+
+          foreach ($domainForm in @("example.com", "dc.example.com")) {
+              try {
+                  $rc = [PassCoreProbe.NetApi]::NetUserChangePassword(
+                      $domainForm, $probeUser, $probeOldPass, $probeNewPass)
+                  if ($rc -eq 0) {
+                      Write-Host "  Probe B [$domainForm]: SUCCEEDED (NET_API_STATUS 0)"
+                      # Change it straight back, using the new password as the old.
+                      $back = [PassCoreProbe.NetApi]::NetUserChangePassword(
+                          $domainForm, $probeUser, $probeNewPass, $probeOldPass)
+                      Write-Host "  Probe B [$domainForm]: restore returned $back"
+                  }
+                  elseif (-not $smbReachable) {
+                      Write-Host "  Probe B [$domainForm]: NOT ATTEMPTED MEANINGFULLY - SMB is unreachable, so NET_API_STATUS $rc reports the transport, not the API"
+                  }
+                  else {
+                      Write-Host "  Probe B [$domainForm]: failed with NET_API_STATUS $rc"
+                  }
+              }
+              catch {
+                  Report-Failure $_ "  Probe B [$domainForm]:"
+              }
+          }
+
+          # --- Server-side view across the probe window ----------------------
+          # A probe that produces NO server-side event is as informative as one
+          # that fails loudly: that asymmetry is exactly how the ChangePassword
+          # finding was made.
+          Write-Host "=== Samba authentication events during the probes ==="
+          wsl podman exec samba-ad sh -c "grep -h '^Auth: ' /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -25"
+
       # Every leg opens with a canary that can only pass under that leg's own
       # configuration. Without it, a restart that silently failed to take effect
       # would leave the previous leg's configuration answering every request,
