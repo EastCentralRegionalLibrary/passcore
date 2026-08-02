@@ -44,15 +44,22 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            expected Debug-level fallback, which no longer exists. Such a
     //            failure now leaves membership undetermined and is reported via
     //            ServiceAccountFailure (111). Retired, not free -- do not reuse.
-    //   110-117  shared helpers (AdministrativeReset, ServiceAccountFailure,
+    //   110-119  shared helpers (AdministrativeReset, ServiceAccountFailure,
     //            DomainPasswordPolicy), then provider-specific events that
     //            would have belonged in the range above had it not been full:
     //            LDAP GroupNotSecurityEnabled (113), LDAP GroupTypeUnreadable
-    //            (114), AD ExplicitBindPasswordChangeUnverified (115),
+    //            (114), AD LdapsWriteRequired (115),
     //            AD SealedBindSkippedForLdapsPort (116),
-    //            AD NoWorkingPasswordWritePath (117).
+    //            AD PasswordWriteOverLdaps (118),
+    //            AD LdapsWriteBindFailed (119).
+    //            117 is retired: it announced at startup that no password write
+    //            could succeed in the explicit-bind, non-domain-joined
+    //            combination and that RPC/SMB reachability was the remedy. The
+    //            write was subsequently made to bind over LDAPS, which works in
+    //            exactly that combination, so the claim is false and the remedy
+    //            was the wrong one. Retired, not free -- do not reuse.
     //            Numbering continues here rather than reusing a retired ID.
-    //                                                                     next: 118
+    //                                                                     next: 120
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or

@@ -1374,23 +1374,27 @@ jobs:
           }
 
           # --- Probes C1/C2: does the ORDINARY change work on an LDAPS entry? --
-          # The bigger question, and the reason A2's result matters beyond the
-          # reset. IADsUser::ChangePassword uses the same three methods in the
-          # same order as SetPassword. A2 established that the bound connection
-          # decides which method is reached -- so the evidence behind "requires a
-          # domain-joined host" may be an artefact of having only ever measured a
-          # 389-BOUND entry. 0x80070547 with no server-side event is a sound
-          # reading of a local domain-resolution failure, but ADSI may never reach
-          # the code that resolves a domain if the first method succeeds.
+          # ANSWERED: BOTH SUCCEED. That is what the provider was changed on the
+          # strength of, and these two now stand as the regression evidence for
+          # it -- if the write ever stops working from a non-domain-joined host,
+          # these say whether the platform changed or PassCore did.
           #
-          # If either of these works, PassCore's ordinary user-initiated change
-          # functions on a non-domain-joined explicit-bind host and the
-          # administrative reset is not needed to compensate for anything.
+          # The question they settled: IADsUser::ChangePassword uses the same
+          # three methods in the same order as SetPassword, and A2 had shown the
+          # bound connection decides which one is reached. So the evidence behind
+          # "requires a domain-joined host" was an artefact of having only ever
+          # measured a 389-BOUND entry. 0x80070547 with no server-side event was a
+          # sound reading of a local domain-resolution failure -- but ADSI never
+          # reaches the code that resolves a domain when the first method works.
           #
           # C1 binds as the SERVICE ACCOUNT; C2 binds as the USER'S OWN
           # credentials, which is the closer analogue of a user-initiated change
           # and mirrors how the LDAP provider already works -- verify as the user,
-          # then write.
+          # then write. Both succeeding is why the provider could use the
+          # service-account credentials it already holds: the directory verifies
+          # the supplied old password either way and logs the modification against
+          # the target user, so a service-account bind does not turn the change
+          # into a reset.
           #
           # ACCOUNTS TOUCHED: probeuser only, same as A/A2, restored after each.
           Write-Host "=== Probe C1: IADsUser::ChangePassword, LDAPS entry, service account ==="

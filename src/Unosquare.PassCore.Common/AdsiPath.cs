@@ -53,10 +53,33 @@ public static class AdsiPath
         if (string.IsNullOrWhiteSpace(namingContext))
             throw new ArgumentException("The naming context cannot be empty.", nameof(namingContext));
 
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"{LdapScheme}{ValidateHost(host)}:{ValidatePort(port)}/{namingContext.Trim()}");
+        return ForDistinguishedName(host, port, namingContext);
     }
+
+    /// <summary>
+    /// Builds the path to an arbitrary directory object identified by its
+    /// distinguished name — a user, for instance, when an operation has to be
+    /// performed on a connection chosen by the caller rather than on whatever
+    /// connection an <c>AccountManagement</c> principal happens to be carrying.
+    /// </summary>
+    /// <param name="host">The directory host name.</param>
+    /// <param name="port">The LDAP port. Which port is passed decides the
+    /// transport, and for a password write that decision is the operation's
+    /// outcome rather than a detail — see
+    /// <see cref="LdapChannelPorts.SslPortFor(int)"/>.</param>
+    /// <param name="distinguishedName">The object's distinguished name.</param>
+    public static string ForObject(string host, int port, string distinguishedName)
+    {
+        if (string.IsNullOrWhiteSpace(distinguishedName))
+            throw new ArgumentException("The distinguished name cannot be empty.", nameof(distinguishedName));
+
+        return ForDistinguishedName(host, port, distinguishedName);
+    }
+
+    private static string ForDistinguishedName(string host, int port, string distinguishedName) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{LdapScheme}{ValidateHost(host)}:{ValidatePort(port)}/{distinguishedName.Trim()}");
 
     private static string ValidateHost(string host) =>
         string.IsNullOrWhiteSpace(host)

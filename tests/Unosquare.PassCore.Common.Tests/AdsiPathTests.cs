@@ -84,6 +84,53 @@ public class AdsiPathTests
             () => AdsiPath.ForNamingContext("example.com", 389, namingContext!));
     }
 
+    /// <summary>
+    /// The user object a password write is performed on. The port is the whole
+    /// point here: which one is passed decides whether ADSI reaches LDAP over SSL
+    /// or falls through to Kerberos and then RPC, and that decides whether the
+    /// write succeeds at all on a host that is not domain-joined.
+    /// </summary>
+    [Fact]
+    public void ForObject_BuildsTheLdapsPathToAUserEntry()
+    {
+        Assert.Equal(
+            "LDAP://dc.example.com:636/CN=probeuser,OU=people,DC=example,DC=com",
+            AdsiPath.ForObject(
+                "dc.example.com",
+                LdapChannelPorts.SslPortFor(LdapChannelPorts.Plaintext),
+                "CN=probeuser,OU=people,DC=example,DC=com"));
+    }
+
+    /// <summary>
+    /// A directory that publishes LDAPS somewhere other than 636 keeps the value
+    /// it was configured with, rather than having 636 forced on it.
+    /// </summary>
+    [Fact]
+    public void ForObject_CarriesANonDefaultSecurePortThrough()
+    {
+        Assert.Equal(
+            "LDAP://dc.example.com:3269/CN=user,DC=example,DC=com",
+            AdsiPath.ForObject(
+                "dc.example.com",
+                LdapChannelPorts.SslPortFor(3269),
+                "CN=user,DC=example,DC=com"));
+    }
+
+    /// <summary>
+    /// An empty DN would produce a trailing-slash path that binds the server root.
+    /// For a read that yields a silent null; for a password write it would aim the
+    /// operation at the wrong object entirely.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void ForObject_RejectsAnEmptyDistinguishedName(string? distinguishedName)
+    {
+        Assert.Throws<ArgumentException>(
+            () => AdsiPath.ForObject("example.com", 636, distinguishedName!));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

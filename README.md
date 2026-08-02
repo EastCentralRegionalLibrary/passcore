@@ -128,31 +128,39 @@ The most relevant configuration entries are shown below. Make sure you make your
 
 > **Upgrading from a pre-unified-error-routing build?** See [`docs/UPGRADING-error-routing.md`](docs/UPGRADING-error-routing.md) for the behavior changes and the two situations that need a config change. For how a directory failure maps to what the user sees (and the rules for adding a provider), see [`docs/error-routing-matrix.md`](docs/error-routing-matrix.md).
 
-> ### ⚠️ AD provider: `UseAutomaticContext: false` on a host that is not domain-joined
+> ### ⚠️ AD provider: `UseAutomaticContext: false` requires LDAPS with a trusted certificate
 >
-> **Scope:** the AD provider, configured with `UseAutomaticContext: false`, running on a machine that is **not domain-joined**. It does not affect the default `true`, and it does not affect the LDAP provider.
+> **Scope:** the AD provider, configured with `UseAutomaticContext: false`. It does not affect the default `true`, and it does not affect the LDAP provider.
 >
-> In that configuration the password change has been observed to fail with `0x80070547` (`ERROR_CANT_ACCESS_DOMAIN_INFO`), and the user sees a generic message:
+> **The requirement.** On that path PassCore performs password writes over an LDAPS connection it binds specifically for the write. That needs the directory's LDAPS port to be reachable **and its certificate to be trusted by the machine PassCore runs on**. Nothing else PassCore does needs either — every read goes over a signed-and-sealed connection that requires no certificate trust — so a deployment can be healthy in every other respect and still have no working password change. PassCore logs a reminder at startup, EventId 115, and logs the port and reason per request at EventId 119 if the bind fails.
+>
+> **RPC/SMB reachability is not required, and a domain join is not the remedy.** An earlier version of this notice said otherwise. See below.
+>
+> **The port is not separately configurable.** It is derived from `LdapPort` by the same rule the SSL fallback already uses: `389` becomes `636`, and any other value is used as configured. A directory publishing LDAPS somewhere else is served by pointing `LdapPort` at it.
+>
+> **If the LDAPS bind fails**, the write falls back to the previous behavior rather than failing outright — so a deployment without usable LDAPS is no worse off than before. On a host that is **not domain-joined**, that fallback has been observed to fail with `0x80070547` (`ERROR_CANT_ACCESS_DOMAIN_INFO`), and the user sees a generic message:
 >
 > > The directory service could not complete the password change request
 >
-> (`LdapProblem`, error code 8.) PassCore logs a warning about this at startup, EventId 115.
+> (`LdapProblem`, error code 8.) Server-side audit logging records **no authentication attempt at all** for that failure — no bind, no `kpasswd`, no SAMR — while the service account's own binds and the end user's credential verification both succeed against the same directory moments earlier. ADSI gives up *before* it contacts the directory, which is what the error name says and is consistent with a machine that has no domain configuration to read.
 >
-> **What the evidence shows.** Server-side audit logging on the directory records **no authentication attempt at all** for the change — no bind, no `kpasswd`, no SAMR — while the service account's own binds and the end user's credential verification both succeed against that same directory moments earlier. ADSI is giving up *before* it contacts the directory, which is what the error name says, and is consistent with a machine that has no domain configuration to read.
+> **`AllowAdministrativeReset` uses the same LDAPS write**, so it no longer carries a separate RPC/SMB requirement either. It remains off by default, remains gated on `ChangeNotPermitted`, and still does not fire for infrastructure-class failures — so it is not a workaround for a failing LDAPS bind.
 >
-> **Everything else on that path works** and is covered end-to-end against a live directory: binding, credential verification, group membership including nested and primary groups, the domain minimum-length lookup, policy evaluation and error routing.
+> **What corrected this, and what it cost.** Both `IADsUser::ChangePassword` and `IADsUser::SetPassword` try LDAP over 128-bit SSL, then Kerberos, then the `Net*` APIs over RPC — and *which one they reach is decided by the connection the directory entry is bound on*. PassCore bound on `LdapPort`, so on a default deployment every write started from a 389-bound entry. Measured from a host that is not domain-joined, against the same directory in the same run:
 >
-> **Workaround:** run PassCore on a domain-joined host.
+> | | 389-bound entry | LDAPS-bound entry |
+> |---|---|---|
+> | `SetPassword` (the reset) | fails `0x800706BA`, RPC server unavailable | **succeeds** |
+> | `ChangePassword` (the ordinary change, service-account bind) | fails `0x80070547` | **succeeds** |
+> | `ChangePassword` (the ordinary change, user's own bind) | — | **succeeds** |
 >
-> **What does work here.** The directory itself is writable from such a host — a direct `NetUserChangePassword` call, given the *domain* name, changes a password successfully. PassCore does not currently use that API, and adopting it would require SMB/445 reachability from the application host to a domain controller, which is a bigger firewall requirement than LDAP alone. Assessed in [`TESTING.md`](TESTING.md).
+> The directory logged the successful writes as ordinary LDAP password modifications attributed to the target user — the first documented method, reached because the connection allowed it.
 >
-> **`AllowAdministrativeReset` does not help, and this is worth reading even if the rest does not apply to you.** It calls `IADsUser::SetPassword`, which tries LDAP over SSL, then Kerberos, then RPC. Which one it gets depends on the connection the directory entry is bound on — and PassCore binds on `LdapPort`, so today the reset **falls through to RPC and requires RPC/SMB reachability to a domain controller**. That is a much larger firewall requirement than LDAP, and a DMZ deployment with only 389/636 open does not meet it: the option can be enabled there and will rescue nothing. It also does not fire for infrastructure-class failures at all, being gated on `ChangeNotPermitted`.
+> **The assumption this corrected.** For several rounds the conclusion recorded here was that the change "requires a domain-joined host", and that `0x800706BA` from the reset meant RPC reachability was a real prerequisite. Both readings were sound given what had been measured, and both were wrong for the same reason: only a 389-bound entry had ever been tested, and reaching an RPC error means the two methods *before* RPC had already been ruled out by that binding — not that RPC was what the operation wanted. The evidence was never in dispute; the inference from it was.
 >
-> This was measured: the same call on an LDAPS-bound entry **succeeds** where a 389-bound one fails with `0x800706BA`. Binding the reset's entry over LDAPS would remove the RPC requirement entirely; PassCore does not do that today.
+> **What is *not* claimed:** anything about a domain-joined host running `UseAutomaticContext: false`. That combination is untested, in either direction.
 >
-> **What is *not* claimed:** that a domain-joined host running `UseAutomaticContext: false` is affected. That combination is untested. If you are on one and password changes work, this notice does not apply to you.
->
-> **Ruled out with evidence** — not worth retrying: transport reachability (389, 636, 88, 464, 3268 all confirmed reachable), certificate trust (LDAPS binds succeed), channel protection (the context is established over sign-and-seal, confirmed from the provider's own logs), Kerberos realm mapping, and `LdapPort` — setting `636` prevents any context being established at all and makes matters worse rather than better. Full detail and evidence: [`TESTING.md`](TESTING.md), "The AD password change on the explicit-bind path".
+> **Ruled out with evidence** — not worth retrying: transport reachability (389, 636, 88, 464, 3268 all confirmed reachable), certificate trust *for the service-account context* (LDAPS binds succeed), channel protection (the context is established over sign-and-seal, confirmed from the provider's own logs), Kerberos realm mapping, and `LdapPort` — setting `636` prevents any context being established at all and makes matters worse rather than better. Full detail and evidence: [`TESTING.md`](TESTING.md), "The AD password change on the explicit-bind path".
 
 - To enable reCAPTCHA
   1. Find the `PrivateKey` entry and enter your private key within double quotes (`"`)
@@ -215,7 +223,7 @@ icacls "<logfolder>/" /grant "IIS AppPool\<passcoreAppPoolAccount>:M" /t
 ### LDAP Support
 
 - If your users are having trouble changing passwords as in issues #8 or #9 : try configuring the section `PasswordChangeOptions` in the `/appsettings.json` file. Here are some guidelines:
-  1. Ensure `UseAutomaticContext` is set to `false` — **but read the notice above first if you are on the AD provider and your host is not domain-joined.** In that specific combination the password change has been seen to fail, so switching to it as a fix for a *different* problem can replace one failure with another. It is the right move for the LDAP provider, and on the AD provider it is unaffected by the notice when the host is domain-joined.
+  1. Ensure `UseAutomaticContext` is set to `false` — **but read the notice above first if you are on the AD provider.** On that path password writes go over LDAPS, so switching to it as a fix for a *different* problem introduces a certificate-trust requirement nothing else in PassCore has. It is the right move for the LDAP provider, which is unaffected by that notice entirely.
   1. Ensure `LdapUsername` is set to an AD user with enough permissions to reset user passwords
   1. Ensure `LdapPassword` is set to the correct password for the admin user mentioned above
   1. User @gadams65 suggests the following: Use the FQDN of your LDAP host. Enter the LDAP username without any other prefix or suffix such as `domain\\` or `@domain`. Only the username.

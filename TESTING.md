@@ -117,10 +117,12 @@ artifacts when a job fails.
     change that fails with `0x80070547`. The uncovered path should not be
     assumed to be the safer one on the strength of having had fewer bugs
     found in it.
-  - The password change itself does not succeed on the explicit-bind path.
-    That is an open issue rather than a property of the harness; see
+  - The password change on the explicit-bind path failed for a long time and
+    now works. What fixed it was binding the write over LDAPS rather than
+    inheriting the connection the principal carries; see
     [The AD password change on the explicit-bind path](#the-ad-password-change-on-the-explicit-bind-path)
-    below for what has been ruled out.
+    below for the full trail, including what was ruled out and the conclusion
+    that had to be retracted.
 - The LDAP smoke test relies on MokAPI's LDAP fixture support. Swap in
   `osixia/openldap` if you need a more realistic password-change path
   (Modify with `userPassword` works against both; the AD-style
@@ -128,10 +130,18 @@ artifacts when a job fails.
 
 ## The AD password change on the explicit-bind path
 
-**Status: open, but no longer mysterious.** Against the containerised Samba AD DC,
-with `UseAutomaticContext: false` and explicit service-account credentials, reads
-work and the password change does not. `SDSUtils.ChangePassword` — the ADSI call
-behind `UserPrincipal.ChangePassword` — fails.
+**Status: resolved. The transport was the cause, and the conclusion recorded here
+for several rounds was wrong.** The sections below are kept in the order they were
+written, because the wrong turn is the useful part: every measurement was correct
+and the inference from them was not. If you only want the answer, it is
+[Correcting the write path](#correcting-the-write-path-bind-it-over-ldaps);
+`0x80070547` was real but it was a consequence of binding the write on 389, not
+evidence that the host had to be domain-joined.
+
+Against the containerised Samba AD DC, with `UseAutomaticContext: false` and
+explicit service-account credentials, reads worked and the password change did
+not. `SDSUtils.ChangePassword` — the ADSI call behind
+`UserPrincipal.ChangePassword` — failed.
 
 **The short version, from server-side audit logging:** the directory records **no
 authentication attempt at all** for the change, while the service account's binds
@@ -454,11 +464,15 @@ running out of options; it is not getting as far as choosing. Consistent with
 this, the SMB/445 line of enquiry is **not** worth pursuing: there is no
 fall-through to reach it.
 
-It also means the remaining explanation is a property of the client environment —
-a machine that is not domain-joined, with no computer account and no domain
-configuration to read — rather than of PassCore's code or of the directory. That
-matches the standing plan to verify against a real domain-joined host, and makes
-that verification the decisive test rather than one more CI round.
+It also looked, at this point, as though the remaining explanation had to be a
+property of the client environment — a machine that is not domain-joined, with no
+computer account and no domain configuration to read — rather than of PassCore's
+code or of the directory.
+
+**That last step was wrong**, and it is retracted below. The domain-configuration
+read is one ADSI performs only when the SSL path is not available to it, and the
+connection PassCore handed it decided that. The observations in this section all
+still stand; only the conclusion drawn from them does not.
 
 ### Is there a working write path at all?
 
@@ -483,6 +497,10 @@ records the matching Kerberos pre-authentications. So the directory is writable
 from this host; what fails is specific to how ADSI resolves its target.
 
 #### `AllowAdministrativeReset` does not work in this configuration
+
+*(Superseded — it works now. This section records the state at the time and the
+reasoning that led out of it; the resolution is
+[Correcting the write path](#correcting-the-write-path-bind-it-over-ldaps).)*
 
 Probe A is precisely what that feature calls. It fails with `0x800706BA`, "the RPC
 server is unavailable" — `SetPassword` goes over SAMR/DCE-RPC to the server named
@@ -587,18 +605,18 @@ and accepts the same bind natively. The CI relaxation therefore makes the test D
 behave *like production for this behaviour*, which is why it is kept — and why it
 must never be set on a real DC, where the protection is doing real work.
 
-#### The operational consequence, for `AllowAdministrativeReset`
+#### The operational consequence, as it stood at this point
 
-Because PassCore binds on `LdapPort`, the reset as shipped falls through to RPC —
-so **it requires RPC/SMB reachability to a domain controller.** That is a
-materially larger firewall requirement than LDAP, and a PassCore deployment in a
-DMZ with only 389/636 open does not meet it. Such a deployment can enable the
-option and have it rescue nothing.
+Because PassCore bound on `LdapPort`, the reset as shipped fell through to RPC, so
+it required RPC/SMB reachability to a domain controller — a materially larger
+firewall requirement than LDAP, which a DMZ deployment with only 389/636 open does
+not meet.
 
-Binding the reset's entry over LDAPS would remove that requirement entirely,
-leaving only 636 and a trusted certificate — both of which PassCore already needs.
-That is the recommended fix and it is small, but it is a product change and is not
-made here.
+**That requirement is gone**; it was an artefact of where the entry was bound, and
+the next section removes it. It is left described here because it was documented as
+a shipped constraint in `README.md`, `appsettings.json` and a startup warning, and
+because the same reasoning applies to any future call reached through a
+`DirectoryEntry`: the connection is the argument nobody passes.
 
 #### The `ShouldAttempt` gap — recorded, not closed
 
@@ -613,14 +631,122 @@ firewall dropped a packet. That is the same trade already rejected when
 reclassifying `ERROR_ACCESS_DENIED`, and it is recorded here as an open decision
 with its cost rather than taken.
 
-This is why the startup warning (EventId 117) names the **combination** rather
-than any single setting: enabling `AllowAdministrativeReset` does not fix this,
-and a warning that implied it would be worse than none.
+EventId 117 was added at this point to say so at startup — that no write could
+succeed in this combination and that enabling `AllowAdministrativeReset` would not
+change it. It has since been **retired**, because the first half became false and
+the second was answering a question nobody needed to ask once the write worked. The
+`ShouldAttempt` gap itself is unchanged and still open: the reset would still not
+fire on an infrastructure-class failure. It no longer needs to.
+
+### Correcting the write path: bind it over LDAPS
+
+Probes C1 and C2 asked the question A2 raised but did not answer: if the bound
+connection decides which method `SetPassword` reaches, does it also decide it for
+`ChangePassword` — the ordinary, user-initiated change that PassCore exists to
+perform?
+
+```
+=== Probe C1: IADsUser::ChangePassword, LDAPS entry, service account ===
+  SUCCEEDED for probeuser   (restored)
+
+=== Probe C2: IADsUser::ChangePassword, LDAPS entry, user's own credentials ===
+  SUCCEEDED for probeuser   (restored)
+```
+
+Both succeeded, in the same run, from the same non-domain-joined runner, against
+the same directory that had been failing the 389-bound call with `0x80070547` for
+weeks. The DC logged them as what they are:
+
+```
+Auth: [LDAP,NTLMSSP] user [EXAMPLE]\[Administrator] … local host [ipv4:10.88.0.2:636]
+Auth: [LDAP Password Change,LDAP Modify] user [EXAMPLE]\[probeuser] … status [NT_STATUS_OK]
+```
+
+An ordinary LDAP password modification, attributed to the target user, over 636 —
+ADSI's **first** documented method, reached because the connection allowed it.
+
+Note C1: the bind is the *service account* and the modification is still attributed
+to `probeuser`, and still required the old password as an argument. Binding as the
+service account does not turn the change into a reset — the directory verifies the
+old password either way, so password history and minimum age keep applying. That is
+why the fix could use the service-account credentials it already has rather than
+re-binding as the user.
+
+**The full measurement**, all four cells from the same environment:
+
+| | 389-bound entry | LDAPS-bound entry |
+|---|---|---|
+| `SetPassword` (Probe A / A2) | `0x800706BA` RPC server unavailable | **succeeds** |
+| `ChangePassword`, service-account bind (Probe C1) | `0x80070547` (as PassCore) | **succeeds** |
+| `ChangePassword`, user's own bind (Probe C2) | — | **succeeds** |
+
+**The change.** `PasswordChangeProvider` now binds its own `DirectoryEntry` for the
+target user over LDAPS and performs both writes through it — the ordinary change and
+the administrative reset. The port comes from `LdapChannelPorts.SslPortFor`, the
+substitution the SSL fallback already uses, so `389` becomes `636` and any other
+configured value is used as given; there is deliberately no separate LDAPS-port
+setting to get out of step with `LdapPort`.
+
+Three things it does **not** do, each for a reason:
+
+- **The service-account context stays on sign-and-seal.** It needs no certificate
+  trust, so every read keeps working on directories this machine cannot validate.
+  Moving it to LDAPS would impose that trust on every operation to fix one.
+- **Certificate validation is not relaxed.** A write nobody can authenticate is not
+  a fix. If the certificate is untrusted, the bind fails and is reported.
+- **A failed bind falls back** to the previous principal-based call rather than
+  failing the change, so a deployment with no usable LDAPS is no worse off than it
+  was. The bind is forced eagerly with a one-attribute `RefreshCache` so that
+  failure is attributable: left lazy, it would surface from `Invoke` alongside "the
+  directory rejected this password", and falling back there would re-attempt a
+  change the directory had already refused.
+
+**The requirement this creates, and it is a real one.** LDAPS reachability and a
+trusted certificate are now prerequisites for the password write on the
+explicit-bind path — and for nothing else PassCore does. A deployment can be
+entirely healthy in every observable way and still have no working change, which is
+why it is announced at startup (EventId 115) and reported per request with the port
+and the reason when the bind fails (EventId 119).
+
+#### The assumption this corrected
+
+For several rounds the recorded conclusion was that the change *requires a
+domain-joined host*, and that `0x800706BA` from the reset meant RPC reachability was
+a genuine prerequisite. Both were wrong, and both for the same reason.
+
+Every measurement behind them was accurate. `0x80070547` really was raised before
+the directory was contacted; the DC really did record no authentication event; the
+host really was not domain-joined. What was wrong was the step from there to "and
+therefore a domain join is what it needs" — because **only a 389-bound entry had
+ever been measured**. ADSI tries LDAP over SSL, then Kerberos, then RPC. Reaching
+the RPC error means the first two had already been ruled out *by the binding*, not
+that RPC was what the operation wanted; and the domain-configuration read that
+failed is one ADSI only performs once the SSL path is unavailable to it.
+
+The workflow comment that A2 was written under said the write opened its own
+connection regardless of the entry's binding, so A2 "should" have matched A. It did
+not, and that single unexpected difference is what unwound the rest. The general
+form of the mistake is worth keeping: a negative result taken at the end of a
+fallback chain describes the *last* option tried, and says nothing about why the
+earlier ones were skipped.
 
 ### Assessment: should PassCore adopt `NetUserChangePassword`?
 
-**Recommendation: adopt behind an explicit opt-in option, gated on the specific
-failure — do not adopt unconditionally, and do not adopt silently.**
+**Recommendation, updated: no. Do not adopt it.** The reasoning below was written
+while `NetUserChangePassword` was the only write path known to work from this host,
+and it argued for an opt-in option gated on `0x80070547`. Probes C1 and C2 removed
+the premise: the ordinary ADSI change works over an LDAPS-bound entry, needing no
+new API, no new option, and none of the SMB/445 reachability that was this
+proposal's principal cost. An escape hatch for a failure that no longer occurs would
+be code carrying a firewall requirement nobody has to meet.
+
+It is kept because the analysis stands on its own if the question ever returns — for
+instance if a directory is found where the LDAPS write also fails. The original
+recommendation follows, unedited.
+
+**Original recommendation (superseded): adopt behind an explicit opt-in option,
+gated on the specific failure — do not adopt unconditionally, and do not adopt
+silently.**
 
 1. **Which domain form works.** Only the domain (`example.com`). The server form
    (`dc.example.com`) returns 1351. Any adoption must pass the *domain*, which
@@ -667,6 +793,9 @@ environment and becomes the only working path for every explicit-bind deployment
 deserves revisiting. If `ChangePassword` works when domain-joined, this stays a
 narrow escape hatch and may not be worth carrying at all.
 
+*(What actually changed it was neither: `ChangePassword` works from a host that is
+not domain-joined, once the entry is bound over LDAPS.)*
+
 ### A note on how long the instrumentation took
 
 Five rounds, and the honest summary is that four of them were wasted on my own
@@ -695,22 +824,25 @@ the empty logs were never evidence about ADSI.
 
 ### What the smoke test asserts about it
 
-Test 1 asserts the password change **succeeds**, and it currently fails. The
-assertion has deliberately not been weakened to match the behaviour: it
-describes what the provider is supposed to do, and a failing assertion is the
-correct report of an open defect. Do not relax it to get a green run.
+Test 1 asserts the password change **succeeds**. It failed for a long time, and
+throughout that period the assertion was deliberately not weakened to match the
+behaviour: it describes what the provider is supposed to do, and a failing
+assertion is the correct report of an open defect. That is why the fix is a fix
+and not a re-scoped expectation. **Do not relax it**, then or now.
 
-Test 1 is now the **only** failing assertion in the AD smoke test. It spent a
-long time unreachable: the group legs run before it, and Leg A's non-member
-assertion could not be answered while membership resolution depended on
-`Forest.GetForest()`. Since the move to security-groups-only, Legs A–D pass and
-Test 1 executes, which is how the stack above was finally captured.
+It spent a long time unreachable before it could even fail honestly: the group legs
+run before it, and Leg A's non-member assertion could not be answered while
+membership resolution depended on `Forest.GetForest()`. Since the move to
+security-groups-only, Legs A–D pass and Test 1 executes, which is how the stack
+above was finally captured — and, once the write was bound over LDAPS, how the pass
+was confirmed.
 
-The legs' own "must be permitted" assertions are unaffected by the change failing.
-They check that the account got **past the group check**, not that the password
-was written, so they treat anything other than `UserNotFound` (3),
-`InvalidCredentials` (4) or `ChangeNotPermitted` (6) as permitted. Their trailing
-`restore` calls do fail — the password was never changed, so restoring it with the
-new one cannot authenticate — and that is why `ERROR_LOGON_FAILURE (1326)` appears
-in the log alongside each of them. It is expected noise from `|| true` cleanup, not
-a second defect.
+The legs' own "must be permitted" assertions were unaffected by the change failing,
+and their behaviour is unchanged now that it does not. They check that the account
+got **past the group check**, not that the password was written, so they treat
+anything other than `UserNotFound` (3), `InvalidCredentials` (4) or
+`ChangeNotPermitted` (6) as permitted. While the change was failing their trailing
+`restore` calls failed too — the password was never changed, so restoring it with
+the new one could not authenticate — which is why `ERROR_LOGON_FAILURE (1326)` used
+to appear in the log alongside each of them. That noise disappears when the write
+works; it was never a second defect.
