@@ -141,15 +141,22 @@ namespace Unosquare.PassCore.PasswordProvider
         // directory that does not offer LDAPS, while a certificate failure is
         // trust on THIS machine. The exception carries the reason into the log
         // without putting it anywhere near the wire.
+        //
+        // Each placeholder appears EXACTLY ONCE. LoggerMessage.Define counts
+        // occurrences, not distinct names, so repeating {Host} for emphasis
+        // makes the count disagree with the type arguments and throws from the
+        // static initializer -- taking the whole application down at startup,
+        // not just this log line.
         private static readonly Action<ILogger, string?, string, string, int, Exception?> LogLdapsWriteBindFailed =
             LoggerMessage.Define<string?, string, string, int>(
                 LogLevel.Warning,
                 new EventId(119, nameof(LogLdapsWriteBindFailed)),
-                "[{CorrelationId}] Could not bind an LDAPS directory entry at {Host}:{Port} for the " +
-                "password {Operation}, so it falls back to the principal-based call, which selects " +
-                "its own transport and has been observed to fail on a host that is not domain-joined. " +
-                "The bind needs port {Port} to be reachable on {Host} and that directory's " +
-                "certificate to be trusted by this machine. The reason is attached.");
+                "[{CorrelationId}] Could not bind an LDAPS directory entry for the password " +
+                "{Operation} at {Host}:{Port}, so it falls back to the principal-based call, which " +
+                "selects its own transport and has been observed to fail on a host that is not " +
+                "domain-joined. That bind needs the port named above to be reachable on that host, " +
+                "and the directory's certificate to be trusted by this machine. The reason is " +
+                "attached.");
 
         // Records which channel the service-account context actually got. With a
         // fallback in the path, "it worked" is not enough information: an

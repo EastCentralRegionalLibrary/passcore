@@ -126,6 +126,128 @@ public class LoggingConventionAuditTests
         }
     }
 
+    /// <summary>
+    /// Every <c>LoggerMessage.Define</c> format string must contain exactly as many
+    /// placeholder occurrences as the call has type arguments.
+    ///
+    /// <para><b>Occurrences, not distinct names.</b> Repeating <c>{Host}</c> later in
+    /// a message — natural enough when the sentence reads better for it — makes the
+    /// count disagree, and <c>Define</c> throws <c>ArgumentException</c>. These are
+    /// <c>static readonly</c> fields, so that surfaces as a
+    /// <c>TypeInitializationException</c> the first time the provider is
+    /// constructed: the whole application fails to start, and the log line that
+    /// caused it never appears anywhere.</para>
+    ///
+    /// <para>Nothing in the compiler notices, and no existing test could: this is a
+    /// runtime check inside a static initializer, and the AD provider is
+    /// <c>net8.0-windows</c> inside <c>#if WINDOWS</c> and cannot be loaded here at
+    /// all. It was found by a CI smoke test crashing at startup, which is the
+    /// latest and most expensive place to find it. Reading the source is the only
+    /// check available before then.</para>
+    /// </summary>
+    [Fact]
+    public void EveryLoggerMessageDefine_HasOneFormatPlaceholderPerTypeArgument()
+    {
+        var offenders = new List<string>();
+
+        foreach (var (relativePath, source) in SolutionSources())
+        {
+            foreach (var (typeArguments, placeholders, index) in LoggerMessageDefinitions(source))
+            {
+                if (typeArguments != placeholders)
+                {
+                    offenders.Add(
+                        $"{relativePath} at offset {index}: {typeArguments} type argument(s) but " +
+                        $"{placeholders} placeholder occurrence(s) in the format string.");
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "A LoggerMessage.Define format string does not have one placeholder occurrence per type " +
+            "argument. Define counts occurrences rather than distinct names, so repeating a " +
+            "placeholder for emphasis breaks it — and because these are static readonly fields, it " +
+            "throws from the type initializer and the application does not start:\n  " +
+            string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// Yields the type-argument count, the format-string placeholder count, and the
+    /// source offset of each <c>LoggerMessage.Define</c> call. The format string is
+    /// reassembled from every string literal inside the call — the other arguments
+    /// (<c>LogLevel</c>, <c>new EventId(n, nameof(...))</c>) contribute none — so a
+    /// message split across concatenated lines is measured whole.
+    /// </summary>
+    private static IEnumerable<(int TypeArguments, int Placeholders, int Index)> LoggerMessageDefinitions(string source)
+    {
+        const string call = "LoggerMessage.Define";
+
+        for (var at = source.IndexOf(call, StringComparison.Ordinal);
+             at >= 0;
+             at = source.IndexOf(call, at + call.Length, StringComparison.Ordinal))
+        {
+            var cursor = at + call.Length;
+            var typeArguments = 0;
+
+            if (cursor < source.Length && source[cursor] == '<')
+            {
+                var close = MatchingBracket(source, cursor, '<', '>');
+                if (close < 0) continue;
+
+                typeArguments = CountTopLevelArguments(source[(cursor + 1)..close]);
+                cursor = close + 1;
+            }
+
+            while (cursor < source.Length && char.IsWhiteSpace(source[cursor])) cursor++;
+            if (cursor >= source.Length || source[cursor] != '(') continue;
+
+            var end = MatchingBracket(source, cursor, '(', ')');
+            if (end < 0) continue;
+
+            var arguments = source[(cursor + 1)..end];
+            var format = string.Concat(
+                Regex.Matches(arguments, @"(?<!@)""(?:[^""\\\n]|\\.)*""")
+                    .Select(m => m.Value));
+
+            // {{ is an escaped brace and is not a placeholder.
+            var placeholders = Regex.Matches(
+                format.Replace("{{", string.Empty, StringComparison.Ordinal),
+                @"\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}").Count;
+
+            yield return (typeArguments, placeholders, at);
+        }
+    }
+
+    private static int MatchingBracket(string source, int open, char opening, char closing)
+    {
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == opening) depth++;
+            else if (source[i] == closing && --depth == 0) return i;
+        }
+
+        return -1;
+    }
+
+    private static int CountTopLevelArguments(string typeArgumentList)
+    {
+        if (string.IsNullOrWhiteSpace(typeArgumentList)) return 0;
+
+        var count = 1;
+        var depth = 0;
+
+        foreach (var character in typeArgumentList)
+        {
+            if (character is '<' or '(') depth++;
+            else if (character is '>' or ')') depth--;
+            else if (character == ',' && depth == 0) count++;
+        }
+
+        return count;
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
