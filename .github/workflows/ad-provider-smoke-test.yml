@@ -292,24 +292,40 @@ jobs:
       # at log level 3 records bind attempts and why it rejects them, which is the
       # capture this has needed throughout and is obtainable without tcpdump.
       #
-      # ---- The strong-auth relaxation is GONE, and should stay gone ----
-      # This step briefly set "ldap server require strong auth = allow_sasl_over_tls"
-      # to test whether Samba's default hardening (yes, since CVE-2016-2112) was
-      # what blocked the password change. It was not, and the question is now
-      # moot: server-side audit logging shows the change producing NO
+      # ---- The strong-auth relaxation is BACK, for a different API ----
+      # CI ONLY. NEVER DO THIS TO A REAL DC. Samba's own documentation says not
+      # to set it, and the default exists for a reason: since CVE-2016-2112 Samba
+      # denies SASL binds over TLS because it does not implement LDAP channel
+      # binding, so there is no cryptographic tie between the NTLM or Kerberos
+      # token and the TLS layer and a relay attack is possible. It refuses the
+      # combination rather than accept an unsafe session. Real AD DOES implement
+      # channel binding (that is what ADV190023 concerns), so this relaxation
+      # emulates production behaviour here rather than weakening past it.
+      #
+      # It was set once before, to test whether that default was blocking
+      # IADsUser::ChangePassword. It was not -- that call produces no
       # authentication event at all, and a server-side auth policy cannot explain
-      # a failure the server never sees.
+      # a failure the server never sees -- so it was removed, with a note that a
+      # future question needing it should set it deliberately and take it out
+      # again. This is that question, and it is about a DIFFERENT API.
       #
-      # It is removed rather than left in place because it made this DC diverge
-      # from a real one's default for no remaining benefit, and a test directory
-      # that is quietly more permissive than production is a good way to miss a
-      # regression later. Samba's own documentation says not to set it. If some
-      # future question genuinely needs it, set it deliberately for that run and
-      # take it out again.
+      # IADsUser::SetPassword tries three methods in documented order: LDAP over
+      # a 128-bit SSL connection, Kerberos, then NetUserSetInfo over RPC. It fails
+      # here with 0x800706BA, "the RPC server is unavailable" -- which means it
+      # reached the THIRD method, so the first two both failed first. The
+      # certificate is trusted and LDAPS binds succeed from this runner, so the
+      # likely reason Secure LDAP fell through is exactly the default above.
       #
-      # Note for anyone tempted to retry it: it must be applied with
-      # `supervisorctl restart samba`, NOT `podman restart`. See below.
-      - name: Raise Samba's log level for server-side visibility
+      # That matters well beyond this test: SetPassword is what the shipped
+      # AllowAdministrativeReset feature calls, and PR 63 proved that feature
+      # non-functional on this path. If Secure LDAP is what it wants, the reset
+      # needs 636 and a trusted certificate and nothing more -- both of which
+      # PassCore already requires -- and the feature is sound on real AD.
+      #
+      # Note for anyone retrying this: it must be applied with
+      # `supervisorctl restart samba`, NOT `podman restart`, which re-runs the
+      # image entrypoint and regenerates smb.conf. See below.
+      - name: Raise Samba's log level, and allow SASL over TLS (CI only)
         shell: wsl-bash {0}
         run: |
           echo "=== smb.conf BEFORE ==="
@@ -328,6 +344,7 @@ jobs:
             awk "/^\[global\]/{
                    print;
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
@@ -1284,6 +1301,48 @@ jobs:
               catch {
                   Report-Failure $_ "  Probe A restore:"
                   Write-Host "  Probe A: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          # --- Probe A2: same call, but bound over LDAPS explicitly -----------
+          # ADSI opens its OWN connection for the password write regardless of the
+          # one the DirectoryEntry is bound on, so in principle this should make
+          # no difference. It is here because "in principle" has been wrong at
+          # every stage of this investigation, it costs one more block in a step
+          # already running, and a DIFFERENCE between A and A2 would itself be the
+          # finding -- it would mean the bound connection does influence the write
+          # after all.
+          Write-Host "=== Probe A2: IADsUser::SetPassword over an LDAPS-bound entry ==="
+          $probeA2Worked = $false
+          try {
+              $sslAuthTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                              [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer
+              $sslEntry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+              $sslEntry.RefreshCache(@("distinguishedName"))
+              $sslEntry.Invoke("SetPassword", @($probeNewPass)) | Out-Null
+              $sslEntry.CommitChanges()
+              Write-Host "  Probe A2: SetPassword over LDAPS SUCCEEDED for $probeUser"
+              $probeA2Worked = $true
+              $sslEntry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe A2:"
+          }
+
+          if ($probeA2Worked) {
+              try {
+                  $restore2 = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+                  $restore2.RefreshCache(@("distinguishedName"))
+                  $restore2.Invoke("SetPassword", @($probeOldPass)) | Out-Null
+                  $restore2.CommitChanges()
+                  Write-Host "  Probe A2: restored $probeUser to its seeded password"
+                  $restore2.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe A2 restore:"
+                  Write-Host "  Probe A2: WARNING - $probeUser may be left with a changed password."
               }
           }
 
