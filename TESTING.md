@@ -460,6 +460,114 @@ configuration to read — rather than of PassCore's code or of the directory. Th
 matches the standing plan to verify against a real domain-joined host, and makes
 that verification the decisive test rather than one more CI round.
 
+### Is there a working write path at all?
+
+Two write paths were probed directly from the runner, bypassing PassCore, because
+the subject under test is the platform rather than the provider.
+
+```
+=== Probe A: IADsUser::SetPassword as the service account ===
+  FAILED: COMException: The RPC server is unavailable. (0x800706BA)
+
+=== SMB reachability ===
+  10.88.0.2:445 REACHABLE
+
+=== Probe B: NetUserChangePassword with an explicit domain ===
+  [example.com]:    SUCCEEDED (NET_API_STATUS 0)   restore returned 0
+  [dc.example.com]: failed with NET_API_STATUS 1351
+```
+
+**There is a working write path.** `NetUserChangePassword`, given the *domain*
+name, changed `probeuser`'s password and changed it back, and Samba's audit log
+records the matching Kerberos pre-authentications. So the directory is writable
+from this host; what fails is specific to how ADSI resolves its target.
+
+#### `AllowAdministrativeReset` does not work in this configuration
+
+Probe A is precisely what that feature calls. It fails with `0x800706BA`, "the RPC
+server is unavailable" — `SetPassword` goes over SAMR/DCE-RPC to the server named
+in the `DirectoryEntry` path, and that name resolves to an address where RPC is
+not served.
+
+This is a finding in its own right and worth stating plainly: **a shipped feature
+is non-functional in the configuration under test.** It is not merely unhelpful
+here — `AllowAdministrativeReset` cannot rescue anything on a non-domain-joined
+explicit-bind host, because the API it depends on cannot reach the directory.
+
+Note also that it would not have fired even if it worked. `AdministrativeReset.-
+ShouldAttempt` requires `ChangeNotPermitted` with the current password verified,
+and this failure classifies as infrastructure. Widening that condition is **not**
+the fix and should not be done casually: it would make administrative resets fire
+on genuine transport failures, which is the same trade already rejected when
+reclassifying `ERROR_ACCESS_DENIED`. Recorded as an open decision, not taken.
+
+#### The `1351` correlation, and what it suggests
+
+`NetUserChangePassword` returns **1351** when given `dc.example.com` and **0**
+when given `example.com`. 1351 is `ERROR_CANT_ACCESS_DOMAIN_INFO` — *the same code
+`IADsUser::ChangePassword` fails with*.
+
+That is a strong hint about the mechanism: the same API, handed a **server** name
+where a **domain** name is required, produces exactly the error PassCore sees. The
+`DirectoryEntry` that `ChangePassword` operates on carries `dc.example.com`. So
+ADSI plausibly passes that server name into a domain-shaped lookup and gets the
+same 1351 back.
+
+**This is a hypothesis with matching evidence, not a proof.** Nothing here
+inspects what ADSI actually passes internally, and it remains consistent with the
+established fact that the DC sees no authentication event for the change — a name
+that cannot be resolved to a domain never becomes a connection.
+
+### Assessment: should PassCore adopt `NetUserChangePassword`?
+
+**Recommendation: adopt behind an explicit opt-in option, gated on the specific
+failure — do not adopt unconditionally, and do not adopt silently.**
+
+1. **Which domain form works.** Only the domain (`example.com`). The server form
+   (`dc.example.com`) returns 1351. Any adoption must pass the *domain*, which
+   PassCore has as `DefaultDomain` or can derive from the UPN — notably it must
+   **not** reuse `LdapHostnames`, which is deliberately set to the DC's FQDN and is
+   exactly the form that fails.
+
+2. **Operational cost — the real objection.** It requires SMB/445 reachability
+   from the application host to a domain controller. That is a materially bigger
+   firewall ask than LDAP: PassCore is frequently deployed in a DMZ precisely so
+   that only 389/636 need to be open, and 445 outbound to a DC is blocked by
+   policy in many of those environments. It worked here only because the static
+   route makes the container's own 445 reachable. This cost is why it must be
+   opt-in rather than an automatic fallback.
+
+3. **Gating, precisely.** A new option (default **false**), and even when enabled
+   it is attempted *only* after `ChangePassword` has failed with `0x80070547`
+   specifically — not on any failure, and never before ADSI has been tried. A
+   domain-joined host where `ChangePassword` works therefore never reaches it, and
+   an operator who has not opened 445 never has a request quietly routed there.
+
+4. **Error surface — smaller than feared.** `NET_API_STATUS` is not an HRESULT, so
+   `DirectoryErrorTranslator.TryGetWin32Code` will not recover it. But the values
+   are Win32/lmerr codes in the same numeric space the existing `Win32ErrorCode`
+   catalog already describes — `86` invalid password, `2221` user not found,
+   `2245` password too short, `5` access denied, `1351`, `53`/`1722` unreachable.
+   The work is to wrap the returned `int` so the catalog can classify it, not to
+   invent a second taxonomy. Doing it any other way would reproduce the misrouted
+   errors this project spent months eliminating.
+
+5. **Security properties — unchanged, with one thing to verify.** It authenticates
+   with the user's **own old password**, so it cannot change a password without
+   it, and it cannot perform an administrative reset. It uses no service-account
+   privilege, so it grants nothing the current flow does not already permit, and
+   the existing verify-before-write ordering is untouched. The one thing not to
+   assume: that the exchange is encrypted. Modern SMB negotiates encryption and
+   RPC sealing, but that should be confirmed on the target platform rather than
+   inferred, since a password crosses it.
+
+**What would change the recommendation.** If the domain-joined verification shows
+`ChangePassword` failing there too, this stops being a workaround for one
+environment and becomes the only working path for every explicit-bind deployment
+— at which point the SMB requirement is worth paying and the option's default
+deserves revisiting. If `ChangePassword` works when domain-joined, this stays a
+narrow escape hatch and may not be worth carrying at all.
+
 ### A note on how long the instrumentation took
 
 Five rounds, and the honest summary is that four of them were wasted on my own

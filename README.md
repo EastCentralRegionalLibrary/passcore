@@ -144,6 +144,10 @@ The most relevant configuration entries are shown below. Make sure you make your
 >
 > **Workaround:** run PassCore on a domain-joined host.
 >
+> **What does work here.** The directory itself is writable from such a host — a direct `NetUserChangePassword` call, given the *domain* name, changes a password successfully. PassCore does not currently use that API, and adopting it would require SMB/445 reachability from the application host to a domain controller, which is a bigger firewall requirement than LDAP alone. Assessed in [`TESTING.md`](TESTING.md).
+>
+> **`AllowAdministrativeReset` does not help.** It calls `IADsUser::SetPassword`, which fails here with `0x800706BA` ("the RPC server is unavailable"). Enabling that option in this configuration does not provide a working path.
+>
 > **What is *not* claimed:** that a domain-joined host running `UseAutomaticContext: false` is affected. That combination is untested. If you are on one and password changes work, this notice does not apply to you.
 >
 > **Ruled out with evidence** — not worth retrying: transport reachability (389, 636, 88, 464, 3268 all confirmed reachable), certificate trust (LDAPS binds succeed), channel protection (the context is established over sign-and-seal, confirmed from the provider's own logs), Kerberos realm mapping, and `LdapPort` — setting `636` prevents any context being established at all and makes matters worse rather than better. Full detail and evidence: [`TESTING.md`](TESTING.md), "The AD password change on the explicit-bind path".
