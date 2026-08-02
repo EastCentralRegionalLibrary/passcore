@@ -60,6 +60,45 @@ namespace Unosquare.PassCore.PasswordProvider
                 "which is TLS from the first byte and cannot answer a plain LDAP bind. Connecting " +
                 "over SSL instead. This is expected for an LDAPS configuration.");
 
+        // The ADMINISTRATIVE RESET's transport requirement, which is separate from
+        // and additional to EventId 115's subject.
+        //
+        // IADsUser::SetPassword tries LDAP over SSL, then Kerberos, then
+        // NetUserSetInfo over RPC. Which one it gets depends on the connection the
+        // DirectoryEntry is bound on, and that was measured rather than assumed:
+        // an entry bound sign-and-seal on 389 fell all the way through to RPC and
+        // failed 0x800706BA, while the same call on an LDAPS-bound entry succeeded
+        // in the same run against the same directory.
+        //
+        // PassCore binds sign-and-seal on LdapPort, and GetDirectoryEntry builds
+        // its path from that same port, so the entry a reset acts on today is the
+        // one that falls through to RPC. That makes RPC/SMB reachability to a
+        // domain controller a real prerequisite of AllowAdministrativeReset -- a
+        // materially larger firewall requirement than LDAP, and one a DMZ
+        // deployment with only 389/636 open will not satisfy.
+        //
+        // The message names the COMBINATION rather than one setting, deliberately.
+        // Enabling AllowAdministrativeReset does NOT rescue this: the reset would
+        // still need a transport this path does not have, and ShouldAttempt
+        // requires ChangeNotPermitted while the failure classifies as
+        // infrastructure. A warning that implied "just turn the option on" would
+        // be worse than no warning.
+        private static readonly Action<ILogger, Exception?> LogNoWorkingPasswordWritePath =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(117, nameof(LogNoWorkingPasswordWritePath)),
+                "No password change can succeed in this combination: the AD provider with " +
+                "UseAutomaticContext=false, on a host that is not domain-joined, where the " +
+                "directory service cannot be reached over RPC/SMB. The user-context change " +
+                "fails before contacting the directory (0x80070547), and the administrative " +
+                "reset cannot substitute for it - IADsUser::SetPassword falls through to " +
+                "RPC because PassCore binds its directory entry on LdapPort rather than over " +
+                "LDAPS, and it is not attempted at all for this failure class. ENABLING " +
+                "AllowAdministrativeReset DOES NOT FIX THIS. Run PassCore on a domain-joined " +
+                "host, or ensure RPC/SMB reachability to a domain controller. Reads, " +
+                "credential verification and group membership are unaffected and continue to " +
+                "work. See TESTING.md, \"The AD password change on the explicit-bind path\".");
+
         // Warning, not error, and deliberately so. Everything else on this path
         // works and is covered end-to-end against a live directory: reads, binds,
         // credential verification, group membership, minPwdLength, policy
@@ -149,7 +188,16 @@ namespace Unosquare.PassCore.PasswordProvider
             // directory error, which reads as a transient outage rather than a
             // configuration that may never have been able to change a password.
             if (!_options.UseAutomaticContext)
+            {
                 LogExplicitBindPasswordChangeUnverified(Logger, null);
+
+                // Said separately from 115 because it is a different claim with a
+                // different remedy: 115 is about the change failing, this is about
+                // the reset being unable to cover for it. An operator who reads
+                // only 115 could reasonably conclude that enabling the reset is
+                // the answer, and it is not.
+                LogNoWorkingPasswordWritePath(Logger, null);
+            }
         }
 
         private static void ValidateOptions(PasswordChangeOptions opts)

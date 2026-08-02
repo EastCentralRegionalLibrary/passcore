@@ -560,20 +560,62 @@ above.
 That is a product change rather than a documentation fix, and it is a small and
 well-targeted one — the reset path already builds its own entry.
 
-#### What is not yet separated
+#### Separated, in a second run
 
-Both probes ran with Samba's `ldap server require strong auth` relaxed to
-`allow_sasl_over_tls`. So while the A-versus-A2 comparison is controlled and the
-LDAPS binding is definitively the discriminating variable, **whether A2 would
-also succeed against Samba's default is untested**. Prior evidence suggests it
-would not: the `LdapPort: 636` experiment showed `Negotiate | SecureSocketLayer`
-refused with `0x80072028`, which is that same default denying a SASL bind over
-TLS.
+The first run had both probes under a relaxed Samba (`allow_sasl_over_tls`), so
+whether A2 needed that relaxation was still open. Removing it and keeping A2
+answers it:
 
-This distinction is CI-only. Real AD implements LDAP channel binding — which is
-what Samba lacks and why it refuses — so SASL over TLS is accepted there
-natively. The production requirement is the same either way: an LDAPS-bound entry
-and a trusted certificate.
+```
+ldap server require strong auth = Yes   (Samba's default)
+  Probe A   0x800706BA  (unchanged)
+  Probe A2  0x80072028 "A more secure authentication method is required"
+              — raised at RefreshCache, so the BIND is refused and SetPassword
+                is never reached
+```
+
+So the two findings are cleanly separated:
+
+- **The LDAPS binding is what makes `SetPassword` succeed** — established by A
+  and A2 differing under identical server settings.
+- **Samba's default prevents the LDAPS bind from happening at all** — established
+  by A2 changing from success to `0x80072028` when only that setting moved.
+
+The second is Samba-only and does not qualify the first. Samba refuses SASL over
+TLS because it does not implement LDAP channel binding; real AD does (ADV190023)
+and accepts the same bind natively. The CI relaxation therefore makes the test DC
+behave *like production for this behaviour*, which is why it is kept — and why it
+must never be set on a real DC, where the protection is doing real work.
+
+#### The operational consequence, for `AllowAdministrativeReset`
+
+Because PassCore binds on `LdapPort`, the reset as shipped falls through to RPC —
+so **it requires RPC/SMB reachability to a domain controller.** That is a
+materially larger firewall requirement than LDAP, and a PassCore deployment in a
+DMZ with only 389/636 open does not meet it. Such a deployment can enable the
+option and have it rescue nothing.
+
+Binding the reset's entry over LDAPS would remove that requirement entirely,
+leaving only 636 and a trusted certificate — both of which PassCore already needs.
+That is the recommended fix and it is small, but it is a product change and is not
+made here.
+
+#### The `ShouldAttempt` gap — recorded, not closed
+
+Even with a working transport, the reset would not fire on this failure.
+`AdministrativeReset.ShouldAttempt` requires `ChangeNotPermitted` with the current
+password verified, and the change failure classifies as **infrastructure**.
+
+Widening that condition is not the fix and should not be done casually: letting
+resets fire on infrastructure failures would trigger administrative resets during
+genuine transport problems — an account's password silently reset because a
+firewall dropped a packet. That is the same trade already rejected when
+reclassifying `ERROR_ACCESS_DENIED`, and it is recorded here as an open decision
+with its cost rather than taken.
+
+This is why the startup warning (EventId 117) names the **combination** rather
+than any single setting: enabling `AllowAdministrativeReset` does not fix this,
+and a warning that implied it would be worse than none.
 
 ### Assessment: should PassCore adopt `NetUserChangePassword`?
 

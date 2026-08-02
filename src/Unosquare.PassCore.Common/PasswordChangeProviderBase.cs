@@ -44,14 +44,15 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            expected Debug-level fallback, which no longer exists. Such a
     //            failure now leaves membership undetermined and is reported via
     //            ServiceAccountFailure (111). Retired, not free -- do not reuse.
-    //   110-116  shared helpers (AdministrativeReset, ServiceAccountFailure,
+    //   110-117  shared helpers (AdministrativeReset, ServiceAccountFailure,
     //            DomainPasswordPolicy), then provider-specific events that
     //            would have belonged in the range above had it not been full:
     //            LDAP GroupNotSecurityEnabled (113), LDAP GroupTypeUnreadable
     //            (114), AD ExplicitBindPasswordChangeUnverified (115),
-    //            AD SealedBindSkippedForLdapsPort (116).
+    //            AD SealedBindSkippedForLdapsPort (116),
+    //            AD NoWorkingPasswordWritePath (117).
     //            Numbering continues here rather than reusing a retired ID.
-    //                                                                     next: 117
+    //                                                                     next: 118
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or

@@ -146,7 +146,9 @@ The most relevant configuration entries are shown below. Make sure you make your
 >
 > **What does work here.** The directory itself is writable from such a host — a direct `NetUserChangePassword` call, given the *domain* name, changes a password successfully. PassCore does not currently use that API, and adopting it would require SMB/445 reachability from the application host to a domain controller, which is a bigger firewall requirement than LDAP alone. Assessed in [`TESTING.md`](TESTING.md).
 >
-> **`AllowAdministrativeReset` does not help.** It calls `IADsUser::SetPassword`, which fails here with `0x800706BA` ("the RPC server is unavailable"). Enabling that option in this configuration does not provide a working path.
+> **`AllowAdministrativeReset` does not help, and this is worth reading even if the rest does not apply to you.** It calls `IADsUser::SetPassword`, which tries LDAP over SSL, then Kerberos, then RPC. Which one it gets depends on the connection the directory entry is bound on — and PassCore binds on `LdapPort`, so today the reset **falls through to RPC and requires RPC/SMB reachability to a domain controller**. That is a much larger firewall requirement than LDAP, and a DMZ deployment with only 389/636 open does not meet it: the option can be enabled there and will rescue nothing. It also does not fire for infrastructure-class failures at all, being gated on `ChangeNotPermitted`.
+>
+> This was measured: the same call on an LDAPS-bound entry **succeeds** where a 389-bound one fails with `0x800706BA`. Binding the reset's entry over LDAPS would remove the RPC requirement entirely; PassCore does not do that today.
 >
 > **What is *not* claimed:** that a domain-joined host running `UseAutomaticContext: false` is affected. That combination is untested. If you are on one and password changes work, this notice does not apply to you.
 >

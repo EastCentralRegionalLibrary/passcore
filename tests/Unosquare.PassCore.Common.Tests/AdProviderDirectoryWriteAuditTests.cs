@@ -393,9 +393,11 @@ public class AdProviderDirectoryWriteAuditTests
         var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
         var constructorBody = ExtractMethodBody(code, "public PasswordChangeProvider(");
 
-        // Fires on the explicit-bind path...
+        // Fires on the explicit-bind path. The guard now covers a braced block
+        // rather than a single call, so the match spans to the call rather than
+        // requiring it to be the next token.
         Assert.Matches(
-            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)\s*"
+            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
             + @"LogExplicitBindPasswordChangeUnverified\s*\(",
             constructorBody);
 
@@ -403,7 +405,7 @@ public class AdProviderDirectoryWriteAuditTests
         // path. A call without "!" would warn exactly the deployments that have no
         // reported problem.
         Assert.DoesNotMatch(
-            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)\s*"
+            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
             + @"LogExplicitBindPasswordChangeUnverified\s*\(",
             constructorBody);
 
@@ -412,6 +414,48 @@ public class AdProviderDirectoryWriteAuditTests
         var declaration = code[code.IndexOf("LogExplicitBindPasswordChangeUnverified =", StringComparison.Ordinal)..];
         Assert.Contains("LogLevel.Warning", declaration[..200], StringComparison.Ordinal);
         Assert.Contains("EventId(115", declaration[..300], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The administrative reset cannot cover for the failing change on this path,
+    /// and the operator has to be told that in the same breath as being told the
+    /// change fails — otherwise the obvious reading of EventId 115 is "enable the
+    /// reset", which does not work.
+    ///
+    /// <para>Two independent reasons it does not: <c>IADsUser::SetPassword</c>
+    /// falls through to RPC when the entry is bound on <c>LdapPort</c> rather than
+    /// over LDAPS (measured — the same call succeeds on an LDAPS-bound entry), and
+    /// <c>ShouldAttempt</c> requires <c>ChangeNotPermitted</c> while this failure
+    /// classifies as infrastructure.</para>
+    ///
+    /// <para>Scoping is asserted the same way as EventId 115's: it must not reach
+    /// the automatic-context path, where nothing is known to be wrong.</para>
+    /// </summary>
+    [Fact]
+    public void TheAdministrativeResetIsNotOfferedAsTheFixWhenItCannotBeOne()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var constructorBody = ExtractMethodBody(code, "public PasswordChangeProvider(");
+
+        // Fires on the explicit-bind path, alongside 115 rather than instead of it.
+        Assert.Matches(
+            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
+            + @"LogNoWorkingPasswordWritePath\s*\(",
+            constructorBody);
+
+        // Never on the automatic-context path.
+        Assert.DoesNotMatch(
+            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
+            + @"LogNoWorkingPasswordWritePath\s*\(",
+            constructorBody);
+
+        var declaration = code[code.IndexOf("LogNoWorkingPasswordWritePath =", StringComparison.Ordinal)..];
+        Assert.Contains("LogLevel.Warning", declaration[..200], StringComparison.Ordinal);
+        Assert.Contains("EventId(117", declaration[..300], StringComparison.Ordinal);
+
+        // Startup must still succeed: reads, credential verification and group
+        // membership all work in this configuration.
+        Assert.DoesNotContain("throw new", constructorBody, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -292,21 +292,32 @@ jobs:
       # at log level 3 records bind attempts and why it rejects them, which is the
       # capture this has needed throughout and is obtainable without tcpdump.
       #
-      # ---- The strong-auth relaxation is OUT AGAIN, and this run says why ----
-      # It was restored to test whether Samba's default was what pushed
-      # IADsUser::SetPassword down to RPC. That test ANSWERED, but not the way it
-      # was framed: with the relaxation in place, Probe A (entry bound sealed on
-      # 389) still failed with 0x800706BA while Probe A2 (entry bound over LDAPS
-      # 636) SUCCEEDED. Same run, same server settings -- so the discriminating
-      # variable is the BOUND CONNECTION, not the server policy.
+      # ---- The strong-auth relaxation is REQUIRED here, and both halves are measured ----
+      # CI ONLY. NEVER APPLY THIS TO A REAL DC.
       #
-      # That leaves one thing unseparated: whether A2 needs the relaxation at all.
-      # This run removes it and keeps A2, which answers it directly. If A2 still
-      # succeeds, the relaxation was never required and the DC stays at its
-      # default, which is where a test directory belongs. If A2 now fails to bind
-      # -- 0x80072028 is the expected shape -- then Samba's default does deny the
-      # SASL-over-TLS bind A2 depends on, and that is a Samba-only caveat: real AD
-      # implements channel binding and accepts it natively.
+      # Two runs established what it does and does not do, each changing one thing:
+      #
+      #   WITH the relaxation:     Probe A (entry sealed on 389)  0x800706BA
+      #                            Probe A2 (entry on LDAPS 636)  SUCCEEDED
+      #   WITHOUT (Samba default): Probe A                        0x800706BA
+      #                            Probe A2                       0x80072028 at
+      #                              RefreshCache -- the BIND is refused, so
+      #                              SetPassword is never reached
+      #
+      # So the relaxation is not what makes SetPassword work -- the LDAPS BINDING
+      # is, which the first run showed by having A and A2 differ under identical
+      # server settings. What the relaxation does is let the LDAPS bind happen at
+      # all, and without it A2 cannot even get far enough to be a test.
+      #
+      # Keeping it is therefore justified in a way it was not before. Samba
+      # refuses SASL over TLS because it does not implement LDAP channel binding,
+      # so there is no cryptographic tie between the token and the TLS layer and a
+      # relay is possible; it denies the combination rather than accept an unsafe
+      # session. Real AD DOES implement channel binding (ADV190023) and accepts
+      # the same bind natively. Setting this makes the test DC behave like
+      # production FOR THIS BEHAVIOUR rather than weakening past it -- which is
+      # exactly why it must never be set on a real DC, where the protection is
+      # doing real work.
       #
       # ---- The original rationale, kept because it is still the reason ----
       # CI ONLY. NEVER DO THIS TO A REAL DC. Samba's own documentation says not
@@ -341,7 +352,7 @@ jobs:
       # Note for anyone retrying this: it must be applied with
       # `supervisorctl restart samba`, NOT `podman restart`, which re-runs the
       # image entrypoint and regenerates smb.conf. See below.
-      - name: Raise Samba's log level for server-side visibility
+      - name: Raise Samba's log level, and allow SASL over TLS (CI only)
         shell: wsl-bash {0}
         run: |
           echo "=== smb.conf BEFORE ==="
@@ -360,6 +371,7 @@ jobs:
             awk "/^\[global\]/{
                    print;
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
