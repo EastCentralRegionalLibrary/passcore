@@ -374,8 +374,14 @@ public class AdProviderDirectoryWriteAuditTests
 
     /// <summary>
     /// A deployment running <c>UseAutomaticContext: false</c> must be told at
-    /// startup that the password change is unverified on that path, rather than
-    /// finding out when an end user receives a generic directory error.
+    /// startup that its password writes depend on LDAPS and therefore on
+    /// certificate trust, rather than finding out when an end user receives a
+    /// generic directory error.
+    ///
+    /// <para>Nothing else PassCore does exercises that trust — reads, credential
+    /// verification and group membership all go over the sign-and-seal context —
+    /// so a deployment can be healthy in every observable way and still have no
+    /// working write. That is precisely the condition a startup warning is for.</para>
     ///
     /// <para>Both the firing and the non-firing case are asserted, because the
     /// scoping is the whole point: the warning must not reach the automatic-context
@@ -393,25 +399,213 @@ public class AdProviderDirectoryWriteAuditTests
         var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
         var constructorBody = ExtractMethodBody(code, "public PasswordChangeProvider(");
 
-        // Fires on the explicit-bind path...
+        // Fires on the explicit-bind path.
         Assert.Matches(
-            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)\s*"
-            + @"LogExplicitBindPasswordChangeUnverified\s*\(",
+            @"if\s*\(\s*!\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
+            + @"LogLdapsWriteRequired\s*\(",
             constructorBody);
 
         // ...and the guard is negated, so it cannot also fire on the automatic
         // path. A call without "!" would warn exactly the deployments that have no
         // reported problem.
         Assert.DoesNotMatch(
-            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)\s*"
-            + @"LogExplicitBindPasswordChangeUnverified\s*\(",
+            @"if\s*\(\s*_options\.UseAutomaticContext\s*\)[\s\S]{0,400}?"
+            + @"LogLdapsWriteRequired\s*\(",
             constructorBody);
 
-        // Warning, not a throw: reads, credential verification, group membership
-        // and policy evaluation all work on this path, so startup must succeed.
-        var declaration = code[code.IndexOf("LogExplicitBindPasswordChangeUnverified =", StringComparison.Ordinal)..];
+        // Warning, not a throw: everything on this path works, including the
+        // write, provided the certificate is trusted — so startup must succeed.
+        var declaration = code[code.IndexOf("LogLdapsWriteRequired =", StringComparison.Ordinal)..];
         Assert.Contains("LogLevel.Warning", declaration[..200], StringComparison.Ordinal);
         Assert.Contains("EventId(115", declaration[..300], StringComparison.Ordinal);
+        Assert.DoesNotContain("throw new", constructorBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// EventId 117 announced at startup that no password write could succeed with
+    /// this provider on an explicit bind from a host that is not domain-joined,
+    /// unless a domain controller was reachable over RPC/SMB.
+    ///
+    /// <para>Both halves are now false. The write binds its own LDAPS entry, which
+    /// was measured to succeed in exactly that combination, and RPC was where ADSI
+    /// ended up when it was given a 389-bound entry — not something it needed. A
+    /// warning that declares a working configuration hopeless, and asks for a
+    /// firewall opening nobody needs, is worse than no warning; a DMZ deployment
+    /// reading it would conclude PassCore could not serve AD at all.</para>
+    ///
+    /// <para>The ID stays retired rather than being recycled, so that an aggregated
+    /// log containing both old and new events can never show two different claims
+    /// under one number.</para>
+    /// </summary>
+    [Fact]
+    public void RetiredNoWorkingWritePathEvent_IsNotReintroducedOrReused()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+
+        Assert.DoesNotContain("LogNoWorkingPasswordWritePath", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("EventId(117", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The point of the whole change: a password write is made on a connection this
+    /// provider bound over LDAPS, not on whichever connection the
+    /// <c>AccountManagement</c> principal happens to be carrying.
+    ///
+    /// <para>Measured, not assumed. From a host that is not domain-joined, against
+    /// the same directory in the same run: on an entry bound sign-and-seal on 389
+    /// the change failed <c>0x80070547</c> having never contacted the directory and
+    /// the reset fell through to RPC and failed <c>0x800706BA</c>; on an LDAPS-bound
+    /// entry both succeeded, and the directory logged them as ordinary LDAP password
+    /// modifications attributed to the target user.</para>
+    ///
+    /// <para>Both writes are covered. Scoping the fix to the reset alone would have
+    /// left the ordinary change — the thing PassCore exists to do — still broken on
+    /// that path, and the reset is gated on <c>ChangeNotPermitted</c> so it would
+    /// never have fired for it anyway.</para>
+    /// </summary>
+    [Fact]
+    public void BothPasswordWrites_GoOverAnLdapsBoundEntry()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+
+        foreach (var (method, signature) in new[]
+                 {
+                     ("the ordinary change", "void UpdatePassword("),
+                     ("the administrative reset", "void PerformAdministrativeReset("),
+                 })
+        {
+            var body = ExtractMethodBody(code, signature);
+
+            Assert.True(
+                body.Contains("BindForWrite(", StringComparison.Ordinal),
+                $"{method} no longer binds its own directory entry for the write. It would then go " +
+                "out on whatever connection the principal carries, which is the sign-and-seal " +
+                "context — measured to fail on a host that is not domain-joined.");
+
+            Assert.True(
+                body.Contains(".Invoke(", StringComparison.Ordinal),
+                $"{method} no longer performs the write through the bound entry.");
+        }
+
+        // The bind must be LDAPS, and the port must come from the shared
+        // substitution rather than being written out here: 389 upgrades in band and
+        // is not listening for a TLS ClientHello, so pointing SecureSocketsLayer at
+        // the configured port directly fails 0x8007203A on every default deployment.
+        var bindBody = ExtractMethodBody(code, "DirectoryEntry? BindForWrite(");
+
+        Assert.Contains("AuthenticationTypes.SecureSocketsLayer", bindBody, StringComparison.Ordinal);
+        Assert.Contains("LdapChannelPorts.SslPortFor(_options.LdapPort)", bindBody, StringComparison.Ordinal);
+
+        // Certificate validation is never suppressed to make the bind succeed. A
+        // write nobody can authenticate is not a fix.
+        Assert.DoesNotContain("ServerBind", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("ServerCertificate", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("VerifyServerCertificate", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The LDAPS bind is an improvement, not a new prerequisite: a deployment whose
+    /// directory has no usable LDAPS must keep behaving exactly as it did before.
+    /// So a bind failure falls back to the principal-based call rather than
+    /// surfacing as a failed password change.
+    ///
+    /// <para>The bind is therefore forced while the entry is being built, not left
+    /// to happen lazily inside <c>Invoke</c>. <c>DirectoryEntry</c> connects on
+    /// first use, so without that a certificate failure would arrive from the same
+    /// call as "the directory rejected this password" — and falling back there would
+    /// mean re-attempting a change the directory has already refused, against a
+    /// domain that may count it as another failed attempt.</para>
+    /// </summary>
+    [Fact]
+    public void AFailedLdapsBind_FallsBackInsteadOfFailingTheChange()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var bindBody = ExtractMethodBody(code, "DirectoryEntry? BindForWrite(");
+
+        // Forced eagerly, inside the try, so the failure is attributable.
+        var refreshAt = bindBody.IndexOf("RefreshCache(", StringComparison.Ordinal);
+        var catchAt = bindBody.IndexOf("catch (Exception bindFailure)", StringComparison.Ordinal);
+
+        Assert.True(
+            refreshAt >= 0,
+            "BindForWrite no longer forces the bind. DirectoryEntry connects lazily, so the bind " +
+            "failure would surface from Invoke instead, where it cannot be told apart from the " +
+            "directory rejecting the password.");
+        Assert.True(refreshAt < catchAt, "The forced bind is no longer inside the guarded region.");
+
+        // The failure returns null — the caller's signal to use the old path — and
+        // never propagates as a change failure.
+        Assert.Contains("return null;", bindBody[catchAt..], StringComparison.Ordinal);
+
+        // And the callers honour it.
+        foreach (var signature in new[] { "void UpdatePassword(", "void PerformAdministrativeReset(" })
+        {
+            var body = ExtractMethodBody(code, signature);
+            Assert.True(
+                body.Contains("entry is null", StringComparison.Ordinal),
+                $"'{signature}' no longer has a fallback branch for an unbindable entry, so a " +
+                "deployment without usable LDAPS would lose a write path it has today.");
+        }
+    }
+
+    /// <summary>
+    /// A failed LDAPS bind is silent to the end user by design — it falls back — so
+    /// the log is the only place it can be seen. It has to name the port and carry
+    /// the reason, because those are what separate the two very different causes:
+    /// an unreachable 636 is a firewall or a directory not offering LDAPS, while a
+    /// certificate failure is trust on the machine PassCore runs on.
+    /// </summary>
+    [Fact]
+    public void TheLdapsBindFailure_NamesThePortAndCarriesTheReason()
+    {
+        var source = ReadRepoFile(ProviderRelativePath);
+        var declaration = source[source.IndexOf("LogLdapsWriteBindFailed =", StringComparison.Ordinal)..];
+        var message = declaration[..declaration.IndexOf(");", StringComparison.Ordinal)];
+
+        Assert.Contains("LogLevel.Warning", message, StringComparison.Ordinal);
+        Assert.Contains("EventId(119", message, StringComparison.Ordinal);
+        Assert.Contains("{Port}", message, StringComparison.Ordinal);
+        Assert.Contains("{Host}", message, StringComparison.Ordinal);
+
+        // The reason travels as the exception argument, which reaches the log and
+        // never the wire. A delegate with no Exception parameter cannot carry it.
+        var bindBody = ExtractMethodBody(
+            CodeSkeleton(source), "DirectoryEntry? BindForWrite(");
+
+        Assert.Contains(
+            "LogLdapsWriteBindFailed(Logger, correlationId, operation, host, port, bindFailure)",
+            bindBody,
+            StringComparison.Ordinal);
+
+        // ...and the successful path says so too, so "which transport did this
+        // write actually use" is answerable from the log either way.
+        Assert.Contains(
+            "LogPasswordWriteOverLdaps(Logger, correlationId, operation, host, port, null)",
+            bindBody,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The service-account context is NOT moved to LDAPS. It leads with
+    /// sign-and-seal, which encrypts through the negotiated security package and
+    /// needs no certificate trust at all, so every read PassCore makes keeps working
+    /// on directories whose certificate this machine cannot validate. Only the write
+    /// — the one operation measured to need it — pays that cost.
+    /// </summary>
+    [Fact]
+    public void TheServiceAccountContext_StillLeadsWithSignAndSeal()
+    {
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)), "PrincipalContext AcquirePrincipalContext(");
+
+        var sealedAt = body.IndexOf("ContextOptions.Sealing", StringComparison.Ordinal);
+        var sslAt = body.IndexOf("ContextOptions.SecureSocketLayer", StringComparison.Ordinal);
+
+        Assert.True(sealedAt >= 0, "The service-account context no longer attempts a signed-and-sealed bind.");
+        Assert.True(
+            sslAt > sealedAt,
+            "SSL is no longer the fallback for the service-account context. Leading with it would " +
+            "make certificate trust a prerequisite for every directory read, to fix the write.");
     }
 
     /// <summary>

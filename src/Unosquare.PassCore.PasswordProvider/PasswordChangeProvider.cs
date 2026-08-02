@@ -60,44 +60,103 @@ namespace Unosquare.PassCore.PasswordProvider
                 "which is TLS from the first byte and cannot answer a plain LDAP bind. Connecting " +
                 "over SSL instead. This is expected for an LDAPS configuration.");
 
-        // Warning, not error, and deliberately so. Everything else on this path
-        // works and is covered end-to-end against a live directory: reads, binds,
+        // EventId 117 (LogNoWorkingPasswordWritePath) is retired, not reused. It
+        // told operators at startup that NO password change could succeed with
+        // the AD provider on an explicit bind from a host that is not
+        // domain-joined unless a domain controller was reachable over RPC/SMB,
+        // and that enabling AllowAdministrativeReset would not rescue it.
+        //
+        // The second half was true of the code as it then stood and is no longer
+        // true of it: the write now binds its own LDAPS entry, which works in
+        // exactly the combination the warning declared hopeless. The first half
+        // named the wrong remedy for the same reason -- RPC was where ADSI ended
+        // up, not what it needed. Announcing a dead end that no longer exists,
+        // and pointing at a firewall opening nobody needs, is worse than saying
+        // nothing. What remains true -- that this path depends on LDAPS and
+        // therefore on certificate trust -- is EventId 115's subject, and 119
+        // reports it per-request when it actually bites.
+        //
+        // Warning, not error, and deliberately so. Everything on this path works
+        // and is covered end-to-end against a live directory: reads, binds,
         // credential verification, group membership, minPwdLength, policy
-        // evaluation and error routing. Refusing to start would break deployments
-        // using all of that, and would claim more than the evidence supports.
+        // evaluation, error routing, and now the password write itself. Refusing
+        // to start would break deployments using all of that.
         //
-        // The wording is scoped tightly to what has actually been observed, which
-        // is narrower than the first version of this warning claimed. Server-side
-        // audit logging on the test DC shows the change producing NO
-        // authentication event at all -- no bind, no kpasswd, no SAMR -- while the
-        // service account's binds and the user's own credential verification both
-        // succeed against that same directory moments earlier. So ADSI fails
-        // before it contacts the directory, which is what ERROR_CANT_ACCESS_-
-        // DOMAIN_INFO says, and the observation was made on a host that is not
-        // domain-joined and therefore has no domain configuration to read.
+        // The wording is scoped to what has been measured. On an entry bound
+        // sign-and-seal on 389 from a host that is not domain-joined, the change
+        // failed 0x80070547 (ERROR_CANT_ACCESS_DOMAIN_INFO) with the domain
+        // controller recording no authentication attempt at all -- ADSI gave up
+        // before contacting the directory, having no domain configuration to
+        // read. On an LDAPS-bound entry, against the same directory in the same
+        // run, both the change and the administrative reset succeeded, and the
+        // directory recorded them as ordinary LDAP password modifications
+        // attributed to the target user. That is why the requirement is stated as
+        // LDAPS with a trusted certificate, and not as a domain join.
         //
-        // What is deliberately NOT claimed: that this affects a domain-joined host
-        // running UseAutomaticContext=false. That combination is untested, and
-        // saying otherwise would implicate deployments with no evidence against
-        // them. An operator on a domain-joined host who sees this warning and no
-        // failures should ignore it.
-        private static readonly Action<ILogger, Exception?> LogExplicitBindPasswordChangeUnverified =
+        // What is deliberately NOT claimed: anything about a domain-joined host
+        // running UseAutomaticContext=false. That combination remains untested,
+        // in either direction.
+        private static readonly Action<ILogger, Exception?> LogLdapsWriteRequired =
             LoggerMessage.Define(
                 LogLevel.Warning,
-                new EventId(115, nameof(LogExplicitBindPasswordChangeUnverified)),
-                "UseAutomaticContext is false, so password changes are performed over an " +
-                "explicitly-bound context. On a host that is NOT domain-joined, that operation " +
-                "has been observed to fail with 0x80070547 (ERROR_CANT_ACCESS_DOMAIN_INFO): ADSI " +
-                "gives up before contacting the directory - the domain controller records no " +
-                "authentication attempt for it at all - and the user receives a generic " +
-                "\"the directory service could not complete the password change request\" error. " +
-                "Everything else on this path is verified and unaffected: reads, credential " +
-                "verification, group membership, the minimum-length lookup and policy evaluation " +
-                "all work against the same directory. If password changes fail this way, run " +
-                "PassCore on a domain-joined host. Whether a domain-joined host with " +
-                "UseAutomaticContext=false is affected has not been tested - if you are on one " +
-                "and password changes work, this warning does not apply to you. " +
+                new EventId(115, nameof(LogLdapsWriteRequired)),
+                "UseAutomaticContext is false, so password writes are performed over an LDAPS " +
+                "connection this provider binds for the write. That REQUIRES the directory's " +
+                "LDAPS port to be reachable and its certificate to be trusted by this machine; " +
+                "nothing else on this path does, so a deployment can be entirely healthy today " +
+                "and still fail here. If the LDAPS bind fails, the write falls back to a call " +
+                "that chooses its own transport, which on a host that is NOT domain-joined has " +
+                "been observed to fail with 0x80070547 (ERROR_CANT_ACCESS_DOMAIN_INFO) before " +
+                "the directory is contacted at all, surfacing to the user as a generic " +
+                "\"the directory service could not complete the password change request\". " +
+                "That fallback is reported per-request at EventId 119 with the port and the " +
+                "reason. Reads, credential verification, group membership, the minimum-length " +
+                "lookup and policy evaluation do not use this connection and are unaffected. " +
+                "RPC/SMB reachability is NOT required, and a domain join is not the remedy. " +
                 "See TESTING.md, \"The AD password change on the explicit-bind path\".");
+
+        // The WRITE channel, which is a different question from the
+        // service-account context's channel (EventId 108) and is why these two
+        // exist separately.
+        //
+        // IADsUser::ChangePassword and ::SetPassword both try LDAP over 128-bit
+        // SSL, then Kerberos, then the Net* APIs over RPC, and which one they
+        // reach is decided by the connection the DirectoryEntry is bound on.
+        // Measured against a live directory from a host that is NOT
+        // domain-joined: on an entry bound sign-and-seal on 389 the change fails
+        // 0x80070547 and the reset falls through to RPC and fails 0x800706BA,
+        // while on an LDAPS-bound entry in the same run against the same
+        // directory both succeed. So the write is bound deliberately here rather
+        // than inheriting whatever connection the principal carries.
+        private static readonly Action<ILogger, string?, string, string, int, Exception?> LogPasswordWriteOverLdaps =
+            LoggerMessage.Define<string?, string, string, int>(
+                LogLevel.Information,
+                new EventId(118, nameof(LogPasswordWriteOverLdaps)),
+                "[{CorrelationId}] Performing the password {Operation} over an LDAPS-bound directory " +
+                "entry at {Host}:{Port}. This is the transport the write itself uses; the " +
+                "service-account context reported by EventId 108 is a separate connection.");
+
+        // Names the port and the reason, because those are the two things that
+        // decide what to do about it: an unreachable 636 is a firewall or a
+        // directory that does not offer LDAPS, while a certificate failure is
+        // trust on THIS machine. The exception carries the reason into the log
+        // without putting it anywhere near the wire.
+        //
+        // Each placeholder appears EXACTLY ONCE. LoggerMessage.Define counts
+        // occurrences, not distinct names, so repeating {Host} for emphasis
+        // makes the count disagree with the type arguments and throws from the
+        // static initializer -- taking the whole application down at startup,
+        // not just this log line.
+        private static readonly Action<ILogger, string?, string, string, int, Exception?> LogLdapsWriteBindFailed =
+            LoggerMessage.Define<string?, string, string, int>(
+                LogLevel.Warning,
+                new EventId(119, nameof(LogLdapsWriteBindFailed)),
+                "[{CorrelationId}] Could not bind an LDAPS directory entry for the password " +
+                "{Operation} at {Host}:{Port}, so it falls back to the principal-based call, which " +
+                "selects its own transport and has been observed to fail on a host that is not " +
+                "domain-joined. That bind needs the port named above to be reachable on that host, " +
+                "and the directory's certificate to be trusted by this machine. The reason is " +
+                "attached.");
 
         // Records which channel the service-account context actually got. With a
         // fallback in the path, "it worked" is not enough information: an
@@ -109,8 +168,9 @@ namespace Unosquare.PassCore.PasswordProvider
                 LogLevel.Information,
                 new EventId(108, nameof(LogSecureChannelEstablished)),
                 "Service-account directory context established over {Channel} to {Host}:{Port}. " +
-                "This is the channel for directory reads and writes made through this context. " +
-                "IADsUser::ChangePassword selects its own transport and is not governed by it.");
+                "This is the channel for directory reads: lookups, credential verification, group " +
+                "membership and the minimum-length policy. Password WRITES are not made through " +
+                "it - they get their own LDAPS connection, reported at EventId 118.");
 
         private static readonly Action<ILogger, string, int, Exception?> LogSealingUnavailable =
             LoggerMessage.Define<string, int>(
@@ -145,11 +205,12 @@ namespace Unosquare.PassCore.PasswordProvider
                 LogAdminResetIgnoredInAutomaticContext(Logger, null);
 
             // Told to the operator at startup rather than to the user at failure.
-            // Without this the first sign is an end user receiving a generic
-            // directory error, which reads as a transient outage rather than a
-            // configuration that may never have been able to change a password.
+            // The certificate trust this path depends on is exercised by nothing
+            // else PassCore does, so without this the first sign of a missing or
+            // untrusted certificate is an end user receiving a generic directory
+            // error from a deployment whose every other operation is healthy.
             if (!_options.UseAutomaticContext)
-                LogExplicitBindPasswordChangeUnverified(Logger, null);
+                LogLdapsWriteRequired(Logger, null);
         }
 
         private static void ValidateOptions(PasswordChangeOptions opts)
@@ -549,7 +610,17 @@ namespace Unosquare.PassCore.PasswordProvider
         {
             try
             {
-                userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
+                // The old password is still supplied and still verified by the
+                // directory, whichever channel this takes: this is a genuine
+                // change, not a reset wearing its name. History and minimum-age
+                // policy therefore keep applying, which is the whole reason the
+                // reset is a separate, gated, loudly-logged thing.
+                using var entry = BindForWrite(context.CorrelationId, "change", userPrincipal);
+
+                if (entry is null)
+                    userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
+                else
+                    entry.Invoke("ChangePassword", new object[] { context.CurrentPassword, context.NewPassword });
             }
             catch (Exception ex)
             {
@@ -607,9 +678,10 @@ namespace Unosquare.PassCore.PasswordProvider
         }
 
         /// <summary>
-        /// The single reset execution path: administrative SetPassword with the
-        /// service-account-bound principal context, followed by the shared loud
-        /// Warning log. Reached only through the
+        /// The single reset execution path: an administrative SetPassword over
+        /// an LDAPS-bound entry for the target user, falling back to the
+        /// principal-based call when that entry cannot be bound, followed by the
+        /// shared loud Warning log. Reached only through the
         /// <see cref="AdministrativeReset"/> gate.
         /// </summary>
         /// <param name="context">The password change context.</param>
@@ -620,8 +692,105 @@ namespace Unosquare.PassCore.PasswordProvider
             AuthenticablePrincipal userPrincipal,
             Exception originalFailure)
         {
-            userPrincipal.SetPassword(context.NewPassword);
+            using (var entry = BindForWrite(context.CorrelationId, "reset", userPrincipal))
+            {
+                if (entry is null)
+                    userPrincipal.SetPassword(context.NewPassword);
+                else
+                    entry.Invoke("SetPassword", new object[] { context.NewPassword });
+            }
+
             AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, originalFailure);
+        }
+
+        /// <summary>
+        /// Binds a <see cref="DirectoryEntry"/> for the target user over LDAPS,
+        /// so that a password write goes out on a connection this provider chose
+        /// rather than on whichever one the <see cref="AuthenticablePrincipal"/>
+        /// happens to be carrying. Returns <see langword="null"/> when no such
+        /// entry can be bound, which tells the caller to make the ordinary
+        /// principal-based call instead.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>Why the write gets its own connection.</b> Both
+        /// <c>IADsUser::ChangePassword</c> and <c>IADsUser::SetPassword</c> try
+        /// LDAP over 128-bit SSL first, then Kerberos, then the <c>Net*</c> APIs
+        /// over RPC, and the connection the entry is bound on decides how far
+        /// down that list they get. Measured from a host that is not
+        /// domain-joined, against the same directory in the same run: on an entry
+        /// bound sign-and-seal on 389, the change failed with <c>0x80070547</c>
+        /// having never contacted the directory and the reset fell through to RPC
+        /// and failed <c>0x800706BA</c>; on an LDAPS-bound entry, both succeeded,
+        /// and the directory recorded them as ordinary LDAP password
+        /// modifications attributed to the target user.</para>
+        /// <para><b>Only the write.</b> The service-account context is
+        /// deliberately left alone — it leads with sign-and-seal, which needs no
+        /// certificate trust, and imposing LDAPS on every read to fix the write
+        /// would make certificate trust a prerequisite for operations that do not
+        /// need it. LDAPS is required only where it is the difference between
+        /// working and not.</para>
+        /// <para><b>The port is not configurable separately</b>, and deliberately:
+        /// it comes from <see cref="LdapChannelPorts.SslPortFor(int)"/>, the same
+        /// substitution the SSL fallback in <see cref="AcquirePrincipalContext"/>
+        /// already uses. A deployment on the default 389 gets 636; a deployment
+        /// that has moved LDAPS elsewhere and set <c>LdapPort</c> to it gets that
+        /// value as given.</para>
+        /// <para><b>Automatic-context deployments are untouched.</b> There are no
+        /// bind credentials there to build an entry with, and nothing is known to
+        /// be wrong with that path.</para>
+        /// </remarks>
+        /// <param name="correlationId">The request correlation ID, for the log.</param>
+        /// <param name="operation">"change" or "reset", named in the log so the
+        /// two writes are distinguishable.</param>
+        /// <param name="userPrincipal">The user whose password is being written.</param>
+        /// <returns>A bound entry, or <see langword="null"/> to fall back.</returns>
+        private DirectoryEntry? BindForWrite(
+            string? correlationId,
+            string operation,
+            AuthenticablePrincipal userPrincipal)
+        {
+            if (_options.UseAutomaticContext)
+                return null;
+
+            var host = _options.LdapHostnames.FirstOrDefault();
+            var distinguishedName = userPrincipal.DistinguishedName;
+
+            // Neither is expected to be missing here — the options are validated
+            // at startup and the principal was resolved from the directory — but
+            // a null path or DN would throw out of a method whose contract is
+            // "returns null when it cannot bind", which the caller would then
+            // report as a change failure rather than falling back.
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(distinguishedName))
+                return null;
+
+            var port = LdapChannelPorts.SslPortFor(_options.LdapPort);
+            DirectoryEntry? entry = null;
+
+            try
+            {
+                entry = new DirectoryEntry(
+                    AdsiPath.ForObject(host, port, distinguishedName),
+                    _options.LdapUsername,
+                    _options.LdapPassword,
+                    AuthenticationTypes.Secure | AuthenticationTypes.SecureSocketsLayer);
+
+                // DirectoryEntry binds lazily, so without this the bind failure
+                // would surface from Invoke instead — where it is indistinguishable
+                // from the password write itself being rejected, and where falling
+                // back would mean retrying a change the directory already refused.
+                // Reading one attribute the object certainly has forces the bind
+                // and nothing else.
+                entry.RefreshCache(new[] { "distinguishedName" });
+
+                LogPasswordWriteOverLdaps(Logger, correlationId, operation, host, port, null);
+                return entry;
+            }
+            catch (Exception bindFailure)
+            {
+                entry?.Dispose();
+                LogLdapsWriteBindFailed(Logger, correlationId, operation, host, port, bindFailure);
+                return null;
+            }
         }
 
         /// <summary>

@@ -292,24 +292,67 @@ jobs:
       # at log level 3 records bind attempts and why it rejects them, which is the
       # capture this has needed throughout and is obtainable without tcpdump.
       #
-      # ---- The strong-auth relaxation is GONE, and should stay gone ----
-      # This step briefly set "ldap server require strong auth = allow_sasl_over_tls"
-      # to test whether Samba's default hardening (yes, since CVE-2016-2112) was
-      # what blocked the password change. It was not, and the question is now
-      # moot: server-side audit logging shows the change producing NO
+      # ---- The strong-auth relaxation is REQUIRED here, and both halves are measured ----
+      # CI ONLY. NEVER APPLY THIS TO A REAL DC.
+      #
+      # Two runs established what it does and does not do, each changing one thing:
+      #
+      #   WITH the relaxation:     Probe A (entry sealed on 389)  0x800706BA
+      #                            Probe A2 (entry on LDAPS 636)  SUCCEEDED
+      #   WITHOUT (Samba default): Probe A                        0x800706BA
+      #                            Probe A2                       0x80072028 at
+      #                              RefreshCache -- the BIND is refused, so
+      #                              SetPassword is never reached
+      #
+      # So the relaxation is not what makes SetPassword work -- the LDAPS BINDING
+      # is, which the first run showed by having A and A2 differ under identical
+      # server settings. What the relaxation does is let the LDAPS bind happen at
+      # all, and without it A2 cannot even get far enough to be a test.
+      #
+      # Keeping it is therefore justified in a way it was not before. Samba
+      # refuses SASL over TLS because it does not implement LDAP channel binding,
+      # so there is no cryptographic tie between the token and the TLS layer and a
+      # relay is possible; it denies the combination rather than accept an unsafe
+      # session. Real AD DOES implement channel binding (ADV190023) and accepts
+      # the same bind natively. Setting this makes the test DC behave like
+      # production FOR THIS BEHAVIOUR rather than weakening past it -- which is
+      # exactly why it must never be set on a real DC, where the protection is
+      # doing real work.
+      #
+      # ---- The original rationale, kept because it is still the reason ----
+      # CI ONLY. NEVER DO THIS TO A REAL DC. Samba's own documentation says not
+      # to set it, and the default exists for a reason: since CVE-2016-2112 Samba
+      # denies SASL binds over TLS because it does not implement LDAP channel
+      # binding, so there is no cryptographic tie between the NTLM or Kerberos
+      # token and the TLS layer and a relay attack is possible. It refuses the
+      # combination rather than accept an unsafe session. Real AD DOES implement
+      # channel binding (that is what ADV190023 concerns), so this relaxation
+      # emulates production behaviour here rather than weakening past it.
+      #
+      # It was set once before, to test whether that default was blocking
+      # IADsUser::ChangePassword. It was not -- that call produces no
       # authentication event at all, and a server-side auth policy cannot explain
-      # a failure the server never sees.
+      # a failure the server never sees -- so it was removed, with a note that a
+      # future question needing it should set it deliberately and take it out
+      # again. This is that question, and it is about a DIFFERENT API.
       #
-      # It is removed rather than left in place because it made this DC diverge
-      # from a real one's default for no remaining benefit, and a test directory
-      # that is quietly more permissive than production is a good way to miss a
-      # regression later. Samba's own documentation says not to set it. If some
-      # future question genuinely needs it, set it deliberately for that run and
-      # take it out again.
+      # IADsUser::SetPassword tries three methods in documented order: LDAP over
+      # a 128-bit SSL connection, Kerberos, then NetUserSetInfo over RPC. It fails
+      # here with 0x800706BA, "the RPC server is unavailable" -- which means it
+      # reached the THIRD method, so the first two both failed first. The
+      # certificate is trusted and LDAPS binds succeed from this runner, so the
+      # likely reason Secure LDAP fell through is exactly the default above.
       #
-      # Note for anyone tempted to retry it: it must be applied with
-      # `supervisorctl restart samba`, NOT `podman restart`. See below.
-      - name: Raise Samba's log level for server-side visibility
+      # That matters well beyond this test: SetPassword is what the shipped
+      # AllowAdministrativeReset feature calls, and PR 63 proved that feature
+      # non-functional on this path. If Secure LDAP is what it wants, the reset
+      # needs 636 and a trusted certificate and nothing more -- both of which
+      # PassCore already requires -- and the feature is sound on real AD.
+      #
+      # Note for anyone retrying this: it must be applied with
+      # `supervisorctl restart samba`, NOT `podman restart`, which re-runs the
+      # image entrypoint and regenerates smb.conf. See below.
+      - name: Raise Samba's log level, and allow SASL over TLS (CI only)
         shell: wsl-bash {0}
         run: |
           echo "=== smb.conf BEFORE ==="
@@ -328,6 +371,7 @@ jobs:
             awk "/^\[global\]/{
                    print;
                    print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
@@ -1191,6 +1235,308 @@ jobs:
       # and a configuration override cannot shrink an array, so neither of the
       # obvious alternatives works. See tests/samba-ad/restart-passcore.ps1.
       #
+      # DIAGNOSTIC, not an assertion, and it must never fail the job.
+      #
+      # The question: PassCore's user-context password change does not work in
+      # this configuration, and it is established that ADSI gives up BEFORE
+      # contacting the directory -- the DC records no authentication event for it
+      # at all, while the service account's binds and the user's own credential
+      # verification succeed seconds earlier. IADsUser::ChangePassword takes only
+      # an old and a new password; there is no domain argument to correct, and the
+      # derivation it does internally is what fails.
+      #
+      # So: does ANY write path work from here, and is it one PassCore could use?
+      # Two candidates, chosen because they fail differently from ChangePassword:
+      #
+      #   A. IADsUser::SetPassword  -- writes as the SERVICE ACCOUNT, which is
+      #      already binding successfully over a channel known to work. This is
+      #      what the shipped AllowAdministrativeReset feature calls, so its
+      #      result decides whether that feature functions here at all.
+      #   B. NetUserChangePassword  -- the one API in this space that TAKES the
+      #      domain as an argument instead of deriving it, and which authenticates
+      #      with the user's own old password rather than the service account.
+      #
+      # This runs directly on the runner rather than through PassCore, because the
+      # subject under test is the platform, not the provider.
+      #
+      # ACCOUNTS TOUCHED: probeuser, and only probeuser. It is seeded for exactly
+      # this purpose, belongs to no group beyond Domain Users, and no assertion
+      # reads it -- so a probe that leaves its password changed cannot break an
+      # unrelated leg. Do not point these probes at testuser or any leg account.
+      - name: Probe whether any password write path works from this host
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          $dcName        = "dc.example.com"
+          $serviceUser   = "EXAMPLE\Administrator"
+          $servicePass   = "AdminPassword123!"
+          $probeUser     = "probeuser"
+          $probeOldPass  = "testpassword"
+          $probeNewPass  = "ProbeNewPassword123!"
+          $probeDn       = "CN=probeuser,OU=people,DC=example,DC=com"
+
+          function Report-Failure {
+              param($ErrorRecord, [string] $Prefix)
+              $ex = $ErrorRecord.Exception
+              Write-Host "${Prefix} FAILED: $($ex.GetType().Name): $($ex.Message)"
+              if ($ex.HResult) { Write-Host "${Prefix}   HRESULT: 0x$('{0:X8}' -f $ex.HResult)" }
+              $inner = $ex.InnerException
+              while ($inner) {
+                  Write-Host "${Prefix}   inner: $($inner.GetType().Name): $($inner.Message)"
+                  if ($inner.HResult) { Write-Host "${Prefix}   inner HRESULT: 0x$('{0:X8}' -f $inner.HResult)" }
+                  $inner = $inner.InnerException
+              }
+          }
+
+          # --- Probe A: IADsUser::SetPassword as the service account ----------
+          # Sealed on 389, the same channel and credentials the provider's own
+          # context uses and which EventId 108 confirms working. If this succeeds,
+          # the directory write path is fine and the fault is specific to
+          # ChangePassword's domain derivation.
+          Write-Host "=== Probe A: IADsUser::SetPassword as the service account ==="
+          $probeAWorked = $false
+          try {
+              $authTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                           [System.DirectoryServices.AuthenticationTypes]::Signing -bor `
+                           [System.DirectoryServices.AuthenticationTypes]::Sealing
+              $entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:389/${probeDn}", $serviceUser, $servicePass, $authTypes)
+              $entry.RefreshCache(@("distinguishedName"))
+              $entry.Invoke("SetPassword", @($probeNewPass)) | Out-Null
+              $entry.CommitChanges()
+              Write-Host "  Probe A: SetPassword SUCCEEDED for $probeUser"
+              $probeAWorked = $true
+              $entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe A:"
+          }
+
+          # Restore immediately, whether or not it reported success, so the
+          # account is left as seeded and Probe B starts from a known password.
+          if ($probeAWorked) {
+              try {
+                  $restore = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:389/${probeDn}", $serviceUser, $servicePass, $authTypes)
+                  $restore.RefreshCache(@("distinguishedName"))
+                  $restore.Invoke("SetPassword", @($probeOldPass)) | Out-Null
+                  $restore.CommitChanges()
+                  Write-Host "  Probe A: restored $probeUser to its seeded password"
+                  $restore.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe A restore:"
+                  Write-Host "  Probe A: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          # --- Probe A2: same call, but bound over LDAPS explicitly -----------
+          # ADSI opens its OWN connection for the password write regardless of the
+          # one the DirectoryEntry is bound on, so in principle this should make
+          # no difference. It is here because "in principle" has been wrong at
+          # every stage of this investigation, it costs one more block in a step
+          # already running, and a DIFFERENCE between A and A2 would itself be the
+          # finding -- it would mean the bound connection does influence the write
+          # after all.
+          Write-Host "=== Probe A2: IADsUser::SetPassword over an LDAPS-bound entry ==="
+          $probeA2Worked = $false
+          try {
+              $sslAuthTypes = [System.DirectoryServices.AuthenticationTypes]::Secure -bor `
+                              [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer
+              $sslEntry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+              $sslEntry.RefreshCache(@("distinguishedName"))
+              $sslEntry.Invoke("SetPassword", @($probeNewPass)) | Out-Null
+              $sslEntry.CommitChanges()
+              Write-Host "  Probe A2: SetPassword over LDAPS SUCCEEDED for $probeUser"
+              $probeA2Worked = $true
+              $sslEntry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe A2:"
+          }
+
+          if ($probeA2Worked) {
+              try {
+                  $restore2 = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+                  $restore2.RefreshCache(@("distinguishedName"))
+                  $restore2.Invoke("SetPassword", @($probeOldPass)) | Out-Null
+                  $restore2.CommitChanges()
+                  Write-Host "  Probe A2: restored $probeUser to its seeded password"
+                  $restore2.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe A2 restore:"
+                  Write-Host "  Probe A2: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          # --- Probes C1/C2: does the ORDINARY change work on an LDAPS entry? --
+          # ANSWERED: BOTH SUCCEED. That is what the provider was changed on the
+          # strength of, and these two now stand as the regression evidence for
+          # it -- if the write ever stops working from a non-domain-joined host,
+          # these say whether the platform changed or PassCore did.
+          #
+          # The question they settled: IADsUser::ChangePassword uses the same
+          # three methods in the same order as SetPassword, and A2 had shown the
+          # bound connection decides which one is reached. So the evidence behind
+          # "requires a domain-joined host" was an artefact of having only ever
+          # measured a 389-BOUND entry. 0x80070547 with no server-side event was a
+          # sound reading of a local domain-resolution failure -- but ADSI never
+          # reaches the code that resolves a domain when the first method works.
+          #
+          # C1 binds as the SERVICE ACCOUNT; C2 binds as the USER'S OWN
+          # credentials, which is the closer analogue of a user-initiated change
+          # and mirrors how the LDAP provider already works -- verify as the user,
+          # then write. Both succeeding is why the provider could use the
+          # service-account credentials it already holds: the directory verifies
+          # the supplied old password either way and logs the modification against
+          # the target user, so a service-account bind does not turn the change
+          # into a reset.
+          #
+          # ACCOUNTS TOUCHED: probeuser only, same as A/A2, restored after each.
+          Write-Host "=== Probe C1: IADsUser::ChangePassword, LDAPS entry, service account ==="
+          $c1Worked = $false
+          try {
+              $c1Entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+              $c1Entry.RefreshCache(@("distinguishedName"))
+              $c1Entry.Invoke("ChangePassword", @($probeOldPass, $probeNewPass)) | Out-Null
+              Write-Host "  Probe C1: ChangePassword SUCCEEDED for $probeUser"
+              $c1Worked = $true
+              $c1Entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe C1:"
+          }
+
+          if ($c1Worked) {
+              try {
+                  $c1Back = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", $serviceUser, $servicePass, $sslAuthTypes)
+                  $c1Back.RefreshCache(@("distinguishedName"))
+                  $c1Back.Invoke("ChangePassword", @($probeNewPass, $probeOldPass)) | Out-Null
+                  Write-Host "  Probe C1: restored $probeUser to its seeded password"
+                  $c1Back.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe C1 restore:"
+                  Write-Host "  Probe C1: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          Write-Host "=== Probe C2: IADsUser::ChangePassword, LDAPS entry, user's own credentials ==="
+          $c2Worked = $false
+          try {
+              $c2Entry = New-Object System.DirectoryServices.DirectoryEntry(
+                  "LDAP://${dcName}:636/${probeDn}", "EXAMPLE\${probeUser}", $probeOldPass, $sslAuthTypes)
+              $c2Entry.RefreshCache(@("distinguishedName"))
+              $c2Entry.Invoke("ChangePassword", @($probeOldPass, $probeNewPass)) | Out-Null
+              Write-Host "  Probe C2: ChangePassword SUCCEEDED for $probeUser"
+              $c2Worked = $true
+              $c2Entry.Dispose()
+          }
+          catch {
+              Report-Failure $_ "  Probe C2:"
+          }
+
+          if ($c2Worked) {
+              try {
+                  $c2Back = New-Object System.DirectoryServices.DirectoryEntry(
+                      "LDAP://${dcName}:636/${probeDn}", "EXAMPLE\${probeUser}", $probeNewPass, $sslAuthTypes)
+                  $c2Back.RefreshCache(@("distinguishedName"))
+                  $c2Back.Invoke("ChangePassword", @($probeNewPass, $probeOldPass)) | Out-Null
+                  Write-Host "  Probe C2: restored $probeUser to its seeded password"
+                  $c2Back.Dispose()
+              }
+              catch {
+                  Report-Failure $_ "  Probe C2 restore:"
+                  Write-Host "  Probe C2: WARNING - $probeUser may be left with a changed password."
+              }
+          }
+
+          # --- SMB reachability, checked before Probe B is interpreted --------
+          # 445 is not published by podman -- the Windows host binds it -- but the
+          # static route makes the container's OWN address reachable, and nothing
+          # of the host's is bound there. Whether that is enough is the question.
+          # Reported separately so that "SMB unreachable" is never mistaken for
+          # "NetUserChangePassword does not work", which are different answers and
+          # lead to different conclusions.
+          Write-Host "=== SMB reachability (decides how to read Probe B) ==="
+          $containerIp = $null
+          $networkFile = Join-Path $env:GITHUB_WORKSPACE "podman-network.txt"
+          if (Test-Path $networkFile) {
+              $facts = @(Get-Content $networkFile)
+              if ($facts.Count -ge 2) { $containerIp = $facts[1].Trim() }
+          }
+
+          $smbReachable = $false
+          if ($containerIp) {
+              try {
+                  $client = New-Object System.Net.Sockets.TcpClient
+                  $connect = $client.BeginConnect($containerIp, 445, $null, $null)
+                  if ($connect.AsyncWaitHandle.WaitOne(5000, $false) -and $client.Connected) {
+                      Write-Host "  ${containerIp}:445 REACHABLE"
+                      $smbReachable = $true
+                  }
+                  else {
+                      Write-Host "  ${containerIp}:445 NOT reachable"
+                  }
+                  $client.Close()
+              }
+              catch {
+                  Write-Host "  ${containerIp}:445 NOT reachable: $($_.Exception.Message)"
+              }
+          }
+          else {
+              Write-Host "  container address unknown; cannot test SMB reachability"
+          }
+
+          # --- Probe B: NetUserChangePassword with an EXPLICIT domain ---------
+          # Both names are tried because they have behaved differently throughout:
+          # dc.example.com has a service principal behind it and example.com does
+          # not. The return value is a NET_API_STATUS, not an HRESULT -- 0 is
+          # success, 2221 is NERR_UserNotFound, 86 is ERROR_INVALID_PASSWORD,
+          # 53/1722 are the RPC server unreachable -- and it is reported as a
+          # number precisely because that distinction is the whole value here.
+          Write-Host "=== Probe B: NetUserChangePassword with an explicit domain ==="
+          # Signature on one line, not a here-string: a here-string's closing '@
+          # must sit at column 0, which would terminate this YAML block scalar.
+          $netApiSignature = '[System.Runtime.InteropServices.DllImport("netapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int NetUserChangePassword(string domainname, string username, string oldpassword, string newpassword);'
+          Add-Type -Namespace PassCoreProbe -Name NetApi -MemberDefinition $netApiSignature
+
+          foreach ($domainForm in @("example.com", "dc.example.com")) {
+              try {
+                  $rc = [PassCoreProbe.NetApi]::NetUserChangePassword(
+                      $domainForm, $probeUser, $probeOldPass, $probeNewPass)
+                  if ($rc -eq 0) {
+                      Write-Host "  Probe B [$domainForm]: SUCCEEDED (NET_API_STATUS 0)"
+                      # Change it straight back, using the new password as the old.
+                      $back = [PassCoreProbe.NetApi]::NetUserChangePassword(
+                          $domainForm, $probeUser, $probeNewPass, $probeOldPass)
+                      Write-Host "  Probe B [$domainForm]: restore returned $back"
+                  }
+                  elseif (-not $smbReachable) {
+                      Write-Host "  Probe B [$domainForm]: NOT ATTEMPTED MEANINGFULLY - SMB is unreachable, so NET_API_STATUS $rc reports the transport, not the API"
+                  }
+                  else {
+                      Write-Host "  Probe B [$domainForm]: failed with NET_API_STATUS $rc"
+                  }
+              }
+              catch {
+                  Report-Failure $_ "  Probe B [$domainForm]:"
+              }
+          }
+
+          # --- Server-side view across the probe window ----------------------
+          # A probe that produces NO server-side event is as informative as one
+          # that fails loudly: that asymmetry is exactly how the ChangePassword
+          # finding was made.
+          Write-Host "=== Samba authentication events during the probes ==="
+          wsl podman exec samba-ad sh -c "grep -h '^Auth: ' /var/log/supervisor/samba-stderr*.log 2>/dev/null | tail -25"
+
       # Every leg opens with a canary that can only pass under that leg's own
       # configuration. Without it, a restart that silently failed to take effect
       # would leave the previous leg's configuration answering every request,

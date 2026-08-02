@@ -37,6 +37,15 @@ samba-tool user create distributionuser testpassword \
   --userou="ou=people" --use-username-as-cn \
   --surname="distributionuser" --given-name="distributionuser"
 
+# Exists solely for the write-path probes in the smoke test, which MUTATE the
+# password they are testing with. No assertion reads this account, and nothing
+# else may start doing so: a probe that leaves it changed must not be able to
+# break an unrelated leg. It is in no group beyond Domain Users, so the group
+# legs cannot see it either.
+samba-tool user create probeuser testpassword \
+  --userou="ou=people" --use-username-as-cn \
+  --surname="probeuser" --given-name="probeuser"
+
 # 3. Create Groups in OU=groups
 samba-tool group add AllowedGroup --groupou="ou=groups"
 samba-tool group add RestrictedGroup --groupou="ou=groups"
@@ -113,7 +122,7 @@ else
   exit 1
 fi
 
-for user in testuser alloweduser restricteduser unlisteduser nesteduser distributionuser; do
+for user in testuser alloweduser restricteduser unlisteduser nesteduser distributionuser probeuser; do
   memberships=$(samba-tool user show "${user}" --attributes=memberOf | grep -i '^memberOf:' | sed 's/^memberOf: *//' | tr '\n' ' ')
   primary=$(samba-tool user show "${user}" --attributes=primaryGroupID | grep -i '^primaryGroupID:' | awk '{print $2}')
   echo "  user ${user}: primaryGroupID=${primary:-none} memberOf=${memberships:-none}"
