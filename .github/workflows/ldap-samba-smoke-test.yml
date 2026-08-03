@@ -73,6 +73,29 @@ jobs:
             exit 1
           fi
 
+      - name: Configure Samba Strong Auth & Log Level (CI Only)
+        run: |
+          echo "Configuring Samba smb.conf for SASL over TLS..."
+          docker exec samba-ad sh -c '
+            awk "/^\[global\]/{
+                   print;
+                   print "	log level = 3 auth_audit:5 auth_json_audit:5 auth:5";
+                   print "	ldap server require strong auth = allow_sasl_over_tls";
+                   next
+                 } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
+                 && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
+
+          # Restart samba process via supervisorctl (DO NOT use docker restart)
+          docker exec samba-ad supervisorctl restart samba
+          sleep 3
+
+      - name: Extract & Trust Samba AD Root CA Certificate
+        run: |
+          echo "Extracting Samba AD CA certificate..."
+          docker cp samba-ad:/var/lib/samba/private/tls/ca.pem /tmp/samba-ca.crt
+          sudo cp /tmp/samba-ca.crt /usr/local/share/ca-certificates/samba-ca.crt
+          sudo update-ca-certificates
+
       - name: Seed Active Directory Users and Groups
         run: |
           SEED_SCRIPT="${{ github.workspace }}/tests/samba-ad/seedusers.sh"
