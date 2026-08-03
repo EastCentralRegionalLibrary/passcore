@@ -92,6 +92,11 @@ jobs:
           docker exec samba-ad cat /etc/samba/smb.conf
 
           # Restart samba process via supervisorctl (DO NOT use docker restart)
+          # Wait 3 seconds and hope supervisorctl is running by now
+          sleep 3
+          # List running processes and socket files
+          docker exec samba-ad ps aux; docker exec samba-ad find / -name "*.sock" 2>/dev/null
+          # Restart Samba process
           docker exec samba-ad supervisorctl restart samba
           
           echo "Waiting for Samba to come back after the restart..."
