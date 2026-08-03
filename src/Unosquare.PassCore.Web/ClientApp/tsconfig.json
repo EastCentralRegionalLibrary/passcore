@@ -1,21 +1,37 @@
 {
     "compilerOptions": {
-        "sourceMap": true,
-        "noImplicitAny": true,
-        "module": "esnext",
+        // Language
         "target": "ES2020",
+        "lib": [
+            "esnext",
+            "dom"
+        ],
         "jsx": "react-jsx",
-        "lib": ["esnext", "dom"],
+        // Modules
+        "module": "esnext",
         "moduleResolution": "bundler",
-        "strictNullChecks": true,
+        "esModuleInterop": true,
+        // Type checking
+        "strict": true,
         "noImplicitReturns": true,
-        "forceConsistentCasingInFileNames": true,
-        "noEmit": true,
         "noUnusedLocals": true,
-        "typeRoots": ["./node_modules/@types"],
-        "skipLibCheck": true,
-        "esModuleInterop": true
+        "forceConsistentCasingInFileNames": true,
+        // Emit
+        "noEmit": true,
+        // Note sourceMap does nothing with noEmit true
+        "sourceMap": true,
+        // Build behavior
+        "isolatedModules": true,
+        "skipLibCheck": true
     },
-    "include": ["./**/*"],
-    "exclude": ["node_modules", "build", "scripts", "acceptance-tests", "webpack"]
+    "include": [
+        "./**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "build",
+        "scripts",
+        "acceptance-tests",
+        "webpack"
+    ]
 }

@@ -14,12 +14,15 @@
     "description": "PassCore is a self-service password change utility for Active Directory.",
     "source": "index.html",
     "scripts": {
-        "lint": "tsc --noEmit && eslint ./**/*.{js,mjs,ts,tsx}  --quiet",
-        "lint:fix": "eslint ./**/*.{js,mjs,ts,tsx}  --quiet --fix",
+        "lint": "tsc --noEmit && eslint \"src/**/*.{js,mjs,ts,tsx}\" --quiet",
+        "lint:fix": "eslint \"src/**/*.{js,mjs,ts,tsx}\" --quiet --fix",
+        "clean": "rimraf ../wwwroot",
+        "prestart": "npm run clean",
+        "prebuild": "npm run clean",
         "build": "parcel build index.html --dist-dir ../wwwroot --log-level warn",
-        "build:tsc": "tsc",
-        "prettier": "prettier --check ./**/*.ts*",
-        "prettier:fix": "prettier --write ./**/*.ts*",
+        "typecheck": "tsc --noEmit",
+        "prettier": "prettier --check \"src/**/*.{ts,tsx,js,json,css}\"",
+        "prettier:fix": "prettier --write \"src/**/*.{ts,tsx,js,json,css}\"",
         "start": "parcel index.html --dist-dir ../wwwroot --open --port 4040",
         "test:e2e": "playwright test"
     },
@@ -54,13 +57,9 @@
         "eslint-plugin-react": "^7.37.5",
         "globals": "^16.5.0",
         "parcel": "^2.16.4",
-        "parcel-plugin-clean-easy-unsafe": "^1.0.2",
         "prettier": "^3.8.3",
+        "rimraf": "^6.1.3",
         "typescript": "^5.8.3",
         "typescript-eslint": "^8.58.2"
-    },
-    "parcelCleanPaths": [
-        "../wwwroot"
-    ],
-    "parcelCleanUnsafePaths": true
+    }
 }
