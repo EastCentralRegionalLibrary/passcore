@@ -27,4 +27,21 @@ public class DebugProviderOptions
     /// nor the legacy username-based mapping matches.
     /// </summary>
     public ApiErrorCode? DefaultErrorCode { get; set; }
+
+    /// <summary>
+    /// The minimum password length this provider reports, standing in for the
+    /// domain policy a directory provider would read.
+    /// </summary>
+    /// <remarks>
+    /// <para>Exists so <c>LengthPasswordPolicy</c> can actually be exercised in
+    /// development. This provider previously reported no minimum at all, so the
+    /// policy silently did nothing whenever it was selected — a length rule that
+    /// cannot be triggered is a length rule nobody can see is broken.</para>
+    /// <para>A real value rather than "unavailable" for a second reason: reporting
+    /// nothing would take the shared fallback path, which logs an
+    /// operator-actionable Warning on every cache expiry. That warning is correct
+    /// for a directory provider that cannot reach its domain controller and is pure
+    /// noise for a provider that has no domain to reach.</para>
+    /// </remarks>
+    public int MinimumLength { get; set; } = 8;
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Unosquare.PassCore.Common;
@@ -16,11 +17,32 @@ public class PasswordChangeProviderBaseTests
 {
     private sealed class TestProvider : PasswordChangeProviderBase
     {
+        private readonly Func<int?> _minimumLengthLookup;
+
         public bool CoreInvoked { get; private set; }
 
-        public TestProvider(IEnumerable<IPasswordPolicy>? policies = null, ClientSettings? clientSettings = null)
-            : base(NullLogger.Instance, clientSettings, policies)
+        /// <summary>How many times the base actually performed the lookup, which is
+        /// what makes the cache observable from outside.</summary>
+        public int MinimumLengthLookups { get; private set; }
+
+        public TestProvider(
+            IEnumerable<IPasswordPolicy>? policies = null,
+            ClientSettings? clientSettings = null,
+            Func<int?>? minimumLengthLookup = null,
+            ILogger? logger = null)
+            : base(logger ?? NullLogger.Instance, clientSettings, policies)
         {
+            _minimumLengthLookup = minimumLengthLookup ?? (() => null);
+        }
+
+        // Required because the base declares this abstract, which is the point:
+        // a provider author has to answer "what is your minimum length" rather
+        // than inheriting a silent default. Returning null is a valid answer and
+        // takes the shared logged-fallback path.
+        protected override int? ReadMinPwdLength()
+        {
+            MinimumLengthLookups++;
+            return _minimumLengthLookup();
         }
 
         protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
@@ -183,6 +205,116 @@ public class PasswordChangeProviderBaseTests
 
         Assert.True(result.IsSuccessful);
         Assert.Same(settings, captured);
+    }
+
+    /// <summary>
+    /// A directory-sourced value is returned as read, and reading it once serves
+    /// every later request within the TTL. This runs on every POST before the
+    /// caller has proved anything, so re-reading per request would hand an
+    /// unauthenticated caller a cheap way to generate directory load.
+    /// </summary>
+    [Fact]
+    public async Task TheMinimumLengthIsReadFromTheProviderAndThenCached()
+    {
+        var provider = new TestProvider(minimumLengthLookup: () => 14);
+
+        for (var i = 0; i < 5; i++)
+            Assert.Equal(14, await provider.GetMinimumLengthAsync());
+
+        Assert.Equal(1, provider.MinimumLengthLookups);
+    }
+
+    /// <summary>
+    /// The cache belongs to the provider instance, not to the type. Two providers
+    /// could be pointed at two directories with different policies, and a shared
+    /// cache would advertise one directory's minimum for the other's users.
+    /// </summary>
+    [Fact]
+    public async Task TwoProviderInstancesDoNotShareACachedMinimumLength()
+    {
+        var first = new TestProvider(minimumLengthLookup: () => 14);
+        var second = new TestProvider(minimumLengthLookup: () => 20);
+
+        Assert.Equal(14, await first.GetMinimumLengthAsync());
+        Assert.Equal(20, await second.GetMinimumLengthAsync());
+
+        // And each still performed its own read, rather than one answering for both.
+        Assert.Equal(1, first.MinimumLengthLookups);
+        Assert.Equal(1, second.MinimumLengthLookups);
+    }
+
+    /// <summary>
+    /// A provider with no domain policy to read returns null, and that is a handled
+    /// answer rather than a failure: the shared resolver logs it and advertises the
+    /// fallback. This is why the base can implement
+    /// <see cref="IPasswordLengthRequirement"/> for every provider instead of each
+    /// one opting in.
+    /// </summary>
+    [Fact]
+    public async Task ALookupReturningNullFallsBackVisiblyRatherThanFailing()
+    {
+        var logger = new CapturingLogger();
+        var provider = new TestProvider(minimumLengthLookup: () => null, logger: logger);
+
+        Assert.Equal(DomainPasswordPolicy.DefaultMinimumLength, await provider.GetMinimumLengthAsync());
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("minPwdLength", entry.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A lookup that throws — an unreachable domain controller, a service account
+    /// that cannot read the policy — must not propagate out of a password change.
+    /// It becomes the same logged fallback, with the exception kept for the
+    /// operator.
+    /// </summary>
+    [Fact]
+    public async Task ALookupThatThrowsFallsBackVisiblyRatherThanPropagating()
+    {
+        var logger = new CapturingLogger();
+        var boom = new InvalidOperationException("DC unreachable");
+        var provider = new TestProvider(minimumLengthLookup: () => throw boom, logger: logger);
+
+        Assert.Equal(DomainPasswordPolicy.DefaultMinimumLength, await provider.GetMinimumLengthAsync());
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Same(boom, entry.Exception);
+    }
+
+    /// <summary>
+    /// The fallback is deliberately not cached, so a failing lookup keeps
+    /// re-attempting and keeps logging. Caching it would suppress the
+    /// operator-actionable warning for the whole TTL — which is exactly the signal
+    /// that something is wrong.
+    /// </summary>
+    [Fact]
+    public async Task AFailingLookupIsRetriedRatherThanCached()
+    {
+        var provider = new TestProvider(minimumLengthLookup: () => null);
+
+        for (var i = 0; i < 3; i++)
+            await provider.GetMinimumLengthAsync();
+
+        Assert.Equal(3, provider.MinimumLengthLookups);
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception), exception));
     }
 
     private static IPasswordPolicy MakeRecordingPolicy(string name, List<string> calls, ApiErrorCode? failWith = null)

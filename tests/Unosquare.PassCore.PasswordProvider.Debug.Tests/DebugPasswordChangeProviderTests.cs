@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Unosquare.PassCore.Common;
+using Unosquare.PassCore.Common.Exceptions;
 using Unosquare.PassCore.Common.Models;
+using Unosquare.PassCore.Common.Policies;
 using Xunit;
 
 namespace Unosquare.PassCore.PasswordProvider.Debug.Tests;
@@ -120,5 +122,69 @@ public class DebugPasswordChangeProviderTests
             Options.Create(new ClientSettings()),
             NullLogger<DebugPasswordChangeProvider>.Instance,
             Array.Empty<IPasswordPolicy>()));
+    }
+
+    /// <summary>
+    /// The Debug provider reports a minimum length like the directory providers do.
+    /// It previously reported none at all, so <c>LengthPasswordPolicy</c> silently
+    /// did nothing whenever this provider was selected — the policy could not be
+    /// exercised in development, which is the one environment where exercising it
+    /// costs nothing.
+    /// </summary>
+    [Fact]
+    public async Task TheProviderReportsTheConfiguredMinimumLength()
+    {
+        var provider = CreateProvider(new DebugProviderOptions { MinimumLength = 12 });
+
+        var requirement = Assert.IsAssignableFrom<IPasswordLengthRequirement>(provider);
+        Assert.Equal(12, await requirement.GetMinimumLengthAsync());
+    }
+
+    /// <summary>
+    /// The default is a real value, not "unavailable". Reporting nothing would take
+    /// the shared fallback path, which logs an operator-actionable Warning on every
+    /// cache expiry — correct for a directory provider that cannot reach its domain
+    /// controller, pure noise for a provider that has no domain to reach.
+    /// </summary>
+    [Fact]
+    public async Task TheDefaultMinimumLengthIsAConfiguredValueRatherThanTheLoggedFallback()
+    {
+        var provider = CreateProvider();
+
+        Assert.Equal(8, await ((IPasswordLengthRequirement)provider).GetMinimumLengthAsync());
+        Assert.NotEqual(DomainPasswordPolicy.DefaultMinimumLength, 8);
+    }
+
+    /// <summary>
+    /// The coverage that did not exist before: the length policy actually rejects a
+    /// short password when this provider is the one in play. Asserting the provider
+    /// reports a number proves only half of it — this proves the policy consumes it.
+    /// </summary>
+    [Fact]
+    public async Task LengthPolicyRejectsAPasswordShorterThanTheConfiguredMinimum()
+    {
+        var policy = new LengthPasswordPolicy();
+        var provider = CreateProvider(new DebugProviderOptions { MinimumLength = 12 });
+        var context = new PasswordChangeContext("someuser", "old", "short", new ClientSettings());
+
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
+            () => policy.ValidateAsync(context, provider));
+
+        Assert.Equal(ApiErrorCode.ComplexPassword, ex.ErrorCode);
+        Assert.Contains("12", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ...and lets a long enough one through, so the test above is measuring the
+    /// length rule rather than a provider that refuses everything.
+    /// </summary>
+    [Fact]
+    public async Task LengthPolicyAcceptsAPasswordAtTheConfiguredMinimum()
+    {
+        var policy = new LengthPasswordPolicy();
+        var provider = CreateProvider(new DebugProviderOptions { MinimumLength = 12 });
+        var context = new PasswordChangeContext("someuser", "old", "123456789012", new ClientSettings());
+
+        await policy.ValidateAsync(context, provider);
     }
 }

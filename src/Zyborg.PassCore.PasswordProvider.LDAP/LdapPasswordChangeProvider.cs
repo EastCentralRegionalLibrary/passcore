@@ -40,7 +40,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 ///   syntax, not RFC 4515 filter syntax.)
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver, IPasswordLengthRequirement
+public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
 {
     /// <inheritdoc />
     public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
@@ -51,8 +51,6 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     // The provider is registered as a singleton, so this is shared across requests —
     // which is the point: the value it holds is domain-wide, not per-account.
-    private readonly CachedDomainMinimumLength _minimumLength = new();
-
     // AD operation errors lead with the Win32 code, e.g.
     // "0000052D: SvcErr: DSID-031A12D2, problem 5003 (WILL_NOT_PERFORM), data 0".
     private static readonly Regex LeadingHexCodeRegex =
@@ -496,18 +494,10 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     /// <inheritdoc />
     /// <remarks>
-    /// Cached with a short time-to-live. This runs on every POST, before the caller
-    /// has proved anything, and costs a bind plus two searches; the value is
-    /// domain-wide and changes about as often as a group policy edit. Only a
-    /// directory-sourced value is cached, so a failing lookup keeps re-attempting and
-    /// keeps logging its warning.
+    /// Costs a bind plus two searches, which is why the base class caches the
+    /// result rather than calling this per request.
     /// </remarks>
-    public Task<int> GetMinimumLengthAsync()
-    {
-        return Task.FromResult(_minimumLength.Resolve(Logger, ReadMinPwdLength));
-    }
-
-    private int? ReadMinPwdLength()
+    protected override int? ReadMinPwdLength()
     {
         using var ldap = BindAsServiceAccount();
 
