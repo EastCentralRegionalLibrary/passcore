@@ -43,10 +43,10 @@ jobs:
             -e NOCOMPLEXITY="true" \
             docker.io/nowsci/samba-domain:latest
 
-      - name: Wait for Samba AD DC Provisioning
+      - name: Wait for Samba AD DC Provisioning & Cert Generation
         run: |
-          echo "Waiting for Samba AD DC schema and database provisioning..."
-          MAX_RETRIES=30
+          echo "Waiting for Samba AD DC schema, supervisord socket, and CA cert generation..."
+          MAX_RETRIES=45
           RETRY_COUNT=0
           READY=0
 
@@ -57,8 +57,11 @@ jobs:
               exit 1
             fi
 
-            if docker exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
-              echo "Samba AD DC schema and sam.ldb are fully initialized!"
+            # Gate on all 3 conditions: supervisord socket, sam.ldb database, AND TLS CA cert on disk
+            if docker exec samba-ad test -S /run/supervisor.sock 2>/dev/null \
+               && docker exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1 \
+               && docker exec samba-ad test -f /var/lib/samba/private/tls/ca.pem 2>/dev/null; then
+              echo "Samba AD DC, sam.ldb, and TLS CA cert are fully initialized!"
               READY=1
               break
             fi
@@ -73,11 +76,11 @@ jobs:
             exit 1
           fi
 
+          # Symlink socket to /var/run so default supervisorctl calls work cleanly
+          docker exec samba-ad ln -sf /run/supervisor.sock /var/run/supervisor.sock
+
       - name: Configure Samba Strong Auth & Log Level (CI Only)
         run: |
-          echo "=== smb.conf BEFORE ==="
-          docker exec samba-ad cat /etc/samba/smb.conf
-          
           echo "Configuring Samba smb.conf for SASL over TLS..."
           docker exec samba-ad sh -c '
             awk "/^\[global\]/{
@@ -88,30 +91,10 @@ jobs:
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
               && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
 
-          echo "=== smb.conf AFTER ==="
-          docker exec samba-ad cat /etc/samba/smb.conf
-
-          # Restart samba process via supervisorctl (DO NOT use docker restart)
-          echo "Waiting for supervisord to create socket and accept commands..."
-          MAX_RETRIES=30
-          RETRY_COUNT=0
-          SUPERVISOR_READY=0
-
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            # Check if supervisorctl can successfully query the socket
-            if docker exec samba-ad supervisorctl -s unix:///run/supervisor.sock status >/dev/null 2>&1; then
-              echo "supervisord is fully started and responsive!"
-              SUPERVISOR_READY=1
-              break
-            fi
-
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            sleep 1
-          done
-          # Restart Samba process
+          echo "Restarting Samba process via supervisorctl..."
           docker exec samba-ad supervisorctl restart samba
-          
-          echo "Waiting for Samba to come back after the restart..."
+
+          echo "Waiting for Samba process to report RUNNING..."
           READY=0
           for attempt in $(seq 1 30); do
             if [ "$(docker inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
@@ -119,17 +102,20 @@ jobs:
               docker logs samba-ad | tail -50
               exit 1
             fi
-            # supervisorctl reporting RUNNING is the real signal now: ldbsearch
-            # alone reads sam.ldb straight off disk and answers even while the
-            # daemon is down, so on its own it would gate on nothing.
-            if docker exec samba-ad supervisorctl status samba 2>/dev/null | grep -q RUNNING \
-               && docker exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
-                    -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+
+            if docker exec samba-ad supervisorctl status samba 2>/dev/null | grep -q RUNNING; then
               READY=1
               break
             fi
             sleep 2
           done
+
+          if [ $READY -ne 1 ]; then
+            echo "ERROR: Samba process failed to report RUNNING after restart."
+            docker logs samba-ad | tail -50
+            exit 1
+          fi
+          echo "Samba is operational and running!"
 
       - name: Extract & Trust Samba AD Root CA Certificate
         run: |
