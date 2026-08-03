@@ -76,9 +76,6 @@ jobs:
             exit 1
           fi
 
-          # Symlink socket to /var/run so default supervisorctl calls work cleanly
-          docker exec samba-ad ln -sf /run/supervisor.sock /var/run/supervisor.sock
-
       - name: Configure Samba Strong Auth & Log Level (CI Only)
         run: |
           echo "Configuring Samba smb.conf for SASL over TLS..."
