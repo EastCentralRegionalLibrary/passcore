@@ -1,0 +1,239 @@
+name: LDAP Provider against Samba AD Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: LDAP Provider against Samba AD Smoke Test on Ubuntu Latest
+    runs-on: ubuntu-latest
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      ASPNETCORE_ENVIRONMENT: LdapSambaTest
+      ASPNETCORE_URLS: http://localhost:5000
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Map Domain Names in /etc/hosts
+        run: |
+          echo "127.0.0.1 example.com dc.example.com" | sudo tee -a /etc/hosts
+          cat /etc/hosts
+
+      - name: Start Samba AD DC Container
+        run: |
+          docker run -d \
+            --name samba-ad \
+            --hostname dc \
+            --privileged \
+            -p 389:389/tcp -p 389:389/udp -p 636:636 \
+            -p 3268:3268 -p 3269:3269 \
+            -e DOMAIN="example.com" \
+            -e DOMAINPASS="AdminPassword123!" \
+            -e NOCOMPLEXITY="true" \
+            docker.io/nowsci/samba-domain:latest
+
+      - name: Wait for Samba AD DC Provisioning
+        run: |
+          echo "Waiting for Samba AD DC schema and database provisioning..."
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          READY=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if [ "$(docker inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
+              echo "ERROR: Samba AD DC container exited unexpectedly!"
+              docker logs samba-ad
+              exit 1
+            fi
+
+            if docker exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+              echo "Samba AD DC schema and sam.ldb are fully initialized!"
+              READY=1
+              break
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            sleep 2
+          done
+
+          if [ $READY -ne 1 ]; then
+            echo "ERROR: Timed out waiting for Samba initialization!"
+            docker logs samba-ad
+            exit 1
+          fi
+
+      - name: Seed Active Directory Users and Groups
+        run: |
+          SEED_SCRIPT="${{ github.workspace }}/tests/samba-ad/seedusers.sh"
+          sed -i 's/\r$//' "${SEED_SCRIPT}"
+          chmod +x "${SEED_SCRIPT}"
+          docker cp "${SEED_SCRIPT}" samba-ad:/tmp/seedusers.sh
+          docker exec samba-ad /bin/sh /tmp/seedusers.sh
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build PassCore Backend (LDAP)
+        run: |
+          dotnet build \
+            src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --property:PASSCORE_PROVIDER=LDAP
+
+      - name: Start PassCore Application
+        run: |
+          dotnet run \
+            --no-launch-profile \
+            --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --framework net8.0 \
+            --property:PASSCORE_PROVIDER=LDAP \
+            --no-build > passcore.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Wait for PassCore Readiness
+        run: |
+          echo "Waiting for PassCore to listen on port 5000..."
+          timeout 90s bash -c '
+            until curl -fsS http://localhost:5000/api/password; do
+              sleep 3
+            done
+          '
+
+      - name: Basic Smoke Verification
+        run: |
+          curl -fsS http://localhost:5000/api/password | jq -e '.validationRegex'
+          echo "PassCore is operational!"
+
+      # --- Informative Mode Test Leg ---
+      - name: Test Suite - Informative Mode
+        run: |
+          post() {
+            curl -s -X POST http://localhost:5000/api/password \
+              -H "Content-Type: application/json" \
+              -d "{\"username\": \"$1\", \"currentPassword\": \"$2\", \"newPassword\": \"NewPassword123!\", \"newPasswordVerify\": \"NewPassword123!\"}"
+          }
+
+          echo "Test 1: Valid user in AllowedGroup (alloweduser)"
+          RESPONSE=$(post alloweduser testpassword)
+          echo "Response: $RESPONSE"
+          ERROR_CODE=$(echo $RESPONSE | jq -r '.errors[0].errorCode // empty')
+          if [[ "$ERROR_CODE" == "3" || "$ERROR_CODE" == "4" || "$ERROR_CODE" == "6" ]]; then
+            echo "Unexpected error code: $ERROR_CODE"
+            exit 1
+          fi
+
+          echo "Test 2: Invalid current password for existing user"
+          RESPONSE=$(post testuser wrongpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 4)'
+
+          echo "Test 3: Unknown user (Informative Mode discloses UserNotFound = 3)"
+          RESPONSE=$(post nonexistent somepassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 3)'
+
+          echo "Test 4: User in RestrictedGroup (restricteduser)"
+          RESPONSE=$(post restricteduser testpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)'
+
+          echo "Test 5: User not in AllowedGroup (unlisteduser)"
+          RESPONSE=$(post unlisteduser testpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)'
+
+          echo "Test 6: Distribution group evaluation (distributionuser)"
+          RESPONSE=$(post distributionuser testpassword)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 6)'
+
+      # --- Hardened Mode Test Leg ---
+      - name: Restart PassCore in Hardened Mode
+        env:
+          AppSettings__ErrorDisclosureMode: Hardened
+        run: |
+          if [ -f backend.pid ]; then
+            kill "$(cat backend.pid)" 2>/dev/null || true
+            sleep 2
+          fi
+
+          dotnet run \
+            --no-launch-profile \
+            --project src/Unosquare.PassCore.Web/Unosquare.PassCore.Web.csproj \
+            --configuration Release \
+            --framework net8.0 \
+            --property:PASSCORE_PROVIDER=LDAP \
+            --no-build >> passcore.log 2>&1 &
+          echo $! > backend.pid
+
+          timeout 90s bash -c '
+            until curl -fsS http://localhost:5000/api/password >/dev/null; do
+              sleep 3
+            done
+          '
+
+      - name: Test Suite - Hardened Mode Indistinguishability
+        run: |
+          echo "Verifying unknown user returns InvalidCredentials (4) in Hardened mode"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 4)'
+
+      # --- Directory Outage Leg ---
+      - name: Test Suite - Samba AD Outage Handling
+        run: |
+          echo "Stopping Samba AD DC..."
+          docker stop samba-ad
+
+          echo "Attempting password change during Samba outage..."
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 4 or .errorCode == 8)'
+
+          docker start samba-ad
+
+      # --- Diagnostics and Teardown ---
+      - name: Dump Samba AD Logs on Failure
+        if: always()
+        run: |
+          echo "=== Samba AD Container Logs ==="
+          docker logs samba-ad | tail -100 || true
+
+      - name: Dump PassCore Logs on Failure
+        if: always()
+        run: |
+          echo "=== PassCore Application Log ==="
+          if [ -f passcore.log ]; then
+            cat passcore.log
+          fi
+
+      - name: Teardown Services
+        if: always()
+        run: |
+          if [ -f backend.pid ]; then
+            kill "$(cat backend.pid)" 2>/dev/null || true
+          fi
+          docker rm -f samba-ad || true
