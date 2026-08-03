@@ -75,19 +75,44 @@ jobs:
 
       - name: Configure Samba Strong Auth & Log Level (CI Only)
         run: |
+          echo "=== smb.conf BEFORE ==="
+          docker exec samba-ad cat /etc/samba/smb.conf
+          
           echo "Configuring Samba smb.conf for SASL over TLS..."
           docker exec samba-ad sh -c '
             awk "/^\[global\]/{
                    print;
-                   print "	log level = 3 auth_audit:5 auth_json_audit:5 auth:5";
-                   print "	ldap server require strong auth = allow_sasl_over_tls";
+                   print \"\tlog level = 3 auth_audit:5 auth_json_audit:5 auth:5\";
+                   print \"\tldap server require strong auth = allow_sasl_over_tls\";
                    next
                  } 1" /etc/samba/smb.conf > /tmp/smb.conf.new \
-                 && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
+              && cat /tmp/smb.conf.new > /etc/samba/smb.conf'
+
+          echo "=== smb.conf AFTER ==="
+          docker exec samba-ad cat /etc/samba/smb.conf
 
           # Restart samba process via supervisorctl (DO NOT use docker restart)
           docker exec samba-ad supervisorctl restart samba
-          sleep 3
+          
+          echo "Waiting for Samba to come back after the restart..."
+          READY=0
+          for attempt in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Running}}' samba-ad 2>/dev/null)" != "true" ]; then
+              echo "ERROR: container is not running after restart."
+              docker logs samba-ad | tail -50
+              exit 1
+            fi
+            # supervisorctl reporting RUNNING is the real signal now: ldbsearch
+            # alone reads sam.ldb straight off disk and answers even while the
+            # daemon is down, so on its own it would gate on nothing.
+            if docker exec samba-ad supervisorctl status samba 2>/dev/null | grep -q RUNNING \
+               && docker exec samba-ad ldbsearch -H /var/lib/samba/private/sam.ldb \
+                    -b "CN=Schema,CN=Configuration,DC=example,DC=com" "(objectClass=*)" name >/dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
 
       - name: Extract & Trust Samba AD Root CA Certificate
         run: |
