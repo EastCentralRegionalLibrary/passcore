@@ -92,10 +92,22 @@ jobs:
           docker exec samba-ad cat /etc/samba/smb.conf
 
           # Restart samba process via supervisorctl (DO NOT use docker restart)
-          # Wait 3 seconds and hope supervisorctl is running by now
-          sleep 3
-          # List running processes and socket files
-          docker exec samba-ad ps aux; docker exec samba-ad find / -name "*.sock" 2>/dev/null
+          echo "Waiting for supervisord to create socket and accept commands..."
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          SUPERVISOR_READY=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            # Check if supervisorctl can successfully query the socket
+            if docker exec samba-ad supervisorctl -s unix:///run/supervisor.sock status >/dev/null 2>&1; then
+              echo "supervisord is fully started and responsive!"
+              SUPERVISOR_READY=1
+              break
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            sleep 1
+          done
           # Restart Samba process
           docker exec samba-ad supervisorctl restart samba
           
