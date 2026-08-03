@@ -17,6 +17,7 @@ You can configure the behavior of the Debug Provider in your `appsettings.Develo
   "EnablePwnedCheck": false,
   "SimulateLatencyMs": 500,
   "DefaultErrorCode": null,
+  "MinimumLength": 8,
   "ForcedErrors": {
     "error": "Generic",
     "changeNotPermitted": "ChangeNotPermitted",
@@ -33,6 +34,7 @@ You can configure the behavior of the Debug Provider in your `appsettings.Develo
 | `SimulateLatencyMs` | `int` | Number of milliseconds to delay the response to simulate network/processing latency. |
 | `DefaultErrorCode` | `string?` | If set, every request that doesn't match a forced error will return this `ApiErrorCode`. |
 | `ForcedErrors` | `Dictionary<string, ApiErrorCode>` | A mapping of usernames to specific error codes. |
+| `MinimumLength` | `int` | The minimum password length this provider reports, standing in for the domain policy a directory provider reads. Defaults to `8`. Before this existed the provider reported no minimum at all, so `LengthPasswordPolicy` silently did nothing whenever the Debug provider was selected — the length rule could not be exercised in development. A real value is used rather than "unavailable" because the latter takes the shared fallback path, which logs an operator-actionable warning on every cache expiry; that warning is right for a directory provider that cannot reach its domain controller and is noise for a provider with no domain to reach. |
 
 ## Usage in Tests
 

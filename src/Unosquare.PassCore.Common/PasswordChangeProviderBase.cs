@@ -13,7 +13,7 @@ namespace Unosquare.PassCore.Common;
 /// validation and exception-to-error mapping so concrete providers only need to
 /// implement <see cref="ChangePasswordCore"/>.
 /// </summary>
-public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDisclosurePosture
+public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDisclosurePosture, IPasswordLengthRequirement
 {
     /// <inheritdoc />
     public virtual ErrorDisclosureMode ErrorDisclosureMode => ErrorDisclosureMode.Hardened;
@@ -21,6 +21,13 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     protected ILogger Logger { get; }
     protected IEnumerable<IPasswordPolicy> Policies { get; }
     protected ClientSettings ClientSettings { get; }
+
+    // Per INSTANCE, deliberately not static. The value is domain-wide, but a
+    // process could in principle hold two providers pointed at two directories,
+    // and a static cache would hand one of them the other's policy. Sharing
+    // would save one lookup per five minutes and risk advertising the wrong
+    // minimum; the trade is not close.
+    private readonly CachedDomainMinimumLength _minimumLength = new();
 
     protected PasswordChangeProviderBase(
         ILogger logger,
@@ -185,6 +192,39 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
                 $"An unexpected error occurred (ref: {context.CorrelationId ?? "n/a"})"));
         }
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>Cached with a short time-to-live, because this runs on every POST —
+    /// before the caller has proved anything — and the lookup behind it costs a
+    /// bind plus a search or two against a value that is domain-wide and changes
+    /// about as often as a group policy edit. Only a directory-sourced value is
+    /// cached, so a failing lookup keeps re-attempting and keeps logging its
+    /// warning rather than having it suppressed for the whole TTL.</para>
+    /// <para>Both shipped directory providers had an identical copy of this. What
+    /// genuinely differs between them is <see cref="ReadMinPwdLength"/>, so that is
+    /// the only part they still supply.</para>
+    /// </remarks>
+    public Task<int> GetMinimumLengthAsync() =>
+        Task.FromResult(_minimumLength.Resolve(Logger, ReadMinPwdLength));
+
+    /// <summary>
+    /// Reads the directory's minimum password length, or returns
+    /// <see langword="null"/> when this provider has no such value to read.
+    /// </summary>
+    /// <remarks>
+    /// <para>May throw. A throwing lookup and a <see langword="null"/> one are the
+    /// same case as far as callers are concerned: <see cref="DomainPasswordPolicy"/>
+    /// logs the condition at Warning and advertises
+    /// <see cref="DomainPasswordPolicy.DefaultMinimumLength"/>. Neither reaches the
+    /// end user, and neither is cached.</para>
+    /// <para>Because <see langword="null"/> is a handled answer rather than a
+    /// failure, a provider that cannot read a domain policy does not need to opt out
+    /// of <see cref="IPasswordLengthRequirement"/> — which is why the base can
+    /// implement it for everyone.</para>
+    /// </remarks>
+    /// <returns>The directory's minimum password length, or <see langword="null"/>.</returns>
+    protected abstract int? ReadMinPwdLength();
 
     protected virtual void ValidateContext(PasswordChangeContext context)
     {

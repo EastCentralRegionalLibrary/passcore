@@ -7,12 +7,22 @@ public class LengthPasswordPolicy : IPasswordPolicy
 {
     public async Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
+        // Kept even though PasswordChangeProviderBase now implements the
+        // interface for every shipped provider. IPasswordChangeProvider is
+        // public and can be implemented without deriving from that base, so
+        // removing this check would turn a third-party provider into a cast
+        // failure at request time.
         if (provider is IPasswordLengthRequirement requirement)
         {
             var minLength = await requirement.GetMinimumLengthAsync();
             if (context.NewPassword.Length < minLength)
             {
-                throw new PasswordPolicyViolationException($"The new password does not meet the domain minimum password length requirement of {minLength} characters.", ApiErrorCode.ComplexPassword);
+                // Deliberately does not say "domain": this policy is
+                // provider-agnostic and runs in front of directories that have no
+                // domain at all. The numeral matters — the AD smoke test asserts
+                // the message names the minimum that was actually read, which is
+                // what distinguishes a working lookup from the shared fallback.
+                throw new PasswordPolicyViolationException($"The new password does not meet the minimum length requirement of {minLength} characters.", ApiErrorCode.ComplexPassword);
             }
         }
     }

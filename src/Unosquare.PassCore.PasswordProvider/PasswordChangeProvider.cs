@@ -26,16 +26,13 @@ namespace Unosquare.PassCore.PasswordProvider
     /// <seealso cref="IPasswordChangeProvider" />
     /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
     [SupportedOSPlatform("windows")]
-    public class PasswordChangeProvider : PasswordChangeProviderBase, IPasswordLengthRequirement, IGroupMembershipTester, IGroupMembershipResolver
+    public class PasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
     {
         /// <inheritdoc />
         public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
 
         private readonly PasswordChangeOptions _options;
 
-        // The provider is registered as a singleton, so this is shared across
-        // requests -- which is the point: the value it holds is domain-wide.
-        private readonly CachedDomainMinimumLength _minimumLength = new();
         private IdentityType _idType = IdentityType.UserPrincipalName;
 
         private static readonly Action<ILogger, Exception?> LogAdminResetIgnoredInAutomaticContext =
@@ -330,12 +327,6 @@ namespace Unosquare.PassCore.PasswordProvider
             }
 
             return Task.CompletedTask;
-        }
-
-        /// <inheritdoc />
-        public Task<int> GetMinimumLengthAsync()
-        {
-            return Task.FromResult(AcquireDomainPasswordLength());
         }
 
         /// <summary>
@@ -966,29 +957,16 @@ namespace Unosquare.PassCore.PasswordProvider
             }
         }
 
-        /// <summary>
-        /// Retrieves the minimum password length policy from Active Directory,
-        /// falling back — visibly, via a logged Warning — to
-        /// <see cref="DomainPasswordPolicy.DefaultMinimumLength"/> when the domain
-        /// policy cannot be read. The fallback/log decision lives in the shared,
-        /// testable <see cref="DomainPasswordPolicy.ResolveMinimumLength"/>; this
-        /// method supplies only the AccountManagement-specific lookup.
-        /// </summary>
-        /// <returns>The minimum password length as an integer.</returns>
-        // Cached with a short time-to-live: this runs on every POST, before the
-        // caller has proved anything, and the value is domain-wide. Only a
-        // directory-sourced value is cached, so a failing lookup keeps
-        // re-attempting and keeps logging its warning.
-        private int AcquireDomainPasswordLength() =>
-            _minimumLength.Resolve(Logger, ReadMinPwdLength);
-
-        /// <summary>
+        /// <inheritdoc />
+        /// <remarks>
         /// Reads <c>minPwdLength</c> from the domain. Returns <see langword="null"/>
         /// when the value is absent; throws when the directory cannot be reached
         /// or read — both are turned into the logged fallback by
-        /// <see cref="DomainPasswordPolicy.ResolveMinimumLength"/>.
-        /// </summary>
-        private int? ReadMinPwdLength()
+        /// <see cref="DomainPasswordPolicy.ResolveMinimumLength"/>. Caching and that
+        /// fallback decision belong to the base class; this supplies only the
+        /// AccountManagement-specific lookup.
+        /// </remarks>
+        protected override int? ReadMinPwdLength()
         {
             DirectoryEntry? entry = null; // Initialize to null for try-finally
             try
