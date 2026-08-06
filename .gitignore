@@ -212,3 +212,4 @@ test-results/
 
 # Claude Code machine-local settings
 .claude/settings.local.json
+.claude/worktrees/

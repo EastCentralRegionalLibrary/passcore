@@ -259,7 +259,15 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"username": "testuser", "currentPassword": "testpassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
           echo "Response: $RESPONSE"
-          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 4 or .errorCode == 8)'
+          # Only DirectoryUnavailable (8) is acceptable here. testuser's password is
+          # never rotated in this workflow -- Test 1 targets alloweduser, Test 2 uses
+          # a deliberately wrong password, and the Hardened leg probes only
+          # nonexistent -- so testpassword is still current at this point, and an
+          # InvalidCredentials (4) result would mean a connect failure had been
+          # misrouted, not a legitimate credential mismatch. The 4-or-8 tolerance is
+          # retained in the mokapi workflow, where the Hardened positive control may
+          # have rotated testuser; see ldap-provider-smoke-test.yml:398-401.
+          echo "$RESPONSE" | jq -e '.errors[] | select(.errorCode == 8)'
 
           docker start samba-ad
 
