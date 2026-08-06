@@ -209,3 +209,6 @@ aot/*
 # Playwright
 playwright-report/
 test-results/
+
+# Claude Code machine-local settings
+.claude/settings.local.json
