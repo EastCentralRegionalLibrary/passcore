@@ -67,6 +67,11 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            was the wrong one. Retired, not free -- do not reuse.
     //            Numbering continues here rather than reusing a retired ID.
     //                                                                     next: 120
+    //   120-121  identity-type classification warnings, added once
+    //            UserIdentityTypeClassifier moved the AD provider's alias table into
+    //            Common: AD UnrecognizedIdentityType (120), AD IdentityTypeNotWebUsable
+    //            (121).
+    //                                                                     next: 122
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or

@@ -684,15 +684,83 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.Contains("ValidateOptions(_options)", body, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The three checks now live once, in <c>AppSettingsValidation.ValidateServiceAccount</c>,
+    /// shared with the LDAP provider. This provider must call it rather than carry its own
+    /// copy, and must pass the same <c>UseAutomaticContext</c>-derived requirement the old
+    /// inline <c>if</c> guarded: a service account is only required for an explicit bind.
+    /// </summary>
     [Fact]
-    public void AdProvider_ValidateOptionsChecksLdapSettings()
+    public void AdProvider_ValidateOptionsDelegatesToTheSharedServiceAccountValidator()
     {
         var providerContent = ReadRepoFile(ProviderRelativePath);
         var body = ExtractMethodBody(CodeSkeleton(providerContent), "void ValidateOptions(");
 
-        Assert.Contains("opts.LdapHostnames", body, StringComparison.Ordinal);
-        Assert.Contains("opts.LdapUsername", body, StringComparison.Ordinal);
-        Assert.Contains("opts.LdapPassword", body, StringComparison.Ordinal);
+        Assert.Contains(
+            "AppSettingsValidation.ValidateServiceAccount(opts, required: !opts.UseAutomaticContext)",
+            body,
+            StringComparison.Ordinal);
+
+        // No re-implementation alongside the delegation: the checks belong to
+        // AppSettingsValidation now, not to this method.
+        Assert.DoesNotContain("opts.LdapHostnames", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("opts.LdapUsername", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("opts.LdapPassword", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The alias table (DistinguishedName/Guid/Name/SamAccountName/Sid/UserPrincipalName and
+    /// their aliases) moved into <c>UserIdentityTypeClassifier</c> so it can be exercised
+    /// cross-platform. <c>SetIdType</c> must call the shared classifier and only map its
+    /// result onto the Windows-only <c>IdentityType</c>, rather than carrying its own switch
+    /// over string aliases.
+    /// </summary>
+    [Fact]
+    public void AdProvider_SetIdTypeDelegatesToTheSharedClassifier()
+    {
+        var providerContent = ReadRepoFile(ProviderRelativePath);
+        var body = ExtractMethodBody(CodeSkeleton(providerContent), "void SetIdType(");
+
+        Assert.Contains(
+            "UserIdentityTypeClassifier.Classify(",
+            body,
+            StringComparison.Ordinal);
+
+        // No local alias switch left behind: these string literals belonged to the
+        // old inline mapping and must not still be tested against the raw input here.
+        Assert.DoesNotContain("distinguishedname", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("globallyuniqueidentifier", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("samaccountname", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("securityidentifier", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Warn only, per the deprecated-key precedent (EventId 101, LDAP provider):
+    /// an unrecognized IdTypeForUser or one that cannot work from the web interface
+    /// must not fail startup, and the "blank means default" case must not warn at all.
+    /// </summary>
+    [Fact]
+    public void AdProvider_SetIdTypeWarnsOnUnrecognizedOrNotWebUsableIdentityTypes()
+    {
+        var providerContent = ReadRepoFile(ProviderRelativePath);
+        var code = CodeSkeleton(providerContent);
+        var body = ExtractMethodBody(code, "void SetIdType(");
+
+        Assert.Contains("if (!recognized)", body, StringComparison.Ordinal);
+        Assert.Contains("LogUnrecognizedIdentityType(Logger,", body, StringComparison.Ordinal);
+
+        Assert.Contains("if (!usableInWebInterface)", body, StringComparison.Ordinal);
+        Assert.Contains("LogIdentityTypeNotWebUsable(Logger,", body, StringComparison.Ordinal);
+
+        // Both new EventIds are allocated, at Warning, and neither reuses or
+        // renumbers an existing one.
+        var unrecognizedDeclaration = code[code.IndexOf("LogUnrecognizedIdentityType =", StringComparison.Ordinal)..];
+        Assert.Contains("LogLevel.Warning", unrecognizedDeclaration[..200], StringComparison.Ordinal);
+        Assert.Contains("EventId(120", unrecognizedDeclaration[..300], StringComparison.Ordinal);
+
+        var notWebUsableDeclaration = code[code.IndexOf("LogIdentityTypeNotWebUsable =", StringComparison.Ordinal)..];
+        Assert.Contains("LogLevel.Warning", notWebUsableDeclaration[..200], StringComparison.Ordinal);
+        Assert.Contains("EventId(121", notWebUsableDeclaration[..300], StringComparison.Ordinal);
     }
 
     [Fact]
