@@ -14,8 +14,6 @@ using System.Threading.Tasks;
 using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Exceptions;
 using Unosquare.PassCore.Common.Models;
-using LdapRemoteCertificateValidationCallback =
-    Novell.Directory.Ldap.RemoteCertificateValidationCallback;
 
 namespace Zyborg.PassCore.PasswordProvider.LDAP;
 
@@ -44,7 +42,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 {
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
-    private readonly LdapRemoteCertificateValidationCallback? _certValidator;
+    private readonly System.Net.Security.RemoteCertificateValidationCallback? _certValidator;
 
     // The provider is registered as a singleton, so this is shared across requests —
     // which is the point: the value it holds is domain-wide, not per-account.
@@ -160,6 +158,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 
     private static readonly string[] GroupTypeAttributes = { "groupType" };
 
+    private static readonly string[] DistinguishedNameAttribute = { "distinguishedName" };
+    private static readonly string[] DistinguishedNameAndGroupTypeAttributes = { "distinguishedName", "groupType" };
+    private static readonly string[] DefaultNamingContextAttribute = { "defaultNamingContext" };
+    private static readonly string[] MinPwdLengthAttribute = { "minPwdLength" };
+
     /// <summary>
     /// What a candidate group's <c>groupType</c> says about whether it may satisfy a
     /// configured group name.
@@ -182,8 +185,16 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         Distribution,
     }
 
-    internal Func<LdapConnection> LdapConnectionFactory { get; set; } = () => new LdapConnection();
+    internal Func<LdapConnectionOptions?, LdapConnection> LdapConnectionFactory { get; set; } =
+        (options) => options == null ? new LdapConnection() : new LdapConnection(options);
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LdapPasswordChangeProvider"/> class.
+    /// </summary>
+    /// <param name="logger">The logger.</param>
+    /// <param name="options">The LDAP provider options.</param>
+    /// <param name="clientSettings">The client settings.</param>
+    /// <param name="policies">The password policies.</param>
     public LdapPasswordChangeProvider(
         ILogger<LdapPasswordChangeProvider> logger,
         IOptions<LdapPasswordChangeOptions> options,
@@ -284,9 +295,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// matched to have completed.
     /// </summary>
     private Task<bool> IsMemberOfAnyGroup(
-        string username, IReadOnlyCollection<string> groupNames, LdapResolvedMembership? resolution = null)
+        string username, string[] groupNames, LdapResolvedMembership? resolution = null)
     {
-        if (groupNames.Count == 0)
+        if (groupNames.Length == 0)
             return Task.FromResult(false);
 
         try
@@ -365,10 +376,10 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
                             $"(primaryGroupToken={primaryGroupToken})");
                         var primarySearch = SearchLdap(
                             ldap,
-                            _options.LdapSearchBase,
+                            _options.LdapSearchBase!,
                             LdapConnection.ScopeSub,
                             primaryFilter,
-                            new[] { "distinguishedName" },
+                            DistinguishedNameAttribute,
                             false,
                             _searchConstraints);
 
@@ -424,10 +435,10 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
                 // directory implements the extensible match in the first place.
                 var chainSearch = SearchLdap(
                     ldap,
-                    _options.LdapSearchBase,
+                    _options.LdapSearchBase!,
                     LdapConnection.ScopeSub,
                     chainFilter,
-                    new[] { "distinguishedName", "groupType" },
+                    DistinguishedNameAndGroupTypeAttributes,
                     false,
                     _searchConstraints);
 
@@ -518,7 +529,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
                 "",
                 LdapConnection.ScopeBase,
                 "(objectClass=*)",
-                new[] { "defaultNamingContext" },
+                DefaultNamingContextAttribute,
                 false,
                 _searchConstraints);
 
@@ -552,7 +563,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             domainNcRootDn,
             LdapConnection.ScopeBase,
             "(objectClass=*)",
-            new[] { "minPwdLength" },
+            MinPwdLengthAttribute,
             false,
             _searchConstraints);
 
@@ -719,6 +730,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     // Password change entry point
     // ---------------------------------------------------------------------
 
+    /// <inheritdoc />
     protected override Task ChangeDirectoryPasswordCore(
         PasswordChangeContext context,
         CancellationToken cancellationToken)
@@ -737,7 +749,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             //    verified flag is derived from control flow: VerifyUserCredentials
             //    throws on failure, so this line is reachable only after the user
             //    proved knowledge of the current password in this request.
-            ChangePassword(user.DistinguishedName, context, currentPasswordVerified: true);
+            ExecutePasswordChange(user.DistinguishedName, context, currentPasswordVerified: true);
         }
         catch (LdapException ex)
         {
@@ -765,7 +777,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 
         var search = SearchLdap(
             ldap,
-            _options.LdapSearchBase,
+            _options.LdapSearchBase!,
             LdapConnection.ScopeSub,
             filter,
             RequiredAttributes,
@@ -899,7 +911,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// rescuable. The Replace mechanism is already administrative, so neither
     /// detection nor fallback applies there.
     /// </summary>
-    private void ChangePassword(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
+    private void ExecutePasswordChange(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
         using var ldap = BindAsServiceAccount(context.CorrelationId);
 
@@ -1082,7 +1094,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 
             return denied.Value;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Deliberately broad: detection is best-effort and must never turn
             // an unreadable descriptor into a failed password change.
@@ -1277,9 +1289,17 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 
         foreach (var host in _options.LdapHostnames)
         {
-            var ldap = LdapConnectionFactory();
+            LdapConnection ldap;
             if (_certValidator != null)
-                ldap.UserDefinedServerCertValidationDelegate += _certValidator;
+            {
+                var connOptions = new LdapConnectionOptions();
+                connOptions.ConfigureRemoteCertificateValidationCallback(_certValidator);
+                ldap = LdapConnectionFactory(connOptions);
+            }
+            else
+            {
+                ldap = LdapConnectionFactory(null);
+            }
 
             try
             {
@@ -1310,21 +1330,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
 
         throw new DirectoryUnavailableException(
             "Failed to connect to any configured LDAP hostname",
-            lastConnectException);
-    }
-
-    /// <summary>
-    /// Marker exception raised when the LDAP bind step (rather than the
-    /// connect step) fails. Lets callers distinguish a wrong password from
-    /// an unreachable host while keeping the original <see cref="LdapException"/>
-    /// available as <see cref="System.Exception.InnerException"/>.
-    /// </summary>
-    private sealed class LdapBindException : Exception
-    {
-        public LdapBindException(LdapException inner)
-            : base(inner.Message, inner)
-        {
-        }
+            (Exception?)lastConnectException ?? new InvalidOperationException("No LDAP hostnames are configured."));
     }
 
     // ---------------------------------------------------------------------
@@ -1619,8 +1625,8 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// </summary>
     internal bool ValidateServerCertificate(
         object sender,
-        X509Certificate cert,
-        X509Chain chain,
+        X509Certificate? cert,
+        X509Chain? chain,
         System.Net.Security.SslPolicyErrors errors)
     {
         if (_options.LdapIgnoreTlsErrors)
@@ -1683,7 +1689,43 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             if (groupNames is null || groupNames.Count == 0)
                 return Task.FromResult(false);
 
-            return _provider.IsMemberOfAnyGroup(_username, groupNames, this);
+            return _provider.IsMemberOfAnyGroup(_username, groupNames as string[] ?? groupNames.ToArray(), this);
         }
+    }
+}
+
+/// <summary>
+/// Marker exception raised when the LDAP bind step (rather than the
+/// connect step) fails. Lets callers distinguish a wrong password from
+/// an unreachable host while keeping the original <see cref="LdapException"/>
+/// available as <see cref="System.Exception.InnerException"/>.
+/// </summary>
+public class LdapBindException : Exception
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LdapBindException"/> class.
+    /// </summary>
+    public LdapBindException() : base() { }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LdapBindException"/> class with a specified error message.
+    /// </summary>
+    /// <param name="message">The message that describes the error.</param>
+    public LdapBindException(string message) : base(message) { }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LdapBindException"/> class with a specified error message and inner exception.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    /// <param name="innerException">The inner exception.</param>
+    public LdapBindException(string message, Exception innerException) : base(message, innerException) { }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LdapBindException"/> class with an LDAP exception.
+    /// </summary>
+    /// <param name="inner">The inner LDAP exception.</param>
+    public LdapBindException(LdapException inner)
+        : base(inner?.Message, inner)
+    {
     }
 }

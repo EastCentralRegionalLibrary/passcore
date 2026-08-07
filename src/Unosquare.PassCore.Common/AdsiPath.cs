@@ -4,10 +4,10 @@ using System.Globalization;
 namespace Unosquare.PassCore.Common;
 
 /// <summary>
-/// Builds ADSI paths for <c>System.DirectoryServices.DirectoryEntry</c>.
+/// Builds ADSI paths for System.DirectoryServices.DirectoryEntry.
 /// </summary>
 /// <remarks>
-/// <para><see cref="System.DirectoryServices"/>' <c>DirectoryEntry</c> takes an ADSI
+/// <para><c>System.DirectoryServices.DirectoryEntry</c>'s <c>DirectoryEntry</c> takes an ADSI
 /// path, not a server address. A bare <c>host:port</c> has no provider scheme and
 /// binds nothing: it fails with <c>0x80005000</c>, <c>E_ADS_BAD_PATHNAME</c>. That
 /// is what the AD provider was passing on the explicit-bind path, so every request

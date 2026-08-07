@@ -1,11 +1,8 @@
-using System;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using PwnedPasswordsSearch;
-using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.Common.Policies;
 using Unosquare.PassCore.Web.Models;
@@ -91,4 +88,7 @@ app.MapControllers();
 
 app.Run();
 
+/// <summary>
+/// Main entry point class for the application.
+/// </summary>
 public partial class Program;

@@ -5,8 +5,12 @@ using Unosquare.PassCore.Common.Exceptions;
 
 namespace Unosquare.PassCore.Common.Policies;
 
+/// <summary>
+/// Policy to enforce password complexity rules.
+/// </summary>
 public class ComplexityPasswordPolicy : IPasswordPolicy
 {
+    /// <inheritdoc />
     public Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
         ArgumentNullException.ThrowIfNull(context);

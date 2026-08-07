@@ -12,9 +12,9 @@ public class UserIdentityTypeTests
     [InlineData("distinguishedname", UserIdentityType.DistinguishedName)]
     [InlineData("distinguished name", UserIdentityType.DistinguishedName)]
     [InlineData("dn", UserIdentityType.DistinguishedName)]
-    [InlineData("globally unique identifier", UserIdentityType.Guid)]
-    [InlineData("globallyuniqueidentifier", UserIdentityType.Guid)]
-    [InlineData("guid", UserIdentityType.Guid)]
+    [InlineData("globally unique identifier", UserIdentityType.GuidValue)]
+    [InlineData("globallyuniqueidentifier", UserIdentityType.GuidValue)]
+    [InlineData("guid", UserIdentityType.GuidValue)]
     [InlineData("name", UserIdentityType.Name)]
     [InlineData("nm", UserIdentityType.Name)]
     [InlineData("samaccountname", UserIdentityType.SamAccountName)]
@@ -130,14 +130,14 @@ public class UserIdentityTypeTests
 
     [Theory]
     [InlineData(UserIdentityType.DistinguishedName)]
-    [InlineData(UserIdentityType.Guid)]
+    [InlineData(UserIdentityType.GuidValue)]
     [InlineData(UserIdentityType.Sid)]
     public void SomeTypes_AreNotUsableInTheWebInterface(UserIdentityType type)
     {
         var alias = type switch
         {
             UserIdentityType.DistinguishedName => "dn",
-            UserIdentityType.Guid => "guid",
+            UserIdentityType.GuidValue => "guid",
             UserIdentityType.Sid => "sid",
             _ => throw new InvalidOperationException("Unexpected type for this theory."),
         };
