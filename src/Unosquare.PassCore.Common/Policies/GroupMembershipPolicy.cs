@@ -1,12 +1,20 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Unosquare.PassCore.Common.Policies;
 
+/// <summary>
+/// Policy to restrict or allow password change based on user group membership.
+/// </summary>
 public class GroupMembershipPolicy : IPasswordPolicy
 {
+    /// <inheritdoc />
     public async Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(provider);
+
         if (provider is not IGroupMembershipTester tester)
             return;
 
@@ -40,6 +48,6 @@ public class GroupMembershipPolicy : IPasswordPolicy
             throw DirectoryErrorTranslator.CreateGroupRejectionError(disclosureMode);
     }
 
-    private static IReadOnlyCollection<string> AsCollection(List<string>? groups) =>
-        groups ?? (IReadOnlyCollection<string>)System.Array.Empty<string>();
+    private static IReadOnlyCollection<string> AsCollection(IReadOnlyCollection<string>? groups) =>
+        groups ?? System.Array.Empty<string>();
 }

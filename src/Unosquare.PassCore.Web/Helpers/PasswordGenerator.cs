@@ -3,9 +3,9 @@ using System.Security.Cryptography;
 
 namespace Unosquare.PassCore.Web.Helpers;
 
-internal class PasswordGenerator
+internal static class PasswordGenerator
 {
-    public string Generate(int entropy)
+    public static string Generate(int entropy)
     {
         var pswBytes = RandomNumberGenerator.GetBytes(entropy);
 

@@ -1,16 +1,11 @@
-using Unosquare.PassCore.Web.Helpers;
+using System.Net.Http;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Models;
+using Unosquare.PassCore.Web.Helpers;
 using Unosquare.PassCore.Web.Models;
-using System.Text.Json;
-using System.Net.Http;
-using Zxcvbn;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace Unosquare.PassCore.Web.Controllers;
 
@@ -25,6 +20,24 @@ public class PasswordController : Controller
     private readonly IPasswordChangeProvider _passwordChangeProvider;
     private readonly IHttpClientFactory _httpClientFactory;
 
+    private static readonly Action<ILogger, Exception?> LogInvalidModel =
+        LoggerMessage.Define(
+            LogLevel.Warning,
+            new EventId(200, "InvalidModel"),
+            "Invalid model, validation failed");
+
+    private static readonly Action<ILogger, Exception?> LogInvalidRecaptcha =
+        LoggerMessage.Define(
+            LogLevel.Warning,
+            new EventId(201, "InvalidRecaptcha"),
+            "Invalid Recaptcha");
+
+    private static readonly Action<ILogger, string, Exception?> LogFailedToUpdatePassword =
+        LoggerMessage.Define<string>(
+            LogLevel.Error,
+            new EventId(202, "FailedToUpdatePassword"),
+            "Failed to update password (ref: {Reference})");
+
     /// <summary>
     /// Initializes a new instance of the <see cref="PasswordController" /> class.
     /// </summary>
@@ -38,6 +51,7 @@ public class PasswordController : Controller
         IPasswordChangeProvider passwordChangeProvider,
         IHttpClientFactory httpClientFactory)
     {
+        ArgumentNullException.ThrowIfNull(optionsAccessor);
         _logger = logger;
         _options = optionsAccessor.Value;
         _passwordChangeProvider = passwordChangeProvider;
@@ -59,8 +73,7 @@ public class PasswordController : Controller
     [Route("generated")]
     public IActionResult GetGeneratedPassword()
     {
-        var generator = new PasswordGenerator();
-        return Json(new { password = generator.Generate(_options.PasswordEntropy) });
+        return Json(new { password = PasswordGenerator.Generate(_options.PasswordEntropy) });
     }
 
     /// <summary>
@@ -71,10 +84,12 @@ public class PasswordController : Controller
     [HttpPost]
     public async Task<IActionResult> Post([FromBody] ChangePasswordModel model)
     {
+        ArgumentNullException.ThrowIfNull(model);
+
         // Validate the model
         if (!ModelState.IsValid)
         {
-            _logger.LogWarning("Invalid model, validation failed");
+            LogInvalidModel(_logger, null);
 
             return BadRequest(ApiResult.FromModelStateErrors(ModelState));
         }
@@ -87,7 +102,7 @@ public class PasswordController : Controller
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Invalid Recaptcha");
+            LogInvalidRecaptcha(_logger, ex);
             return BadRequest(ApiResult.InvalidCaptcha());
         }
 
@@ -124,7 +139,7 @@ public class PasswordController : Controller
     private ApiErrorItem UnexpectedError(Exception ex)
     {
         var reference = Guid.NewGuid().ToString("N")[..8];
-        _logger.LogError(ex, "Failed to update password (ref: {Reference})", reference);
+        LogFailedToUpdatePassword(_logger, reference, ex);
 
         return new ApiErrorItem(ApiErrorCode.Generic, $"An unexpected error occurred (ref: {reference})");
     }
@@ -144,7 +159,7 @@ public class PasswordController : Controller
             new KeyValuePair<string?, string?>("secret", _options.Recaptcha.PrivateKey),
             new KeyValuePair<string?, string?>("response", recaptchaResponse)
         });
-        using var response = await client.PostAsync("siteverify", content);
+        using var response = await client.PostAsync(new Uri("siteverify", UriKind.Relative), content);
 
         try
         {

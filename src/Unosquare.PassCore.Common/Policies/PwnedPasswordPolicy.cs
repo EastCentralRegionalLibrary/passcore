@@ -5,15 +5,23 @@ using Unosquare.PassCore.Common.Exceptions;
 
 namespace Unosquare.PassCore.Common.Policies;
 
+/// <summary>
+/// Policy to check if the new password has been compromised (leaked/pwned).
+/// </summary>
 public class PwnedPasswordPolicy : IPasswordPolicy
 {
     private readonly IPwnedPasswordSearch _pwnedPasswordSearch;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PwnedPasswordPolicy"/> class.
+    /// </summary>
+    /// <param name="pwnedPasswordSearch">The pwned password search service.</param>
     public PwnedPasswordPolicy(IPwnedPasswordSearch pwnedPasswordSearch)
     {
         _pwnedPasswordSearch = pwnedPasswordSearch;
     }
 
+    /// <inheritdoc />
     public async Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
         ArgumentNullException.ThrowIfNull(context);

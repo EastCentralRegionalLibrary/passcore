@@ -18,8 +18,13 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     /// <inheritdoc />
     public virtual ErrorDisclosureMode ErrorDisclosureMode => ErrorDisclosureMode.Hardened;
 
+    /// <summary>Gets the logger for the provider.</summary>
     protected ILogger Logger { get; }
+
+    /// <summary>Gets the registered password policies.</summary>
     protected IEnumerable<IPasswordPolicy> Policies { get; }
+
+    /// <summary>Gets the client settings used by the provider.</summary>
     protected ClientSettings ClientSettings { get; }
 
     // Per INSTANCE, deliberately not static. The value is domain-wide, but a
@@ -29,6 +34,12 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     // minimum; the trade is not close.
     private readonly CachedDomainMinimumLength _minimumLength = new();
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PasswordChangeProviderBase"/> class.
+    /// </summary>
+    /// <param name="logger">The logger instance.</param>
+    /// <param name="clientSettings">The client settings.</param>
+    /// <param name="policies">The collection of password policies.</param>
     protected PasswordChangeProviderBase(
         ILogger logger,
         ClientSettings? clientSettings = null,
@@ -72,6 +83,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            Common: AD UnrecognizedIdentityType (120), AD IdentityTypeNotWebUsable
     //            (121).
     //                                                                     next: 122
+    //   200-209  web controller events                                     next: 210
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or
@@ -142,6 +154,12 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
             ClientSettings,
             correlationId: Guid.NewGuid().ToString("N")[..8]));
 
+    /// <summary>
+    /// Performs the core asynchronous password change, running all policies and mapping exceptions.
+    /// </summary>
+    /// <param name="context">The password change request context.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A <see cref="PasswordChangeResult"/> indicating the outcome of the operation.</returns>
     protected virtual async Task<PasswordChangeResult> ChangePasswordAsync(PasswordChangeContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -185,7 +203,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
             LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
             return PasswordChangeResult.Fail(ApiErrorMapper.Map(ex));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogPasswordChangeFailed(Logger, context.CorrelationId, context.Username, ex);
 
@@ -231,6 +249,10 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     /// <returns>The directory's minimum password length, or <see langword="null"/>.</returns>
     protected abstract int? ReadMinPwdLength();
 
+    /// <summary>
+    /// Validates that the context contains required fields.
+    /// </summary>
+    /// <param name="context">The context to validate.</param>
     protected virtual void ValidateContext(PasswordChangeContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -243,5 +265,11 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
             throw new InvalidCredentialsException("New password is required");
     }
 
+    /// <summary>
+    /// Executes the directory-specific password change logic.
+    /// </summary>
+    /// <param name="context">The password change request context.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     protected abstract Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken);
 }

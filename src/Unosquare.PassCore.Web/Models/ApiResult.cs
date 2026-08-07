@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Unosquare.PassCore.Web.Models;
@@ -17,9 +18,9 @@ public class ApiResult
     }
 
     /// <summary>
-    /// Gets or sets the errors.
+    /// Gets the errors.
     /// </summary>
-    public List<ApiErrorItem> Errors { get; } = [];
+    public Collection<ApiErrorItem> Errors { get; } = [];
 
     /// <summary>
     /// Gets or sets the payload.
@@ -57,11 +58,15 @@ public class ApiResult
     /// <returns>The ApiResult from Model State.</returns>
     public static ApiResult FromModelStateErrors(ModelStateDictionary modelState)
     {
+        ArgumentNullException.ThrowIfNull(modelState);
+
         var result = new ApiResult();
 
-        foreach (var (key, value) in modelState.Where(x => x.Value.Errors.Any()))
+        foreach (var (key, value) in modelState.Where(x => x.Value?.Errors?.Any() == true))
         {
-            var error = value.Errors.First();
+            var error = value?.Errors?.FirstOrDefault();
+            if (error == null)
+                continue;
 
             switch (error.ErrorMessage)
             {
