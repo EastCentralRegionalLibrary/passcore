@@ -58,6 +58,15 @@ public class AdProviderDirectoryWriteAuditTests
         ".SetInfo(",
         ".GetUnderlyingObject(",
         ".Properties[",
+
+        // Both actual password writes go through the bound entry's
+        // reflection-style Invoke("ChangePassword", ...) /
+        // Invoke("SetPassword", ...), not through .ChangePassword(/.SetPassword(
+        // above — those match the AccountManagement principal API, not the
+        // ADSI DirectoryEntry calls this provider actually uses for the write.
+        // Without this entry, a write moved before credential verification via
+        // Invoke would go undetected by this audit.
+        ".Invoke(",
     ];
 
     [Fact]
@@ -80,16 +89,16 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     [Fact]
-    public void ChangePasswordCore_PerformsNoDirectoryWriteBeforeCredentialVerification()
+    public void ChangeDirectoryPasswordCore_PerformsNoDirectoryWriteBeforeCredentialVerification()
     {
         var body = ExtractMethodBody(
             CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
-            "Task ChangePasswordCore(");
+            "Task ChangeDirectoryPasswordCore(");
 
         var verificationAt = body.IndexOf("ValidateUserCredentials(", StringComparison.Ordinal);
         Assert.True(
             verificationAt >= 0,
-            "ChangePasswordCore no longer calls ValidateUserCredentials; the ordering this test " +
+            "ChangeDirectoryPasswordCore no longer calls ValidateUserCredentials; the ordering this test " +
             "guards has no anchor. Re-establish credential verification before reviewing this test.");
 
         foreach (var call in WriteCapableCalls)
@@ -99,7 +108,7 @@ public class AdProviderDirectoryWriteAuditTests
 
             Assert.True(
                 firstUse > verificationAt,
-                $"'{call}' appears in ChangePasswordCore at offset {firstUse}, before the " +
+                $"'{call}' appears in ChangeDirectoryPasswordCore at offset {firstUse}, before the " +
                 $"ValidateUserCredentials call at offset {verificationAt}. Everything above that " +
                 "call runs for a caller who supplied only a username, so a directory write there " +
                 "is an unauthenticated modification. See docs/UPGRADING-error-routing.md.");
@@ -107,7 +116,7 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     [Fact]
-    public void ChangePasswordCore_AttachesTheVerificationFailureReasonAsAnInnerException()
+    public void ChangeDirectoryPasswordCore_AttachesTheVerificationFailureReasonAsAnInnerException()
     {
         // The runtime behavior — that an operator can read the Win32 code back
         // out of the logged chain — is covered by CredentialFailureDetailTests
@@ -115,11 +124,11 @@ public class AdProviderDirectoryWriteAuditTests
         // this provider actually calls it, so that wiring is asserted here.
         var body = ExtractMethodBody(
             CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
-            "Task ChangePasswordCore(");
+            "Task ChangeDirectoryPasswordCore(");
 
         Assert.True(
             body.Contains("CredentialFailureDetail.ForWin32Code(", StringComparison.Ordinal),
-            "ChangePasswordCore no longer builds a CredentialFailureDetail for a failed credential " +
+            "ChangeDirectoryPasswordCore no longer builds a CredentialFailureDetail for a failed credential " +
             "verification. Hardened mode collapses every credential and account-state condition " +
             "into one response, so dropping this detail leaves the operator with no way to tell a " +
             "lockout from a mistyped password. See docs/error-routing-matrix.md, 'Diagnostics'.");
@@ -127,7 +136,7 @@ public class AdProviderDirectoryWriteAuditTests
         // The detail must be an argument to the exception, never part of the
         // message that ApiErrorMapper puts on the wire.
         var throwAt = body.IndexOf("new InvalidCredentialsException(", StringComparison.Ordinal);
-        Assert.True(throwAt >= 0, "ChangePasswordCore no longer throws InvalidCredentialsException on verification failure.");
+        Assert.True(throwAt >= 0, "ChangeDirectoryPasswordCore no longer throws InvalidCredentialsException on verification failure.");
     }
 
     [Fact]
@@ -762,6 +771,54 @@ public class AdProviderDirectoryWriteAuditTests
         var notWebUsableDeclaration = code[code.IndexOf("LogIdentityTypeNotWebUsable =", StringComparison.Ordinal)..];
         Assert.Contains("LogLevel.Warning", notWebUsableDeclaration[..200], StringComparison.Ordinal);
         Assert.Contains("EventId(121", notWebUsableDeclaration[..300], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Pins the divergence this batch fixed: an unresolvable user must report
+    /// the same condition the LDAP provider's <c>FindUser</c> reports for it —
+    /// <c>UserNotFoundException</c> via <c>DirectoryErrorTranslator.CreateUserNotFoundError</c>
+    /// — rather than resolving to an empty membership set. Returning an empty
+    /// set instead let <c>GroupMembershipPolicy</c> read an unknown user as
+    /// "not in AllowedAdGroups" and report <c>ChangeNotPermitted</c> (6), where
+    /// the LDAP provider reports <c>UserNotFound</c> (3) in Informative mode.
+    /// Nothing else in this suite fails if that reinstates, since the provider
+    /// cannot be exercised off Windows — this audit is what would catch it.
+    /// </summary>
+    [Fact]
+    public void ResolveMembershipAsync_UnresolvableUser_ReportsUserNotFoundNotAnEmptySet()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
+
+        Assert.Contains(
+            "throw DirectoryErrorTranslator.CreateUserNotFoundError(",
+            resolveBody,
+            StringComparison.Ordinal);
+
+        // Comments are stripped by CodeSkeleton before this check, so a comment
+        // explaining why the old value is gone cannot mask a real
+        // reintroduction of it.
+        Assert.DoesNotContain("NoSuchUser", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Guards the AD provider's <c>ServiceAccountHost()</c> override against
+    /// being deleted as an apparent duplicate of the base default. It is not
+    /// one: in automatic-context mode <c>Settings.LdapHostnames</c> is empty,
+    /// so the base's "join every configured host" default would render as
+    /// "n/a" in every <c>ServiceAccountFailure.Log</c> line for a mode most
+    /// deployments run in. Deleting the override would compile cleanly and the
+    /// diagnostics would just silently degrade.
+    /// </summary>
+    [Fact]
+    public void ServiceAccountHost_OverrideNamesAutomaticDomainContext()
+    {
+        // Read raw (not CodeSkeleton) so the string literal content itself is
+        // visible: CodeSkeleton blanks string literals to guard other checks
+        // against being fooled by prose, which would blank this one too.
+        var body = ExtractMethodBody(ReadRepoFile(ProviderRelativePath), "string ServiceAccountHost(");
+
+        Assert.Contains("automatic domain context", body, StringComparison.Ordinal);
     }
 
     [Fact]

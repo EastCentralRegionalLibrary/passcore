@@ -26,11 +26,8 @@ namespace Unosquare.PassCore.PasswordProvider
     /// <seealso cref="IPasswordChangeProvider" />
     /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
     [SupportedOSPlatform("windows")]
-    public class PasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
+    public class PasswordChangeProvider : DirectoryPasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
     {
-        /// <inheritdoc />
-        public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
-
         private readonly PasswordChangeOptions _options;
 
         private IdentityType _idType = IdentityType.UserPrincipalName;
@@ -227,9 +224,8 @@ namespace Unosquare.PassCore.PasswordProvider
             IOptions<PasswordChangeOptions> options,
             IOptions<ClientSettings> clientSettings,
             IEnumerable<IPasswordPolicy> policies)
-            : base(logger, clientSettings?.Value, policies)
+            : base(logger, (options ?? throw new ArgumentNullException(nameof(options))).Value, clientSettings?.Value, policies)
         {
-            ArgumentNullException.ThrowIfNull(options);
             _options = options.Value;
             ValidateOptions(_options);
             SetIdType();
@@ -267,94 +263,71 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <see cref="IAppSettings.ErrorDisclosureMode"/> setting shared by both
         /// providers; see <see cref="ErrorDisclosureMode"/> for the trade-off.
         /// </remarks>
-        protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
+        protected override Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            try
+            var fixedUsername = FixUsernameWithDomain(context.Username);
+
+            // Acquiring the context and resolving the user are SERVICE-ACCOUNT
+            // operations: a failure here (bad bind credentials, unreachable DC)
+            // describes the application's own connection, never the end user's
+            // password. RunAsServiceAccount guarantees it surfaces as an
+            // infrastructure failure, so it can't be misreported as invalid
+            // credentials. A *successful* lookup that finds no user still
+            // returns null (not an exception) and remains UserNotFound below.
+            using var principalContext = RunAsServiceAccount(
+                "acquire principal context", context.CorrelationId, AcquirePrincipalContext);
+            var userPrincipal = RunAsServiceAccount(
+                "resolve user by identity", context.CorrelationId,
+                () => UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername));
+
+            if (userPrincipal == null) // Check if UserPrincipal is null
             {
-                var fixedUsername = FixUsernameWithDomain(context.Username);
-
-                // Acquiring the context and resolving the user are SERVICE-ACCOUNT
-                // operations: a failure here (bad bind credentials, unreachable DC)
-                // describes the application's own connection, never the end user's
-                // password. RunAsServiceAccount guarantees it surfaces as an
-                // infrastructure failure, so it can't be misreported as invalid
-                // credentials. A *successful* lookup that finds no user still
-                // returns null (not an exception) and remains UserNotFound below.
-                using var principalContext = RunAsServiceAccount(
-                    "acquire principal context", context.CorrelationId, AcquirePrincipalContext);
-                var userPrincipal = RunAsServiceAccount(
-                    "resolve user by identity", context.CorrelationId,
-                    () => UserPrincipal.FindByIdentity(principalContext, _idType, fixedUsername));
-
-                if (userPrincipal == null) // Check if UserPrincipal is null
-                {
-                    // Posture-aware existence handling shared with the LDAP provider.
-                    throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
-                }
-
-                // NOTHING may write to the directory above this line. Everything
-                // before it runs for a caller who has supplied only a username,
-                // so a write here would be an unauthenticated modification. (A
-                // pre-flight 'pwdLastSet' write used to sit exactly here; see
-                // docs/UPGRADING-error-routing.md.) Directory writes belong
-                // after verification: ChangePassword / SetPassword / Save below.
-                var verificationIdentifier = userPrincipal.UserPrincipalName ?? userPrincipal.SamAccountName ?? fixedUsername;
-                if (!ValidateUserCredentials(verificationIdentifier, context.CurrentPassword, principalContext, out var verificationCode)) // Validate provided current password
-                {
-                    // The wire message is unchanged and carries no detail. The
-                    // reason travels as the INNER exception only, so the base
-                    // class's existing failure log (EventId 4) records it with
-                    // the correlation ID while the caller still learns nothing
-                    // — the compensating control for hardened mode collapsing
-                    // every credential/account-state condition into one
-                    // response. This mirrors the LDAP provider, which passes
-                    // its LdapBindException the same way.
-                    var detail = CredentialFailureDetail.ForWin32Code(verificationCode);
-
-                    throw detail == null
-                        ? new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage)
-                        : new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage, detail);
-                }
-
-                // The cannot-change check runs strictly AFTER credential
-                // verification: before, it disclosed account existence and flag
-                // state to unauthenticated callers even in hardened mode. The
-                // verified flags below are derived from control flow — these
-                // lines are reachable only after ValidateUserCredentials
-                // returned true.
-                if (userPrincipal.UserCannotChangePassword)
-                {
-                    HandleCannotChangePassword(context, userPrincipal, currentPasswordVerified: true);
-                }
-                else
-                {
-                    UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
-                }
-
-                userPrincipal.Save();
+                // Posture-aware existence handling shared with the LDAP provider.
+                throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
             }
-            catch (PasswordChangeException)
+
+            // NOTHING may write to the directory above this line. Everything
+            // before it runs for a caller who has supplied only a username,
+            // so a write here would be an unauthenticated modification. (A
+            // pre-flight 'pwdLastSet' write used to sit exactly here; see
+            // docs/UPGRADING-error-routing.md.) Directory writes belong
+            // after verification: ChangePassword / SetPassword / Save below.
+            var verificationIdentifier = userPrincipal.UserPrincipalName ?? userPrincipal.SamAccountName ?? fixedUsername;
+            if (!ValidateUserCredentials(verificationIdentifier, context.CurrentPassword, principalContext, out var verificationCode)) // Validate provided current password
             {
-                throw;
+                // The wire message is unchanged and carries no detail. The
+                // reason travels as the INNER exception only, so the base
+                // class's existing failure log (EventId 4) records it with
+                // the correlation ID while the caller still learns nothing
+                // — the compensating control for hardened mode collapsing
+                // every credential/account-state condition into one
+                // response. This mirrors the LDAP provider, which passes
+                // its LdapBindException the same way.
+                var detail = CredentialFailureDetail.ForWin32Code(verificationCode);
+
+                throw detail == null
+                    ? new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage)
+                    : new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage, detail);
             }
-            catch (Exception ex)
+
+            // The cannot-change check runs strictly AFTER credential
+            // verification: before, it disclosed account existence and flag
+            // state to unauthenticated callers even in hardened mode. The
+            // verified flags below are derived from control flow — these
+            // lines are reachable only after ValidateUserCredentials
+            // returned true.
+            if (userPrincipal.UserCannotChangePassword)
             {
-                // Terminal backstop. Every failure that carries a meaningful
-                // directory code is already handled at its stage — service-account
-                // operations via RunAsServiceAccount, the modify itself via
-                // UpdatePassword's catch, the cannot-change flag pre-flight. An
-                // exception reaching HERE is an unexpected, non-directory-typed
-                // fault (e.g. a Save() failure) with no reliable Win32 code, so
-                // it is classified as infrastructure directly rather than by
-                // speculatively re-scanning the chain. This matches the LDAP
-                // provider's terminal catch (see the routing-matrix doc, "Terminal
-                // catch"). Raw exception text stays in the inner exception (logs),
-                // never on the wire.
-                throw new DirectoryUnavailableException(
-                    DirectoryErrorTranslator.DirectoryFailureMessage, ex);
+                HandleCannotChangePassword(context, userPrincipal, currentPasswordVerified: true);
             }
+            else
+            {
+                UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
+            }
+
+            userPrincipal.Save();
 
             return Task.CompletedTask;
         }
@@ -421,8 +394,18 @@ namespace Unosquare.PassCore.PasswordProvider
                     "resolve user by identity", correlationId: null,
                     () => UserPrincipal.FindByIdentity(principalContext, _idType, FixUsernameWithDomain(username)));
 
+                // Matches FindUser in the LDAP provider (and this provider's own
+                // password-change path, above) for the identical condition: an
+                // unresolvable user is UserNotFound, not "resolved with no
+                // groups". The AdResolvedMembership.NoSuchUser value this used to
+                // return let GroupMembershipPolicy read an unknown user as "not
+                // in AllowedAdGroups" and report CreateGroupRejectionError
+                // (ChangeNotPermitted, 6) instead — the same condition the LDAP
+                // provider reports as UserNotFound (3) in Informative mode. Hardened
+                // mode is unaffected: both errors already collapse to
+                // InvalidCredentials there, so only Informative disclosure changes.
                 if (userPrincipal == null)
-                    return Task.FromResult<IResolvedGroupMembership>(AdResolvedMembership.NoSuchUser);
+                    throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
 
                 // Records the first enumeration that could not complete. A match is
                 // still definitive, so this only decides what a *negative* answer
@@ -505,10 +488,6 @@ namespace Unosquare.PassCore.PasswordProvider
         /// </summary>
         private sealed class AdResolvedMembership : IResolvedGroupMembership
         {
-            /// <summary>An unresolvable user belongs to nothing, matching the previous <c>false</c> for a null principal.</summary>
-            internal static readonly AdResolvedMembership NoSuchUser =
-                new(new HashSet<string>(StringComparer.OrdinalIgnoreCase), null, ErrorDisclosureMode.Hardened);
-
             private readonly HashSet<string> _groupNames;
             private readonly Exception? _undetermined;
             private readonly ErrorDisclosureMode _disclosureMode;
@@ -884,7 +863,15 @@ namespace Unosquare.PassCore.PasswordProvider
         /// Describes the directory host used for service-account operations,
         /// for diagnostics logging only.
         /// </summary>
-        private string ServiceAccountHost() =>
+        /// <remarks>
+        /// Overrides the base's "join every configured host" default because
+        /// this provider binds a single host, not several tried in turn: in
+        /// automatic-context mode there is no configured host at all, and
+        /// otherwise only the first hostname is ever actually used (see
+        /// <see cref="AcquirePrincipalContext"/> and <see cref="BindForWrite"/>),
+        /// so naming the rest would misdescribe the connection.
+        /// </remarks>
+        protected override string ServiceAccountHost() =>
             _options.UseAutomaticContext
                 ? "automatic domain context"
                 : _options.LdapHostnames.FirstOrDefault() ?? "n/a";

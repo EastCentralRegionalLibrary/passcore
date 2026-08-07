@@ -46,8 +46,15 @@ public class DirectoryPasswordChangeProviderBaseTests
 
         protected override int? ReadMinPwdLength() => null;
 
-        protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        /// <summary>
+        /// Lets each test supply the body of <see cref="ChangeDirectoryPasswordCore"/>
+        /// so the sealed terminal catch in <see cref="DirectoryPasswordChangeProviderBase.ChangePasswordCore"/>
+        /// can be exercised through the public entry point.
+        /// </summary>
+        public Func<Task>? OnChangeCore { get; set; }
+
+        protected override Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken) =>
+            OnChangeCore?.Invoke() ?? Task.CompletedTask;
 
         public Exception TestTranslateDirectoryException(
             Exception exception, DirectoryActor actor, out DirectoryFailureClass failureClass) =>
@@ -276,6 +283,72 @@ public class DirectoryPasswordChangeProviderBaseTests
         Assert.Equal(viaUserActor.GetType(), viaNoArgOverload.GetType());
         Assert.Equal(DirectoryFailureClass.Credentials, failureClass);
         Assert.IsType<InvalidCredentialsException>(viaNoArgOverload);
+    }
+
+    /// <summary>
+    /// Covers <see cref="DirectoryPasswordChangeProviderBase.ChangePasswordCore"/>,
+    /// the terminal catch both directory providers used to duplicate, driven
+    /// through the public entry point so the whole pipeline —
+    /// <see cref="PasswordChangeProviderBase.PerformPasswordChangeAsync"/> down
+    /// to <see cref="ApiErrorMapper"/> — is exercised rather than just the
+    /// catch clause in isolation.
+    /// </summary>
+    [Fact]
+    public async Task PerformPasswordChangeAsync_CoreThrowsPasswordChangeExceptionSubtype_ReachesCallerUnwrapped()
+    {
+        var provider = MakeProvider();
+        var core = new InvalidCredentialsException("bad credentials");
+        provider.OnChangeCore = () => throw core;
+
+        var result = await provider.PerformPasswordChangeAsync("user", "current", "new");
+
+        Assert.False(result.IsSuccessful);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ApiErrorCode.InvalidCredentials, error.ErrorCode);
+        Assert.Equal(core.Message, error.Message);
+    }
+
+    [Fact]
+    public async Task PerformPasswordChangeAsync_CoreThrowsPlainException_BecomesDirectoryUnavailable()
+    {
+        var provider = MakeProvider();
+        var core = new InvalidOperationException("unexpected failure");
+        provider.OnChangeCore = () => throw core;
+
+        var result = await provider.PerformPasswordChangeAsync("user", "current", "new");
+
+        Assert.False(result.IsSuccessful);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ApiErrorCode.LdapProblem, error.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, error.Message);
+    }
+
+    /// <summary>
+    /// The negative case that pins the documented rule: the terminal catch
+    /// constructs <see cref="DirectoryUnavailableException"/> directly and does
+    /// not re-scan the exception chain for a Win32 code, so even a
+    /// <see cref="Win32Exception"/> carrying a genuine credentials code
+    /// (0x52E, ERROR_LOGON_FAILURE) must still surface as
+    /// <see cref="ApiErrorCode.LdapProblem"/> when it reaches this catch —
+    /// never <see cref="ApiErrorCode.InvalidCredentials"/>. Recovering that
+    /// code is the job of a typed transport catch inside
+    /// <see cref="DirectoryPasswordChangeProviderBase.ChangeDirectoryPasswordCore"/>,
+    /// upstream of here; an exception reaching the terminal catch is by
+    /// definition unexpected and non-directory-typed.
+    /// </summary>
+    [Fact]
+    public async Task PerformPasswordChangeAsync_CoreThrowsWin32ExceptionDirectly_StillBecomesDirectoryUnavailable()
+    {
+        var provider = MakeProvider();
+        var core = new Win32Exception(0x52E); // ERROR_LOGON_FAILURE
+        provider.OnChangeCore = () => throw core;
+
+        var result = await provider.PerformPasswordChangeAsync("user", "current", "new");
+
+        Assert.False(result.IsSuccessful);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal(ApiErrorCode.LdapProblem, error.ErrorCode);
+        Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, error.Message);
     }
 
     private sealed class HResultException : Exception

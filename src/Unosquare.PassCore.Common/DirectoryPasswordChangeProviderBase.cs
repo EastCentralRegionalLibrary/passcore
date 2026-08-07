@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Unosquare.PassCore.Common.Exceptions;
 using Unosquare.PassCore.Common.Models;
@@ -159,4 +161,74 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
     /// <returns>The domain exception to throw.</returns>
     protected Exception TranslateDirectoryException(Exception exception) =>
         TranslateDirectoryException(exception, DirectoryActor.User, out _);
+
+    /// <summary>
+    /// The provider-specific body of a password change: everything up to, but
+    /// not including, the terminal catch that both directory providers used to
+    /// duplicate. Implementations keep whatever typed transport catch they
+    /// need (e.g. the LDAP provider's <c>catch (LdapException)</c>) but must
+    /// not add a final <see cref="PasswordChangeException"/>/<see cref="Exception"/>
+    /// pair of their own — <see cref="ChangePasswordCore"/> supplies that.
+    /// </summary>
+    /// <param name="context">The password change context.</param>
+    /// <param name="cancellationToken">A token to observe for cancellation.</param>
+    protected abstract Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>Both directory providers ended <c>ChangePasswordCore</c> with an
+    /// identical pair of catch clauses, each carrying a comment that it had to
+    /// match the other by hand. That duplication is collected here, sealed so
+    /// neither provider can silently diverge from it again.</para>
+    /// <para><b>The terminal catch constructs <see cref="DirectoryUnavailableException"/>
+    /// directly, and must not call <see cref="TranslateDirectoryException(Exception)"/>
+    /// or otherwise re-scan the exception chain for a Win32 code.</b> Per the
+    /// error-routing matrix (see docs/error-routing-matrix.md, "Terminal
+    /// catch"), speculative extraction does not belong here: any exception
+    /// that carries a genuine directory code has already been handled at its
+    /// own stage — a typed transport catch in
+    /// <see cref="ChangeDirectoryPasswordCore"/>, or a service-account
+    /// operation upstream of it. An exception reaching this catch is by
+    /// definition unexpected and non-directory-typed, so it is classified as
+    /// infrastructure unconditionally, exactly like the two duplicated
+    /// implementations it replaces. This intentionally differs from the root
+    /// <see cref="PasswordChangeProviderBase.ChangePasswordAsync"/> catch-all,
+    /// which classifies an unexpected exception as
+    /// <c>ApiErrorCode.Generic</c>: a directory provider's terminal fallback
+    /// has always reported <c>LdapProblem</c> instead, and this preserves that
+    /// existing behaviour rather than silently "correcting" it.</para>
+    /// <para><b>This catch also swallows <see cref="OperationCanceledException"/>.</b>
+    /// The root <see cref="PasswordChangeProviderBase.ChangePasswordAsync"/> has a
+    /// dedicated <c>catch (OperationCanceledException)</c> ahead of its catch-all,
+    /// which logs EventId 3 and rethrows; because that catch sits outside this
+    /// method, a cancellation raised from within <see cref="ChangeDirectoryPasswordCore"/>
+    /// never reaches it and instead falls into the generic <c>catch (Exception)</c>
+    /// here, becoming a <see cref="DirectoryUnavailableException"/> reported as
+    /// <c>LdapProblem</c> rather than being recognised as a cancellation. This is
+    /// deliberate, not an oversight: it matches the pre-existing behaviour of both
+    /// directory providers' terminal catches, which never distinguished
+    /// <see cref="OperationCanceledException"/> either. It is also currently
+    /// inert — neither directory provider observes the token it is given,
+    /// since <see cref="PasswordChangeProviderBase.PerformPasswordChangeAsync"/>
+    /// supplies none, so <paramref name="cancellationToken"/> here is always
+    /// <see cref="CancellationToken.None"/> and no cancellation can actually
+    /// occur. A future provider that genuinely honours the token should revisit
+    /// this catch so a real cancellation is not mislabelled as a directory
+    /// failure.</para>
+    /// </remarks>
+    protected sealed override async Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ChangeDirectoryPasswordCore(context, cancellationToken).ConfigureAwait(false);
+        }
+        catch (PasswordChangeException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, ex);
+        }
+    }
 }
