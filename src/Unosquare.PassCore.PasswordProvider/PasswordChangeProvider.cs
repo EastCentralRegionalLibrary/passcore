@@ -199,18 +199,28 @@ namespace Unosquare.PassCore.PasswordProvider
                 "Sid, and UserPrincipalName (and their common aliases). Correct the configuration if " +
                 "the fallback is not what was intended.");
 
-        // Each placeholder appears EXACTLY TWICE, by design, so it can name the
-        // resolved type once in each half of the sentence. LoggerMessage.Define
-        // counts occurrences, not distinct names, so the type-argument list below
-        // has {IdentityType} twice to match.
+        // The resolved type is named twice, once in each half of the sentence, so both
+        // halves read on their own. The two names differ because a structured payload
+        // keys on the placeholder NAME: repeating one name emits a single property
+        // whose second write clobbers the first, and a sink that rejects duplicate keys
+        // has a malformed entry rather than a redundant one. The rendered sentence is
+        // unaffected, since both placeholders receive the same value.
+        //
+        // Both must stay. LoggerMessage.Define counts placeholder OCCURRENCES, not
+        // distinct names, and throws ArgumentException when that count disagrees with
+        // the type-argument list — so two occurrences require the two type arguments
+        // below, whatever the occurrences are called. This is what
+        // LoggingConventionAuditTests.EveryLoggerMessageDefine_HasOneFormatPlaceholderPerTypeArgument
+        // enforces across the repository; because these are static readonly fields, a
+        // mismatch is a type-initialization failure at first use, not a compile error.
         private static readonly Action<ILogger, IdentityType, IdentityType, Exception?> LogIdentityTypeNotWebUsable =
             LoggerMessage.Define<IdentityType, IdentityType>(
                 LogLevel.Warning,
                 new EventId(121, nameof(LogIdentityTypeNotWebUsable)),
                 "IdTypeForUser resolves to {IdentityType}, which cannot work from the web interface: " +
-                "with {IdentityType}, the submitted value is whatever the user typed rather than a " +
-                "directory-verified identifier, so lookups will not resolve for ordinary users. Use " +
-                "SamAccountName, Name, or UserPrincipalName instead.");
+                "with {IdentityTypeRestated}, the submitted value is whatever the user typed rather " +
+                "than a directory-verified identifier, so lookups will not resolve for ordinary " +
+                "users. Use SamAccountName, Name, or UserPrincipalName instead.");
 
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
