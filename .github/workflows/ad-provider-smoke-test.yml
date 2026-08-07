@@ -1902,6 +1902,63 @@ jobs:
           # here. See the parity note above this step for why they are gone and
           # what it would take to bring them back.
 
+      # ---------------------------------------------------------------------
+      # Hardened leg.
+      #
+      # Hardened is the shipped default and the posture the indistinguishability
+      # work exists to provide, but appsettings.ADTest.json:30 pins Informative
+      # (Test 3 above just relied on that), so until now it had no end-to-end
+      # coverage on the AD provider at all. The same environment file is reused
+      # unchanged; only the posture differs, overridden per this leg.
+      #
+      # The override arrives as a COMMAND-LINE ARGUMENT to restart-passcore.ps1's
+      # -ExtraArgs, not as an environment variable, and that is deliberate rather
+      # than an oversight: Passcore here is relaunched through
+      # Win32_Process.Create (see restart-passcore.ps1), which does not pass the
+      # caller's environment to the new process -- restart-passcore.ps1:15-16
+      # spells this out, and it is why every other leg (A-D) already configures
+      # itself this same way. An AppSettings__ErrorDisclosureMode environment
+      # variable would simply never arrive at the relaunched process and this
+      # leg would silently keep testing Informative. '__' is environment-variable
+      # syntax only and is inert on this launch path; restart-passcore.ps1:25-26
+      # documents that command-line configuration uses ':' instead, hence
+      # --AppSettings:ErrorDisclosureMode=Hardened below, matching the shape of
+      # the existing --ClientSettings:PasswordProviderOptions:... legs. (This
+      # differs from the Linux/mokapi LDAP smoke test, where Passcore is a plain
+      # `dotnet run` background process and DOES inherit its shell's environment
+      # -- that precedent does not transfer to this Windows/WMI launch path.)
+      #
+      # Command-line arguments sit last in .NET's configuration chain and win
+      # outright over both the base appsettings.json and the ADTest environment
+      # file, so this argument overrides the shipped Informative value for this
+      # leg without editing any configuration file.
+      # ---------------------------------------------------------------------
+      - name: Restart Passcore for the Hardened leg
+        shell: powershell
+        run: |
+          # Bypass for this process only: a git checkout carries no zone
+          # marker, so RemoteSigned should already permit it, but the run
+          # should not hinge on the runner default.
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          .\tests\samba-ad\restart-passcore.ps1 -LegName "Hardened: unknown user indistinguishable from wrong password" -ExtraArgs @(
+            '--AppSettings:ErrorDisclosureMode=Hardened'
+          )
+
+      - name: Hardened leg - unknown user is indistinguishable from a wrong password
+        shell: bash
+        run: |
+          echo "Test: Unknown user (Hardened Mode)"
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/password \
+            -H "Content-Type: application/json" \
+            -d '{"username": "nonexistent", "currentPassword": "somepassword", "newPassword": "NewPassword123!", "newPasswordVerify": "NewPassword123!"}')
+          echo "Response: $RESPONSE"
+          # 4: InvalidCredentials. Test 3 above -- the same request, against the
+          # Informative leg that was running at that point -- returned errorCode 3
+          # (UserNotFound). This leg's whole point is that under Hardened the
+          # identical unknown-user request must instead come back indistinguishable
+          # from a wrong password, denying an attacker an account-existence oracle.
+          echo $RESPONSE | jq -e '.errors[] | select(.errorCode == 4)'
+
       - name: Stop the Samba AD DC
         shell: powershell
         run: wsl podman stop samba-ad

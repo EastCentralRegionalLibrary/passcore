@@ -185,14 +185,15 @@ The most relevant configuration entries are shown below. Make sure you make your
   1. `http://mypasscore.com/?userName=someusername`
   2. This helps the user in case they forgot their username and, also comes in handy when sending a link to the application or having it embedded into another application where the user is already signed in.
 - To specify which (DC) attribute is used to search for the specific user.
-  - With the `IdTypeForUser` it is possible to select one of six Attributes that will be used to search for the specifiv user.
-  - The possible values are:
+  - With the `IdTypeForUser` it is possible to select which Attribute is used to search for the specific user. Because the username field's contents are used as the identity value, only the attributes an ordinary user can type into that field are supported.
+  - Supported values (Default `UPN`):
+    - `SamAccountName` or `SAM`
+    - `UserPrincipalName` or `UPN`
+    - `Name`
+  - NOT supported, because a self-service user cannot type their own DN, objectGUID, or SID into the username field:
     - `DistinguishedName` or `DN`
     - `GloballyUniqueIdentifier` or `GUID`
-    - `Name`
-    - `SamAccountName` or `SAM`
     - `SecurityIdentifier` or `SID`
-    - `UserPrincipalName` or `UPN`
 - The rest of the configuration entries are all pretty much all UI strings. Change them to localize, or to brand this utility, to meet your needs.
 
 ### Running as a sub-application

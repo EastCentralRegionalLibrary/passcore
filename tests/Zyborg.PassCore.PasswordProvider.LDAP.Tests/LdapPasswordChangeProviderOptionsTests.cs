@@ -55,6 +55,16 @@ public class LdapPasswordChangeProviderOptionsTests
     }
 
     [Fact]
+    public void Construct_AllBlankHostnames_Throws()
+    {
+        var opts = ValidOptions();
+        opts.LdapHostnames = new[] { "", "  ", null! };
+
+        var ex = Assert.Throws<ArgumentException>(() => Construct(opts));
+        Assert.Equal("Hostnames are not configured.", ex.Message);
+    }
+
+    [Fact]
     public void Construct_NoBindDn_Throws()
     {
         var opts = ValidOptions();

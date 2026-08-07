@@ -186,6 +186,32 @@ namespace Unosquare.PassCore.PasswordProvider
         // other service-account directory failure. Its message had also inverted
         // during an earlier refactor, naming the wrong call as the one that failed.
 
+        // Warning, not a rejection: hard-failing startup over an IdTypeForUser typo
+        // would break an existing deployment on upgrade, the same reasoning that
+        // keeps the deprecated HideUserNotFound key (EventId 101, LDAP provider) a
+        // warning rather than a startup failure.
+        private static readonly Action<ILogger, string, IdentityType, Exception?> LogUnrecognizedIdentityType =
+            LoggerMessage.Define<string, IdentityType>(
+                LogLevel.Warning,
+                new EventId(120, nameof(LogUnrecognizedIdentityType)),
+                "IdTypeForUser '{IdTypeForUser}' is not a recognized identity type; falling back to " +
+                "{FallbackType}. Recognized values are DistinguishedName, Guid, Name, SamAccountName, " +
+                "Sid, and UserPrincipalName (and their common aliases). Correct the configuration if " +
+                "the fallback is not what was intended.");
+
+        // Each placeholder appears EXACTLY TWICE, by design, so it can name the
+        // resolved type once in each half of the sentence. LoggerMessage.Define
+        // counts occurrences, not distinct names, so the type-argument list below
+        // has {IdentityType} twice to match.
+        private static readonly Action<ILogger, IdentityType, IdentityType, Exception?> LogIdentityTypeNotWebUsable =
+            LoggerMessage.Define<IdentityType, IdentityType>(
+                LogLevel.Warning,
+                new EventId(121, nameof(LogIdentityTypeNotWebUsable)),
+                "IdTypeForUser resolves to {IdentityType}, which cannot work from the web interface: " +
+                "with {IdentityType}, the submitted value is whatever the user typed rather than a " +
+                "directory-verified identifier, so lookups will not resolve for ordinary users. Use " +
+                "SamAccountName, Name, or UserPrincipalName instead.");
+
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
@@ -215,17 +241,11 @@ namespace Unosquare.PassCore.PasswordProvider
             if (opts == null)
                 throw new ArgumentNullException(nameof(opts));
 
-            if (!opts.UseAutomaticContext)
-            {
-                if (opts.LdapHostnames == null || opts.LdapHostnames.Length == 0)
-                    throw new ArgumentException("LDAP Hostnames are not configured.");
-
-                if (string.IsNullOrWhiteSpace(opts.LdapUsername))
-                    throw new ArgumentException("LDAP Username is not configured.");
-
-                if (string.IsNullOrWhiteSpace(opts.LdapPassword))
-                    throw new ArgumentException("LDAP Password is not configured.");
-            }
+            // A service account is only required for an explicit bind. In
+            // automatic-context mode (UseAutomaticContext == true) there is no
+            // service account and none of LdapHostnames/LdapUsername/LdapPassword
+            // need be configured.
+            AppSettingsValidation.ValidateServiceAccount(opts, required: !opts.UseAutomaticContext);
         }
 
         /// <inheritdoc />
@@ -786,20 +806,33 @@ namespace Unosquare.PassCore.PasswordProvider
 
         /// <summary>
         /// Sets the identity type based on configuration options, providing fault tolerance for various string inputs.
-        /// Uses a switch expression to map string configuration values to <see cref="IdentityType"/> enum values.
-        /// Defaults to <see cref="IdentityType.UserPrincipalName"/> if no match or invalid input.
+        /// The alias table and fallback live in <see cref="UserIdentityTypeClassifier"/> so they can be exercised
+        /// cross-platform; this method only maps the shared <see cref="UserIdentityType"/> result onto the
+        /// Windows-only <see cref="IdentityType"/> and logs when the configuration deserves a warning.
         /// </summary>
         private void SetIdType()
         {
-            _idType = _options.IdTypeForUser?.Trim().ToLowerInvariant() switch // Use switch expression for concise mapping
+            var resolved = UserIdentityTypeClassifier.Classify(
+                _options.IdTypeForUser, out var recognized, out var usableInWebInterface);
+
+            _idType = resolved switch
             {
-                "distinguishedname" or "distinguished name" or "dn" => IdentityType.DistinguishedName,
-                "globally unique identifier" or "globallyuniqueidentifier" or "guid" => IdentityType.Guid,
-                "name" or "nm" => IdentityType.Name,
-                "samaccountname" or "accountname" or "sam account" or "sam account name" or "sam" => IdentityType.SamAccountName,
-                "securityidentifier" or "securityid" or "secid" or "security identifier" or "sid" => IdentityType.Sid,
-                _ => IdentityType.UserPrincipalName // Default to UserPrincipalName if no match or invalid input
+                UserIdentityType.DistinguishedName => IdentityType.DistinguishedName,
+                UserIdentityType.Guid => IdentityType.Guid,
+                UserIdentityType.Name => IdentityType.Name,
+                UserIdentityType.SamAccountName => IdentityType.SamAccountName,
+                UserIdentityType.Sid => IdentityType.Sid,
+                _ => IdentityType.UserPrincipalName
             };
+
+            // recognized is false only when IdTypeForUser was present, non-blank,
+            // and matched no known alias -- absent/null/blank is a legitimate
+            // request for the default and must not warn.
+            if (!recognized)
+                LogUnrecognizedIdentityType(Logger, _options.IdTypeForUser ?? string.Empty, _idType, null);
+
+            if (!usableInWebInterface)
+                LogIdentityTypeNotWebUsable(Logger, _idType, _idType, null);
         }
 
         /// <summary>

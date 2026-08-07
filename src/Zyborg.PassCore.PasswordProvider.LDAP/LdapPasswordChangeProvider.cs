@@ -1420,14 +1420,7 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
 
     private static void ValidateOptions(LdapPasswordChangeOptions opts)
     {
-        if (opts.LdapHostnames == null || opts.LdapHostnames.Length == 0)
-            throw new ArgumentException("LDAP hostnames not configured");
-
-        if (string.IsNullOrWhiteSpace(opts.LdapUsername))
-            throw new ArgumentException("LDAP bind DN not configured");
-
-        if (string.IsNullOrWhiteSpace(opts.LdapPassword))
-            throw new ArgumentException("LDAP bind password not configured");
+        AppSettingsValidation.ValidateServiceAccount(opts, required: true);
 
         if (string.IsNullOrWhiteSpace(opts.LdapSearchBase))
             throw new ArgumentException("LDAP search base not configured");
