@@ -52,7 +52,7 @@ builder.Services.AddSingleton<IPasswordPolicy, PwnedPasswordPolicy>();
 // Password provider (selected at build time via PASSCORE_PROVIDER)
 // -------------------------------------------------------------------------
 #if PASSCORE_DEBUG_PROVIDER
-if (builder.Environment.IsProduction())
+if (builder.Environment.IsEnvironment(Environments.Production))
     throw new InvalidOperationException("The debug password change provider cannot be used in Production.");
 
 
