@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
+using Unosquare.PassCore.Common.Exceptions;
 using Unosquare.PassCore.Common.Models;
 
 namespace Unosquare.PassCore.Common;
@@ -83,4 +84,79 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
         Settings.LdapHostnames is { Length: > 0 } hostnames
             ? string.Join(", ", hostnames)
             : "n/a";
+
+    /// <summary>
+    /// Recovers a Win32 error code from a transport exception raised by this
+    /// provider's directory operation.
+    /// </summary>
+    /// <remarks>
+    /// The only genuinely provider-specific part of directory error handling
+    /// is how a Win32 code is recovered from that provider's transport;
+    /// everything downstream — classification, actor collapsing, and the
+    /// choice of domain exception — is shared and lives in
+    /// <see cref="DirectoryErrorTranslator"/>. The Active Directory provider's
+    /// transport surfaces a <see cref="System.ComponentModel.Win32Exception"/>
+    /// or a FACILITY_WIN32 HRESULT, which is exactly what the default
+    /// implementation (<see cref="DirectoryErrorTranslator.TryGetWin32Code"/>)
+    /// already handles, so it does not override this. The LDAP provider's
+    /// transport instead carries the code inside an Active Directory extended
+    /// error string, so it overrides this to parse that string.
+    /// </remarks>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="win32Code">The extracted Win32 code.</param>
+    /// <returns><see langword="true"/> when a code was found.</returns>
+    protected virtual bool TryGetTransportWin32Code(Exception exception, out int win32Code) =>
+        DirectoryErrorTranslator.TryGetWin32Code(exception, out win32Code);
+
+    /// <summary>
+    /// Translates a transport exception into the domain exception described
+    /// by <see cref="DirectoryErrorTranslator"/>'s routing table, using
+    /// <see cref="TryGetTransportWin32Code"/> to recover the provider-specific
+    /// Win32 code and <see cref="ErrorDisclosureMode"/> for the configured
+    /// disclosure posture.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="actor">Whose failure the exception describes.</param>
+    /// <param name="failureClass">The actor-adjusted classification;
+    /// <see cref="DirectoryFailureClass.Infrastructure"/> when no Win32 code
+    /// could be recovered.</param>
+    /// <returns>The domain exception to throw.</returns>
+    protected Exception TranslateDirectoryException(
+        Exception exception,
+        DirectoryActor actor,
+        out DirectoryFailureClass failureClass)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        if (TryGetTransportWin32Code(exception, out var win32Code))
+        {
+            failureClass = DirectoryErrorTranslator.ClassifyForActor(win32Code, actor);
+            return DirectoryErrorTranslator.Translate(win32Code, ErrorDisclosureMode, actor, exception);
+        }
+
+        failureClass = DirectoryFailureClass.Infrastructure;
+        return new DirectoryUnavailableException(DirectoryErrorTranslator.DirectoryFailureMessage, exception);
+    }
+
+    /// <summary>
+    /// Convenience overload of
+    /// <see cref="TranslateDirectoryException(Exception, DirectoryActor, out DirectoryFailureClass)"/>
+    /// for callers that do not need the classification.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <param name="actor">Whose failure the exception describes.</param>
+    /// <returns>The domain exception to throw.</returns>
+    protected Exception TranslateDirectoryException(Exception exception, DirectoryActor actor) =>
+        TranslateDirectoryException(exception, actor, out _);
+
+    /// <summary>
+    /// Convenience overload of
+    /// <see cref="TranslateDirectoryException(Exception, DirectoryActor, out DirectoryFailureClass)"/>
+    /// for the common case of an end-user request, using
+    /// <see cref="DirectoryActor.User"/>.
+    /// </summary>
+    /// <param name="exception">The exception raised by the directory operation.</param>
+    /// <returns>The domain exception to throw.</returns>
+    protected Exception TranslateDirectoryException(Exception exception) =>
+        TranslateDirectoryException(exception, DirectoryActor.User, out _);
 }
