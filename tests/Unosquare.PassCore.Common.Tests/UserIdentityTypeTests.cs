@@ -71,6 +71,33 @@ public class UserIdentityTypeTests
     }
 
     /// <summary>
+    /// The shipped <c>appsettings.json</c> sets <c>"IdTypeForUser": "UPN"</c>, and the
+    /// README documents <c>UserPrincipalName</c>/<c>UPN</c> as supported. These spellings
+    /// must therefore be <em>recognized</em>, not merely resolved: an unrecognized value
+    /// warns, and warning about the shipped default would put a spurious line in every
+    /// default deployment's log naming its own documented value as wrong.
+    ///
+    /// <para>The switch this table was moved from had no UserPrincipalName arm — it was
+    /// reachable only through the fallback, which was indistinguishable from a typo. That
+    /// was harmless while the fallback was silent and is not once it warns.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("UPN")]
+    [InlineData("upn")]
+    [InlineData("UserPrincipalName")]
+    [InlineData("userprincipalname")]
+    [InlineData("user principal name")]
+    [InlineData("  UPN  ")]
+    public void UserPrincipalNameSpellings_AreRecognizedAndDoNotWarn(string idTypeForUser)
+    {
+        var resolved = UserIdentityTypeClassifier.Classify(idTypeForUser, out var recognized, out var usable);
+
+        Assert.Equal(UserIdentityType.UserPrincipalName, resolved);
+        Assert.True(recognized);
+        Assert.True(usable);
+    }
+
+    /// <summary>
     /// An unrecognized non-blank value falls through to the same default as a blank
     /// value, but must be distinguishable from it: this is the case
     /// <c>recognized = false</c> exists for.

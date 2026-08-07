@@ -43,6 +43,27 @@ public class AppSettingsValidationTests
         AppSettingsValidation.ValidateServiceAccount(settings, required: false);
     }
 
+    /// <summary>
+    /// The AD provider passes <c>required: !opts.UseAutomaticContext</c>, so this is the
+    /// executing cross-platform stand-in for "AD still constructs under
+    /// <c>UseAutomaticContext: true</c> with nothing configured" — the configuration
+    /// production runs. The provider itself is <c>net8.0-windows</c> inside
+    /// <c>#if WINDOWS</c> and is pinned only by source-text assertions, so without this
+    /// the highest-risk path in the change has no test that actually runs anywhere.
+    /// </summary>
+    [Fact]
+    public void NotRequired_NothingConfiguredAtAll_DoesNotThrow()
+    {
+        var settings = new FakeAppSettings
+        {
+            LdapHostnames = null!,
+            LdapUsername = null,
+            LdapPassword = null,
+        };
+
+        AppSettingsValidation.ValidateServiceAccount(settings, required: false);
+    }
+
     [Fact]
     public void Required_NullHostnames_Throws()
     {

@@ -73,6 +73,14 @@ public static class UserIdentityTypeClassifier
             "name" or "nm" => UserIdentityType.Name,
             "samaccountname" or "accountname" or "sam account" or "sam account name" or "sam" => UserIdentityType.SamAccountName,
             "securityidentifier" or "securityid" or "secid" or "security identifier" or "sid" => UserIdentityType.Sid,
+            // Not present in the switch this table was moved from, where UserPrincipalName
+            // was reachable only through the fallback arm. That was harmless while the
+            // fallback was silent, but it is not once an unmatched value warns: the shipped
+            // appsettings.json sets "IdTypeForUser": "UPN", so every default deployment
+            // would be told its own documented value is unrecognized. Resolution is
+            // unchanged -- these spellings already resolved to UserPrincipalName via the
+            // fallback -- this only distinguishes them from a genuine typo.
+            "userprincipalname" or "user principal name" or "upn" => UserIdentityType.UserPrincipalName,
             _ => Unmatched(out matchedAlias) // Default to UserPrincipalName if no match or invalid input
         };
 
