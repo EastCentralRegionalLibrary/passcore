@@ -14,11 +14,19 @@ namespace PwnedPasswordsSearch
     // Custom exception types for better error handling
     public class PwnedPasswordsApiException : HttpRequestException
     {
+        public PwnedPasswordsApiException() : base() { }
+
+        public PwnedPasswordsApiException(string message) : base(message) { }
+
         public PwnedPasswordsApiException(string message, Exception? innerException) : base(message, innerException) { }
     }
 
     public class PwnedPasswordsSearchException : Exception
     {
+        public PwnedPasswordsSearchException() : base() { }
+
+        public PwnedPasswordsSearchException(string message) : base(message) { }
+
         public PwnedPasswordsSearchException(string message, Exception? innerException) : base(message, innerException) { }
     }
 
@@ -34,31 +42,31 @@ namespace PwnedPasswordsSearch
         }
 
         // LoggerMessage delegates for performance optimization
-        private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordCheckRequest =
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckRequest =
             LoggerMessage.Define<string>(
                 LogLevel.Debug,
                 new EventId(300, "PwnedPasswordCheckRequest"),
                 "Pwned Passwords API request for hash prefix: '{HashPrefix}'.");
 
-        private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordFound =
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordFound =
             LoggerMessage.Define<string>(
                 LogLevel.Debug,
                 new EventId(301, "PwnedPasswordFound"),
                 "Pwned password found for hash suffix: '{HashSuffix}'. Password is compromised.");
 
-        private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordNotFound =
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordNotFound =
             LoggerMessage.Define<string>(
                 LogLevel.Debug,
                 new EventId(302, "PwnedPasswordNotFound"),
                 "Pwned password not found for hash prefix: '{HashPrefix}'. Password is not publicly known.");
 
-        private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordApiError =
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordApiError =
             LoggerMessage.Define<string>(
                 LogLevel.Warning,
                 new EventId(303, "PwnedPasswordApiError"),
                 "Error calling Pwned Passwords API: {ErrorMessage}.");
 
-        private static readonly Action<ILogger?, string, Exception?> LogPwnedPasswordUnexpectedError =
+        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordUnexpectedError =
             LoggerMessage.Define<string>(
                 LogLevel.Error,
                 new EventId(304, "PwnedPasswordUnexpectedError"),
@@ -99,7 +107,7 @@ namespace PwnedPasswordsSearch
 
                 try
                 {
-                    response = await client.GetAsync($"range/{hashPrefix}");
+                    response = await client.GetAsync(new Uri($"range/{hashPrefix}", UriKind.Relative));
                     response.EnsureSuccessStatusCode(); // Throw exception for non-success status codes
 
                     string responseContent = await response.Content.ReadAsStringAsync();
