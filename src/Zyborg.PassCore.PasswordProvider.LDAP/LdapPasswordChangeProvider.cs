@@ -479,7 +479,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         }
         catch (LdapException ex)
         {
-            throw TranslateLdapException(ex, _options.ErrorDisclosureMode);
+            throw TranslateDirectoryException(ex);
         }
         catch (Exception ex)
         {
@@ -737,8 +737,8 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         catch (LdapException ex)
         {
             // Operation errors (search/modify) carry their Win32 code in the
-            // extended message; TranslateLdapException extracts and routes it.
-            throw TranslateLdapException(ex, _options.ErrorDisclosureMode);
+            // extended message; TranslateDirectoryException extracts and routes it.
+            throw TranslateDirectoryException(ex);
         }
         catch (Exception ex)
         {
@@ -983,6 +983,12 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         bool currentPasswordVerified,
         out bool attemptReset)
     {
+        // Deliberately still uses the static overload: this method is itself
+        // static, so it cannot reach the instance seam. Scheduled to move
+        // there together with the administrative-reset consolidation. Its
+        // failureClass gates AdministrativeReset.ShouldAttempt (via
+        // ShouldRescue below), so the static and instance translations must
+        // not be allowed to drift.
         var translated = TranslateLdapException(ex, options.ErrorDisclosureMode, out var failureClass);
 
         attemptReset = ShouldRescue(options, currentPasswordVerified, failureClass);
@@ -1252,8 +1258,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             // account locked/expired, etc.). Under ServiceAccount actor every
             // such end-user-account signal collapses to infrastructure.
             ServiceAccountFailure.Log(Logger, correlationId, "service-account bind", ServiceAccountHost(), ex);
-            throw TranslateLdapException(
-                (LdapException)ex.InnerException!, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
+            throw TranslateDirectoryException(ex.InnerException!, DirectoryActor.ServiceAccount);
         }
         catch (DirectoryUnavailableException ex)
         {
@@ -1329,6 +1334,46 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     // ---------------------------------------------------------------------
     // Error translation
     // ---------------------------------------------------------------------
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The code is recovered ONLY from an Active Directory extended-error
+    /// message carried on an <see cref="LdapException"/>'s
+    /// <see cref="LdapException.LdapErrorMessage"/>, parsed via
+    /// <see cref="ExtractWin32ErrorCode"/>. The chain is walked — rather than
+    /// only inspecting <paramref name="exception"/> itself — for the same
+    /// reason <see cref="DirectoryErrorTranslator.TryGetWin32Code"/> walks it:
+    /// every current call site passes the <see cref="LdapException"/>
+    /// directly, so this is unobservable today, but it means a future
+    /// exception that wraps an <see cref="LdapException"/> still resolves.
+    /// The outermost match wins, consistent with the base's chain-walking
+    /// convention.
+    /// This override deliberately does NOT fall back to the base's
+    /// Win32Exception/HRESULT scanning. Novell's <see cref="LdapException"/>
+    /// passes its root cause to the base <see cref="Exception"/> constructor,
+    /// and a connect failure wraps a <see cref="System.Net.Sockets.SocketException"/>
+    /// (which derives from <see cref="System.ComponentModel.Win32Exception"/>)
+    /// — a socket error number, not a directory error code. Picking that up
+    /// here would misroute connect failures exactly the way the terminal
+    /// catch (see the routing-matrix doc, "Terminal catch", near line 751)
+    /// is designed to avoid.
+    /// </remarks>
+    protected override bool TryGetTransportWin32Code(Exception exception, out int win32Code)
+    {
+        for (var ex = exception; ex != null; ex = ex.InnerException)
+        {
+            if (ex is LdapException ldapException
+                && !string.IsNullOrWhiteSpace(ldapException.LdapErrorMessage)
+                && ExtractWin32ErrorCode(ldapException.LdapErrorMessage) is { } known)
+            {
+                win32Code = known.Code;
+                return true;
+            }
+        }
+
+        win32Code = 0;
+        return false;
+    }
 
     /// <summary>
     /// Maps an <see cref="LdapException"/> raised during search or modify to a
