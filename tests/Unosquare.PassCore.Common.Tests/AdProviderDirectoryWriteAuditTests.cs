@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using static Unosquare.PassCore.Testing.RepositorySource;
 
 namespace Unosquare.PassCore.Common.Tests;
 
@@ -769,35 +770,5 @@ public class AdProviderDirectoryWriteAuditTests
         var programPath = "src/Unosquare.PassCore.Web/Program.cs";
         var programContent = ReadRepoFile(programPath);
         Assert.Contains("app.Services.GetRequiredService<IPasswordChangeProvider>()", programContent, StringComparison.Ordinal);
-    }
-
-    private static string ReadRepoFile(string relativePath)
-    {
-        // Path.Join, not Path.Combine: Join always concatenates, where Combine
-        // discards everything before a segment it considers rooted.
-        var path = Path.Join(RepositoryRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        Assert.True(File.Exists(path), $"Expected to find '{relativePath}' at '{path}'.");
-
-        return File.ReadAllText(path);
-    }
-
-    private static string RepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        var visited = new List<string>();
-
-        while (directory != null)
-        {
-            visited.Add(directory.FullName);
-            if (File.Exists(Path.Join(directory.FullName, "Unosquare.PassCore.sln")))
-                return directory.FullName;
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException(
-            "Could not locate the repository root (no Unosquare.PassCore.sln found above " +
-            $"'{AppContext.BaseDirectory}'). Searched: {string.Join(", ", visited)}. This audit " +
-            "reads provider source, so it must run from a source checkout.");
     }
 }
