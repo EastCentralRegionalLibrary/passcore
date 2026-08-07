@@ -467,8 +467,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             // letting it read as "not a member".
             if (undetermined is not null)
             {
-                throw DirectoryErrorTranslator.TranslateException(
-                    undetermined, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
+                throw TranslateDirectoryException(undetermined, DirectoryActor.ServiceAccount);
             }
 
             return Task.FromResult(false);
@@ -479,7 +478,17 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         }
         catch (LdapException ex)
         {
-            throw TranslateDirectoryException(ex);
+            // ServiceAccount, not User. Every directory operation reachable from
+            // this method runs on the service account's connection: FindUser, the
+            // primaryGroupToken search, the LDAP_MATCHING_RULE_IN_CHAIN search and
+            // the per-candidate groupType read. A bind failure already arrives as a
+            // domain exception and is rethrown above, but a raw LdapException from
+            // any of those SEARCHES lands here, and translating it as the end
+            // user's failure would report e.g. an AD "data 52e" search error to the
+            // caller as "invalid username or password" -- the precise thing the
+            // actor dimension exists to prevent, and inconsistent with the
+            // undetermined path a few lines above, which already gets this right.
+            throw TranslateDirectoryException(ex, DirectoryActor.ServiceAccount);
         }
         catch (Exception ex)
         {
