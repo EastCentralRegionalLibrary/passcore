@@ -719,7 +719,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     // Password change entry point
     // ---------------------------------------------------------------------
 
-    protected override Task ChangePasswordCore(
+    protected override Task ChangeDirectoryPasswordCore(
         PasswordChangeContext context,
         CancellationToken cancellationToken)
     {
@@ -739,28 +739,15 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
             //    proved knowledge of the current password in this request.
             ChangePassword(user.DistinguishedName, context, currentPasswordVerified: true);
         }
-        catch (PasswordChangeException)
-        {
-            throw;
-        }
         catch (LdapException ex)
         {
             // Operation errors (search/modify) carry their Win32 code in the
             // extended message; TranslateDirectoryException extracts and routes it.
+            // Transport translation must still precede the shared terminal catch
+            // in DirectoryPasswordChangeProviderBase.ChangePasswordCore, which
+            // handles everything else (including PasswordChangeException) and
+            // must not re-scan for a Win32 code.
             throw TranslateDirectoryException(ex);
-        }
-        catch (Exception ex)
-        {
-            // Terminal backstop, consistent with the AD provider (see the
-            // routing-matrix doc, "Terminal catch"). Every failure carrying a
-            // meaningful directory code is already handled at its stage — the
-            // typed LdapException catch above, and service-account bind failures
-            // at BindAsServiceAccount. An exception reaching HERE is an
-            // unexpected, non-LDAP fault with no reliable Win32 code, so it is
-            // classified as infrastructure directly rather than by speculatively
-            // scanning the chain. Raw text stays in the inner exception.
-            throw new DirectoryUnavailableException(
-                DirectoryErrorTranslator.DirectoryFailureMessage, ex);
         }
 
         return Task.CompletedTask;

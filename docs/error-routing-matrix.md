@@ -139,6 +139,18 @@ made; nothing here advocates either way):
   nonexistent user *is* disclosed pre-verification, while a locked or disabled
   one is not disclosed at all. As far as the audit could establish this is an
   inconsistency rather than a deliberate distinction.
+
+  This same `CreateUserNotFoundError` call now also covers an unknown user
+  during group-membership resolution: `ResolveMembershipAsync` on both
+  providers throws it when the user cannot be found, rather than resolving to
+  an empty/no-such-user membership. The AD provider previously let an unknown
+  user fall through to `GroupMembershipPolicy` as a group rejection —
+  `ChangeNotPermitted (6)` in Informative mode when `AllowedAdGroups` was
+  configured — while the LDAP provider already reported `UserNotFound (3)`
+  for the same condition via its own `FindUser`. That divergence is fixed: AD
+  now reports `UserNotFound (3)` in Informative mode too. Hardened mode was,
+  and remains, identical for both (both collapse to `InvalidCredentials`), so
+  only the Informative-mode answer changed.
 - **In Hardened mode the question is moot.** The translator collapses
   account-state to `InvalidCredentials` regardless, so only Informative-mode
   deployments would see any difference from such a change.
@@ -269,21 +281,34 @@ otherwise silent.
 
 ## Terminal catch
 
-Both providers end `ChangePasswordCore` with the same last-resort
+Both directory providers derive from `DirectoryPasswordChangeProviderBase`,
+which implements `ChangePasswordCore` as `sealed`. It wraps each provider's
+own `ChangeDirectoryPasswordCore` in a single shared last-resort
 `catch (Exception ex)`: **construct `DirectoryUnavailableException(
 DirectoryFailureMessage, ex)` directly — do not re-scan the chain for a Win32
-code.** Every failure that carries a meaningful directory code is already
-handled at its stage (typed `LdapException` / `TryGetWin32Code` extraction for
-the transport, service-account operations via `BindAsServiceAccount` /
-`RunAsServiceAccount`, the modify itself in the LDAP `ChangePasswordDelAdd`
-catch and the AD `UpdatePassword` catch). An exception reaching the terminal
-catch is therefore an unexpected, non-directory-typed fault with no reliable
-code, so speculative extraction there is inappropriate — it could only
-mislabel a non-directory fault. Classifying it as infrastructure is correct and
-identical on both providers. (Earlier the AD provider re-scanned via
-`TranslateException` here while the LDAP provider did not; standardized on the
-LDAP behavior.) The raw detail stays in the inner exception for logs, never on
-the wire.
+code.** A `PasswordChangeException` is rethrown unchanged ahead of that catch,
+so a provider's own typed translation always wins. Every failure that carries
+a meaningful directory code is already handled at its own stage — a typed
+transport catch inside `ChangeDirectoryPasswordCore` (`catch (LdapException)`
+for LDAP, `TryGetTransportWin32Code`/`TryGetWin32Code` extraction for AD), or
+a service-account operation upstream of it (`BindAsServiceAccount` /
+`RunAsServiceAccount`). An exception reaching the shared terminal catch is
+therefore an unexpected, non-directory-typed fault with no reliable code, so
+speculative extraction there is inappropriate — it could only mislabel a
+non-directory fault. Classifying it as infrastructure is correct and, because
+the catch is shared, identical for both providers by construction rather than
+by two implementations kept in sync by hand. The raw detail stays in the inner
+exception for logs, never on the wire.
+
+Earlier the AD provider re-scanned via `DirectoryErrorTranslator.TranslateException`
+here while the LDAP provider did not; the convention standardized on the LDAP
+behavior, and the two providers then carried an identical hand-copied catch until
+it moved to the shared base. That history is why the rule is stated as a
+prohibition rather than a preference: the re-scan looks harmless, and a provider
+author reaching for it will not notice the divergence it reintroduces.
+`TranslateException` remains the correct call *at a failure's own stage* — the AD
+provider still uses it for service-account operations and for the modify itself —
+so the prohibition is specifically about the terminal catch, not about the method.
 
 ## The administrative-reset fallback dimension
 
@@ -322,6 +347,7 @@ client:
 | Concern | Single location |
 |---------|-----------------|
 | Code → failure class | `Win32ErrorCode.Codes` catalog |
+| Transport exception → Win32 code | `DirectoryPasswordChangeProviderBase.TryGetTransportWin32Code` (default: `DirectoryErrorTranslator.TryGetWin32Code`; overridden by the LDAP provider to parse an AD extended-error string) |
 | Code + actor → failure class | `DirectoryErrorTranslator.ClassifyForActor` |
 | Class × mode → domain exception | `DirectoryErrorTranslator.Translate` |
 | Exception → `ApiErrorCode` | `ApiErrorMapper.Map` |
