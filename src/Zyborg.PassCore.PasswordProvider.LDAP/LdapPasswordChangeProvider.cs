@@ -40,11 +40,8 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 ///   syntax, not RFC 4515 filter syntax.)
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
+public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
 {
-    /// <inheritdoc />
-    public override ErrorDisclosureMode ErrorDisclosureMode => _options.ErrorDisclosureMode;
-
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
     private readonly LdapRemoteCertificateValidationCallback? _certValidator;
@@ -192,9 +189,12 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
         IOptions<LdapPasswordChangeOptions> options,
         IOptions<ClientSettings> clientSettings,
         IEnumerable<IPasswordPolicy> policies)
-        : base(logger, clientSettings?.Value, policies)
+        : base(
+            logger,
+            (options ?? throw new ArgumentNullException(nameof(options))).Value,
+            clientSettings?.Value,
+            policies)
     {
-        ArgumentNullException.ThrowIfNull(options);
         _options = options.Value;
         ValidateOptions(_options);
 
@@ -1263,11 +1263,6 @@ public class LdapPasswordChangeProvider : PasswordChangeProviderBase, IGroupMemb
             throw;
         }
     }
-
-    private string ServiceAccountHost() =>
-        _options.LdapHostnames.Length > 0
-            ? string.Join(", ", _options.LdapHostnames)
-            : "n/a";
 
     /// <summary>
     /// Connects to one of the configured hosts and binds with the supplied
