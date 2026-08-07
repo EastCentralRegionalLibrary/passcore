@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using static Unosquare.PassCore.Testing.RepositorySource;
 
 namespace Unosquare.PassCore.Common.Tests;
 
@@ -310,28 +311,4 @@ public class LoggingConventionAuditTests
         }
     }
 
-    private static string ReadRepoFile(string relativePath)
-    {
-        var path = Path.Join(RepositoryRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
-        Assert.True(File.Exists(path), $"Expected to find '{relativePath}' at '{path}'.");
-
-        return File.ReadAllText(path);
-    }
-
-    private static string RepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory != null)
-        {
-            if (File.Exists(Path.Join(directory.FullName, "Unosquare.PassCore.sln")))
-                return directory.FullName;
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException(
-            "Could not locate the repository root (no Unosquare.PassCore.sln found above " +
-            $"'{AppContext.BaseDirectory}'). This audit reads provider source, so it must run from a checkout.");
-    }
 }
