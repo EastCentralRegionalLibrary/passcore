@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 using PwnedPasswordsSearch;
 using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.Common.Policies;
