@@ -895,11 +895,12 @@ namespace Unosquare.PassCore.PasswordProvider
             }
             else
             {
-                if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty when not using automatic context
-                {
-                    throw new InvalidOperationException("LDAP Hostnames are not configured."); // Throw exception to signal configuration error
-                }
-
+                // No LdapHostnames-empty guard here: the constructor already ran
+                // AppSettingsValidation.ValidateServiceAccount(opts, required:
+                // !UseAutomaticContext) (see ValidateOptions, :248), which is the
+                // single point enforcing that LdapHostnames is non-empty whenever
+                // UseAutomaticContext is false. Reaching this branch implies that
+                // check ran and passed.
                 var host = _options.LdapHostnames.First();
 
                 // The sign-and-seal flags below are EXPLICIT, not new. The
@@ -1057,8 +1058,9 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <summary>
         /// Binds the domain naming context — the object that carries
         /// <c>minPwdLength</c> — using the configured service-account credentials.
-        /// Returns <see langword="null"/> only when no LDAP hostnames are configured;
-        /// every other failure propagates so the caller can log it.
+        /// Every failure to bind or to resolve the naming context propagates so
+        /// the caller can log it; this method itself never returns
+        /// <see langword="null"/>.
         /// </summary>
         /// <remarks>
         /// <para>This used to pass a bare <c>host:port</c> to <see cref="DirectoryEntry"/>,
@@ -1075,14 +1077,19 @@ namespace Unosquare.PassCore.PasswordProvider
         /// context is therefore read from the rootDSE rather than derived from the
         /// configured host name, which need not correspond to the domain's DN.</para>
         /// </remarks>
-        /// <returns>A <see cref="DirectoryEntry"/> bound to the domain naming context, or null if no hostnames are configured.</returns>
+        /// <returns>A <see cref="DirectoryEntry"/> bound to the domain naming context. The
+        /// return type stays nullable only to match the automatic-context branch of the
+        /// caller's ternary in <see cref="ReadMinPwdLength"/> (<c>Domain.GetCurrentDomain().GetDirectoryEntry()</c>),
+        /// not because this method itself can produce null.</returns>
         private DirectoryEntry? GetDirectoryEntry()
         {
-            if (!_options.LdapHostnames.Any()) // Check if LdapHostnames is empty
-            {
-                return null; // Return null to indicate failure to create DirectoryEntry
-            }
-
+            // No LdapHostnames-empty guard here: the constructor already ran
+            // AppSettingsValidation.ValidateServiceAccount(opts, required:
+            // !UseAutomaticContext) (see ValidateOptions, :248), which is the
+            // single point enforcing that LdapHostnames is non-empty whenever
+            // UseAutomaticContext is false, and this method is only ever called
+            // when UseAutomaticContext is false (see ReadMinPwdLength, :1007).
+            // Reaching this point implies that check ran and passed.
             var host = _options.LdapHostnames.First();
 
             // No local catch anywhere below: a bind or read failure propagates to
