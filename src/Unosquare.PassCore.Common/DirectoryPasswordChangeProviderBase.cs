@@ -163,6 +163,142 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
         TranslateDirectoryException(exception, DirectoryActor.User, out _);
 
     /// <summary>
+    /// Whether this provider can perform an administrative reset at all —
+    /// distinct from whether <see cref="IAppSettings.AllowAdministrativeReset"/>
+    /// is enabled, which <see cref="AdministrativeReset.ShouldAttempt"/> checks
+    /// separately. A provider overrides this to <see langword="false"/> when it
+    /// has no service-account write path to reset with (the Active Directory
+    /// provider in automatic-context mode) or when its normal write mechanism is
+    /// already administrative and a distinct reset would be redundant (the LDAP
+    /// provider outside the delete/add mechanism).
+    /// </summary>
+    protected virtual bool AdministrativeResetSupported => true;
+
+    /// <summary>
+    /// Runs the shared administrative-reset algorithm both directory providers
+    /// used to implement identically: attempt the user-context change and, only
+    /// when the failure is rescue-eligible, fall back to a service-account
+    /// reset — logging every reset with <see cref="AdministrativeReset.LogPerformed"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>See <see cref="PerformGatedBlockedWrite"/> for the pre-flight
+    /// counterpart of this method, used when a caller already knows — without
+    /// attempting the change — that the account is flagged so the user cannot
+    /// change their own password. The two used to be one method taking a
+    /// <c>changeBlockedByFlag</c> flag; splitting them means the impossible
+    /// "blocked, but also try the doomed user-context change" state can no
+    /// longer be expressed, and neither caller needs a throwaway closure to
+    /// stand in for a change that must never run.</para>
+    /// <para><b>Rescue eligibility</b> is
+    /// <see cref="AdministrativeResetSupported"/> AND
+    /// <see cref="AdministrativeReset.ShouldAttempt"/> with
+    /// <see cref="IAppSettings.AllowAdministrativeReset"/>,
+    /// <paramref name="currentPasswordVerified"/>, and the failure class
+    /// recovered by
+    /// <see cref="TranslateDirectoryException(Exception, DirectoryActor, out DirectoryFailureClass)"/>.
+    /// Only <see cref="DirectoryFailureClass.ChangeNotPermitted"/> is ever
+    /// rescuable; a reset never happens unless
+    /// <paramref name="currentPasswordVerified"/> is <see langword="true"/> —
+    /// an administrative reset without proof of the current password would be
+    /// an account-takeover primitive.</para>
+    /// <para><b>Why this takes delegates rather than exposing abstract write
+    /// methods.</b> <c>AdProviderDirectoryWriteAuditTests</c> enforces the AD
+    /// provider's write-capable invariants by scanning the TEXT of
+    /// <c>PasswordChangeProvider.cs</c> for write-capable calls (<c>.Save(</c>,
+    /// <c>.SetPassword(</c>, <c>.ChangePassword(</c>, <c>.Invoke(</c>, ...). If
+    /// the actual write calls moved into this shared method, that audit would
+    /// keep passing while guarding nothing — it never sees this file. Callers
+    /// therefore pass closures whose bodies remain in the calling provider's own
+    /// file, containing the real write calls unchanged; this method only decides
+    /// *whether* and *which* closure runs. Do not restructure this so a write
+    /// call migrates out of a provider's own file.</para>
+    /// </remarks>
+    /// <param name="context">The password change context.</param>
+    /// <param name="currentPasswordVerified">Whether the user's current password
+    /// was verified earlier in this request.</param>
+    /// <param name="writeChangeAsUser">
+    /// Performs the user-context password change. Any exception it throws is
+    /// translated and, if rescue-eligible, swallowed in favor of
+    /// <paramref name="writeResetAsService"/>; otherwise the translated
+    /// exception is thrown. Any exception already a
+    /// <see cref="PasswordChangeException"/> is rethrown unchanged rather than
+    /// being retranslated.
+    /// </param>
+    /// <param name="writeResetAsService">
+    /// Performs the administrative reset with the service account. Invoked only
+    /// when the failure is rescue-eligible. Deliberately outside the
+    /// <see langword="try"/>: an exception it throws propagates as-is rather
+    /// than being swallowed or retranslated.
+    /// </param>
+    protected void PerformGatedPasswordWrite(
+        PasswordChangeContext context,
+        bool currentPasswordVerified,
+        Action writeChangeAsUser,
+        Action writeResetAsService)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(writeChangeAsUser);
+        ArgumentNullException.ThrowIfNull(writeResetAsService);
+
+        try
+        {
+            writeChangeAsUser();
+        }
+        catch (PasswordChangeException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var translated = TranslateDirectoryException(ex, DirectoryActor.User, out var failureClass);
+
+            if (!IsRescueEligible(currentPasswordVerified, failureClass))
+                throw translated;
+
+            writeResetAsService();
+            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
+        }
+    }
+
+    /// <summary>
+    /// The pre-flight counterpart of <see cref="PerformGatedPasswordWrite"/>,
+    /// used when a caller has already determined — without attempting the
+    /// user-context change — that the account is flagged so the user cannot
+    /// change their own password. Skips straight to the rescue decision using
+    /// the synthesized <see cref="DirectoryErrorTranslator.CreateChangeNotPermittedError"/>
+    /// as the gate's failure, and, if eligible, performs the reset and logs it
+    /// with <see cref="AdministrativeReset.LogPerformed"/>; otherwise throws the
+    /// synthesized error.
+    /// </summary>
+    /// <param name="context">The password change context.</param>
+    /// <param name="currentPasswordVerified">Whether the user's current password
+    /// was verified earlier in this request.</param>
+    /// <param name="writeResetAsService">
+    /// Performs the administrative reset with the service account. Invoked only
+    /// when the block is rescue-eligible.
+    /// </param>
+    protected void PerformGatedBlockedWrite(
+        PasswordChangeContext context,
+        bool currentPasswordVerified,
+        Action writeResetAsService)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(writeResetAsService);
+
+        var blocked = DirectoryErrorTranslator.CreateChangeNotPermittedError();
+
+        if (!IsRescueEligible(currentPasswordVerified, DirectoryFailureClass.ChangeNotPermitted))
+            throw blocked;
+
+        writeResetAsService();
+        AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, blocked);
+    }
+
+    private bool IsRescueEligible(bool currentPasswordVerified, DirectoryFailureClass failureClass) =>
+        AdministrativeResetSupported
+        && AdministrativeReset.ShouldAttempt(Settings.AllowAdministrativeReset, currentPasswordVerified, failureClass);
+
+    /// <summary>
     /// The provider-specific body of a password change: everything up to, but
     /// not including, the terminal catch that both directory providers used to
     /// duplicate. Implementations keep whatever typed transport catch they
