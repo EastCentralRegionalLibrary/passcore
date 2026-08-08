@@ -731,6 +731,16 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     // ---------------------------------------------------------------------
 
     /// <inheritdoc />
+    /// <remarks>
+    /// An administrative reset only adds something when the delete/add
+    /// mechanism is in use: with the Replace mechanism
+    /// (<see cref="LdapPasswordChangeOptions.LdapChangePasswordWithDelAdd"/> is
+    /// <see langword="false"/>) every change is already an administrative
+    /// operation performed by the service account, so a distinct reset fallback
+    /// would be redundant.
+    /// </remarks>
+    protected override bool AdministrativeResetSupported => _options.LdapChangePasswordWithDelAdd;
+
     protected override Task ChangeDirectoryPasswordCore(
         PasswordChangeContext context,
         CancellationToken cancellationToken)
@@ -906,10 +916,10 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// shared gate permit it) or reported with the curated ChangeNotPermitted
     /// error — fixing the previous misreport of flagged accounts as
     /// infrastructure failures. Modify-time failures route through
-    /// <see cref="TranslateAndDecideRescue"/>: only the
-    /// <see cref="DirectoryFailureClass.ChangeNotPermitted"/> class is ever
-    /// rescuable. The Replace mechanism is already administrative, so neither
-    /// detection nor fallback applies there.
+    /// <see cref="DirectoryPasswordChangeProviderBase.PerformGatedPasswordWrite"/>:
+    /// only the <see cref="DirectoryFailureClass.ChangeNotPermitted"/> class is
+    /// ever rescuable. The Replace mechanism is already administrative, so
+    /// neither detection nor fallback applies there.
     /// </summary>
     private void ExecutePasswordChange(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
@@ -928,80 +938,25 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
         // (infrastructure). Detect the flag from the DACL instead and route it
         // through the same decision seam as modify-time failures. Detection runs
         // only after credential verification, so the flag is never a pre-auth oracle.
+        // Both closures' bodies are the EXISTING write calls, unchanged, and stay
+        // in this file; see the remarks on PerformGatedPasswordWrite.
         if (DetectCannotChangePassword(ldap, userDn))
         {
-            var blocked = DirectoryErrorTranslator.CreateChangeNotPermittedError();
-            if (!ShouldRescue(_options, currentPasswordVerified, DirectoryFailureClass.ChangeNotPermitted))
-                throw blocked;
-
-            AdminResetUnicodePwd(ldap, userDn, context.NewPassword);
-            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, blocked);
+            PerformGatedBlockedWrite(
+                context,
+                currentPasswordVerified,
+                writeResetAsService: () => AdminResetUnicodePwd(ldap, userDn, context.NewPassword));
             return;
         }
 
-        try
-        {
-            ChangePasswordDelAdd(
+        PerformGatedPasswordWrite(
+            context,
+            currentPasswordVerified,
+            writeChangeAsUser: () => ChangePasswordDelAdd(
                 ldap, userDn,
                 context.CurrentPassword,
-                context.NewPassword);
-        }
-        catch (LdapException ex)
-        {
-            var translated = TranslateAndDecideRescue(ex, _options, currentPasswordVerified, out var attemptReset);
-            if (!attemptReset)
-                throw translated;
-
-            AdminResetUnicodePwd(ldap, userDn, context.NewPassword);
-            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
-        }
-    }
-
-    /// <summary>
-    /// The single rescue-eligibility seam for this provider: delete/add
-    /// mechanism in use, plus the shared
-    /// <see cref="AdministrativeReset.ShouldAttempt"/> gate (option enabled,
-    /// current password verified in this request, and the failure class is
-    /// exactly <see cref="DirectoryFailureClass.ChangeNotPermitted"/>). Both
-    /// the post-verification pre-flight (detected flag) and the modify-failure
-    /// catch route through this method, so eligibility cannot drift between
-    /// the two call sites.
-    /// </summary>
-    internal static bool ShouldRescue(
-        LdapPasswordChangeOptions options,
-        bool currentPasswordVerified,
-        DirectoryFailureClass failureClass) =>
-        options.LdapChangePasswordWithDelAdd
-        && AdministrativeReset.ShouldAttempt(
-            options.AllowAdministrativeReset,
-            currentPasswordVerified,
-            failureClass);
-
-    /// <summary>
-    /// Translates a failed delete/add modification and decides — via
-    /// <see cref="ShouldRescue"/> — whether the administrative-reset fallback
-    /// may fire. Only a failure classified as
-    /// <see cref="DirectoryFailureClass.ChangeNotPermitted"/> is rescuable;
-    /// password-policy rejections, account-state conditions (in either
-    /// disclosure mode) and infrastructure failures always surface.
-    /// </summary>
-    internal static Exception TranslateAndDecideRescue(
-        LdapException ex,
-        LdapPasswordChangeOptions options,
-        bool currentPasswordVerified,
-        out bool attemptReset)
-    {
-        // Deliberately still uses the static overload: this method is itself
-        // static, so it cannot reach the instance seam. Scheduled to move
-        // there together with the administrative-reset consolidation. Its
-        // failureClass gates AdministrativeReset.ShouldAttempt (via
-        // ShouldRescue below), so the static and instance translations must
-        // not be allowed to drift.
-        var translated = TranslateLdapException(ex, options.ErrorDisclosureMode, out var failureClass);
-
-        attemptReset = ShouldRescue(options, currentPasswordVerified, failureClass);
-
-        return translated;
+                context.NewPassword),
+            writeResetAsService: () => AdminResetUnicodePwd(ldap, userDn, context.NewPassword));
     }
 
     /// <summary>

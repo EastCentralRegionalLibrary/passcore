@@ -219,6 +219,20 @@ namespace Unosquare.PassCore.PasswordProvider
                 "than a directory-verified identifier, so lookups will not resolve for ordinary " +
                 "users. Use SamAccountName, Name, or UserPrincipalName instead.");
 
+        /// <inheritdoc />
+        /// <remarks>
+        /// In automatic-context mode there is no service account bound with
+        /// which to perform an administrative reset — <c>UserPrincipal.SetPassword</c>
+        /// would run as the process identity instead, bypassing password
+        /// history and minimum-age policy for a configuration EventId 103
+        /// (<see cref="LogAdminResetIgnoredInAutomaticContext"/>) already tells
+        /// operators at startup the fallback is ignored for. The fallback is
+        /// therefore inert whenever <see cref="PasswordChangeOptions.UseAutomaticContext"/>
+        /// is <see langword="true"/>, regardless of
+        /// <see cref="PasswordChangeOptions.AllowAdministrativeReset"/>.
+        /// </remarks>
+        protected override bool AdministrativeResetSupported => !_options.UseAutomaticContext;
+
         public PasswordChangeProvider(
             ILogger<PasswordChangeProvider> logger,
             IOptions<PasswordChangeOptions> options,
@@ -608,40 +622,27 @@ namespace Unosquare.PassCore.PasswordProvider
             AuthenticablePrincipal userPrincipal,
             bool currentPasswordVerified)
         {
-            try
-            {
-                // The old password is still supplied and still verified by the
-                // directory, whichever channel this takes: this is a genuine
-                // change, not a reset wearing its name. History and minimum-age
-                // policy therefore keep applying, which is the whole reason the
-                // reset is a separate, gated, loudly-logged thing.
-                using var entry = BindForWrite(context.CorrelationId, "change", userPrincipal);
+            // The old password is still supplied and still verified by the
+            // directory, whichever channel this takes: this is a genuine
+            // change, not a reset wearing its name. History and minimum-age
+            // policy therefore keep applying, which is the whole reason the
+            // reset is a separate, gated, loudly-logged thing. Both closures'
+            // bodies are the EXISTING write calls, unchanged, and stay in this
+            // file — see the remarks on PerformGatedPasswordWrite for why that
+            // matters to AdProviderDirectoryWriteAuditTests.
+            PerformGatedPasswordWrite(
+                context,
+                currentPasswordVerified,
+                writeChangeAsUser: () =>
+                {
+                    using var entry = BindForWrite(context.CorrelationId, "change", userPrincipal);
 
-                if (entry is null)
-                    userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
-                else
-                    entry.Invoke("ChangePassword", new object[] { context.CurrentPassword, context.NewPassword });
-            }
-            catch (Exception ex)
-            {
-                var translated = DirectoryErrorTranslator.TranslateException(
-                    ex, _options.ErrorDisclosureMode, out var failureClass);
-
-                // Automatic-context mode never resets administratively (there is
-                // no service account to reset with); otherwise the shared
-                // class-based gate decides — only ChangeNotPermitted is ever
-                // rescuable. Ineligible failures surface translated.
-                var attemptReset = !_options.UseAutomaticContext
-                    && AdministrativeReset.ShouldAttempt(
-                        _options.AllowAdministrativeReset,
-                        currentPasswordVerified,
-                        failureClass);
-
-                if (!attemptReset)
-                    throw translated;
-
-                PerformAdministrativeReset(context, userPrincipal, translated);
-            }
+                    if (entry is null)
+                        userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
+                    else
+                        entry.Invoke("ChangePassword", new object[] { context.CurrentPassword, context.NewPassword });
+                },
+                writeResetAsService: () => PerformAdministrativeReset(context, userPrincipal));
         }
 
         /// <summary>
@@ -663,44 +664,35 @@ namespace Unosquare.PassCore.PasswordProvider
             AuthenticablePrincipal userPrincipal,
             bool currentPasswordVerified)
         {
-            var blocked = DirectoryErrorTranslator.CreateChangeNotPermittedError();
-
-            var attemptReset = !_options.UseAutomaticContext
-                && AdministrativeReset.ShouldAttempt(
-                    _options.AllowAdministrativeReset,
-                    currentPasswordVerified,
-                    DirectoryFailureClass.ChangeNotPermitted);
-
-            if (!attemptReset)
-                throw blocked;
-
-            PerformAdministrativeReset(context, userPrincipal, blocked);
+            // The user-context ChangePassword is doomed for this account and
+            // must not be attempted: PerformGatedBlockedWrite goes straight to
+            // the gate and, if eligible, the reset closure below.
+            PerformGatedBlockedWrite(
+                context,
+                currentPasswordVerified,
+                writeResetAsService: () => PerformAdministrativeReset(context, userPrincipal));
         }
 
         /// <summary>
         /// The single reset execution path: an administrative SetPassword over
         /// an LDAPS-bound entry for the target user, falling back to the
-        /// principal-based call when that entry cannot be bound, followed by the
-        /// shared loud Warning log. Reached only through the
-        /// <see cref="AdministrativeReset"/> gate.
+        /// principal-based call when that entry cannot be bound. Reached only
+        /// through the <see cref="AdministrativeReset"/> gate via
+        /// <c>PerformGatedPasswordWrite</c>, which logs the reset itself
+        /// once this closure returns.
         /// </summary>
         /// <param name="context">The password change context.</param>
         /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
-        /// <param name="originalFailure">The translated failure or blocking condition that triggered the reset.</param>
         private void PerformAdministrativeReset(
             PasswordChangeContext context,
-            AuthenticablePrincipal userPrincipal,
-            Exception originalFailure)
+            AuthenticablePrincipal userPrincipal)
         {
-            using (var entry = BindForWrite(context.CorrelationId, "reset", userPrincipal))
-            {
-                if (entry is null)
-                    userPrincipal.SetPassword(context.NewPassword);
-                else
-                    entry.Invoke("SetPassword", new object[] { context.NewPassword });
-            }
+            using var entry = BindForWrite(context.CorrelationId, "reset", userPrincipal);
 
-            AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, originalFailure);
+            if (entry is null)
+                userPrincipal.SetPassword(context.NewPassword);
+            else
+                entry.Invoke("SetPassword", new object[] { context.NewPassword });
         }
 
         /// <summary>

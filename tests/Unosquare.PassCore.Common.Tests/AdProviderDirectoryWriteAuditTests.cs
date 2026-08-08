@@ -821,6 +821,52 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.Contains("automatic domain context", body, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Pins the override that was silently lost once during consolidation:
+    /// <c>AdministrativeResetSupported => !_options.UseAutomaticContext</c>. In
+    /// automatic-context mode there is no service account bound with which to
+    /// perform an administrative reset, so without this override the AD
+    /// provider inherits the base's <c>=&gt; true</c> default and, with
+    /// <c>AllowAdministrativeReset=true</c> AND <c>UseAutomaticContext=true</c>,
+    /// a flagged account reaches the reset path with <c>BindForWrite</c>
+    /// returning <see langword="null"/> and <c>userPrincipal.SetPassword(...)</c>
+    /// executing as the process identity — bypassing password history and
+    /// minimum-age policy in exactly the configuration EventId 103
+    /// (<c>LogAdminResetIgnoredInAutomaticContext</c>) tells operators at
+    /// startup is ignored.
+    ///
+    /// <para>The AD provider cannot be constructed or exercised off Windows
+    /// (see the class summary), so a runtime test cannot pin this the way
+    /// <c>LdapAdministrativeResetTests.AdministrativeResetSupported_TracksLdapChangePasswordWithDelAdd</c>
+    /// pins the LDAP provider's equivalent override. A source audit is the
+    /// only guard available here, and it exists specifically because this
+    /// exact line was dropped once, silently, and every other test in this
+    /// suite kept passing.</para>
+    /// </summary>
+    [Fact]
+    public void AdProvider_HasAdministrativeResetSupportedOverrideGuardedOnUseAutomaticContext()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+
+        var declarationAt = code.IndexOf("AdministrativeResetSupported", StringComparison.Ordinal);
+        Assert.True(
+            declarationAt >= 0,
+            "PasswordChangeProvider no longer overrides AdministrativeResetSupported. Without it, " +
+            "the base's '=> true' default lets automatic-context deployments reach the " +
+            "administrative-reset fallback with no service account to reset with, so the write " +
+            "runs as the process identity and bypasses password history/minimum-age policy.");
+
+        var statementEnd = code.IndexOf(';', declarationAt);
+        Assert.True(statementEnd > declarationAt, "Could not find the end of the AdministrativeResetSupported declaration.");
+
+        var declaration = code[declarationAt..(statementEnd + 1)];
+
+        Assert.Contains(
+            "!_options.UseAutomaticContext",
+            declaration.Replace(" ", string.Empty, StringComparison.Ordinal),
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void WebStartup_EagerlyResolvesPasswordChangeProvider()
     {
