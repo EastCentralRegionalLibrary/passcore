@@ -1432,22 +1432,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
                 "expects TLS from the first byte. Enable at most one of them.");
     }
 
-    private static bool IsDomainMatching(string domainPart, string defaultDomain)
-    {
-        if (string.Equals(domainPart, defaultDomain, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var dotIndex = defaultDomain.IndexOf('.', StringComparison.Ordinal);
-        if (dotIndex > 0)
-        {
-            var prefix = defaultDomain[..dotIndex];
-            if (string.Equals(domainPart, prefix, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
-    }
-
     /// <summary>
     /// Produces a value safe to substitute into <see cref="LdapPasswordChangeOptions.LdapSearchFilter"/>:
     /// parses the domain and local parts explicitly, validates the qualifier against the configured
@@ -1483,55 +1467,13 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// </remarks>
     internal static string SanitizeUsername(string username, string? defaultDomain = null)
     {
-        string localPart = username;
-        string? domainPart = null;
-        var netbiosQualified = false;
-
-        var backslashIndex = username.IndexOf('\\', StringComparison.Ordinal);
-        var atIndex = username.IndexOf('@', StringComparison.Ordinal);
-
-        // A username is qualified in one syntax or the other. Something carrying
-        // both separators is well-formed in neither, and would otherwise be split
-        // on the backslash into two halves that are each meaningless — so it is
-        // rejected outright, as it was in every configuration state before an
-        // unvalidated qualifier could be accepted.
-        if (backslashIndex >= 0 && atIndex >= 0)
-            throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
-
-        if (backslashIndex >= 0)
-        {
-            domainPart = username[..backslashIndex];
-            localPart = username[(backslashIndex + 1)..];
-            netbiosQualified = true;
-        }
-        else if (atIndex >= 0)
-        {
-            domainPart = username[(atIndex + 1)..];
-            localPart = username[..atIndex];
-        }
-
-        // The supplied qualifier is user input. Escaping (below) neutralizes the
-        // RFC 4515 metacharacters; control characters are rejected outright, as
-        // they are for the local part.
-        if (!string.IsNullOrEmpty(domainPart) && domainPart.Any(char.IsControl))
-            throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
-
-        if (string.IsNullOrEmpty(defaultDomain))
-        {
-            // Nothing is configured to validate the qualifier against, so it is
-            // accepted: a UPN suffix is kept, a NetBIOS name is dropped.
-            if (netbiosQualified)
-                domainPart = null;
-        }
-        else
-        {
-            if (!string.IsNullOrEmpty(domainPart) && !IsDomainMatching(domainPart, defaultDomain))
-                throw new InvalidCredentialsException(InvalidUsernameFormatMessage);
-
-            // The configured domain is authoritative: it qualifies a bare name and
-            // canonicalizes a matching NetBIOS prefix to the full domain.
-            domainPart = defaultDomain;
-        }
+        // Qualifier parsing, domain validation and canonicalization are
+        // provider-agnostic and shared with the AD provider; escaping (below)
+        // and the sAMAccountName character rules are LDAP-specific and stay
+        // here — see UsernameQualifier's remarks for why.
+        var qualified = UsernameQualifier.Resolve(username, defaultDomain, InvalidUsernameFormatMessage);
+        var localPart = qualified.LocalPart;
+        var domainPart = qualified.DomainPart;
 
         if (localPart.Length == 0
             || localPart.Any(char.IsControl)
