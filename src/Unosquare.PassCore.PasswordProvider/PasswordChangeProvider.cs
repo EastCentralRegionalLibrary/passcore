@@ -555,14 +555,56 @@ namespace Unosquare.PassCore.PasswordProvider
         /// </summary>
         /// <param name="username">The username to fix.</param>
         /// <returns>The fixed username, potentially with the default domain appended.</returns>
+        /// <remarks>
+        /// <para>Non-<see cref="IdentityType.UserPrincipalName"/> identity types are returned
+        /// unchanged, with no validation: <see cref="IdentityType.DistinguishedName"/>,
+        /// <see cref="IdentityType.Guid"/>, <see cref="IdentityType.Sid"/> and
+        /// <see cref="IdentityType.SamAccountName"/> lookups behave exactly as before.</para>
+        /// <para>On the <see cref="IdentityType.UserPrincipalName"/> path this now routes through
+        /// the shared <see cref="UsernameQualifier"/>, so a qualifier that does not match
+        /// <see cref="PasswordChangeOptions.DefaultDomain"/> (e.g. <c>user@other.com</c> against a
+        /// configured <c>corp.local</c>) or a control character in the qualifier is refused with
+        /// <see cref="DirectoryErrorTranslator.InvalidCredentialsMessage"/> rather than being handed
+        /// to <c>FindByIdentity</c> unexamined. A bare name is still qualified with the configured
+        /// domain, and a matching qualifier (the domain itself or its NetBIOS prefix) is
+        /// canonicalized to it — the same policy the LDAP provider's <c>SanitizeUsername</c>
+        /// applies, so a mismatched domain qualifier or a control character in the qualifier is
+        /// rejected identically by both providers. <b>Only the qualifier is validated
+        /// identically</b>: <see cref="UsernameQualifier.Resolve"/> never inspects the local part,
+        /// so this method adds its own control-character check for it, below — the LDAP provider's
+        /// equivalent rejection (empty local part, control characters,
+        /// <c>InvalidAccountNameCharsRegex</c>) is not reproduced here beyond that one check.</para>
+        /// <para><b>This also changes what a NetBIOS-qualified (<c>DOMAIN\user</c>) username
+        /// resolves to</b>, which the old append-only code had no concept of at all:
+        /// <c>CORP\jdoe</c> with <c>DefaultDomain=corp.local</c> now resolves to
+        /// <c>jdoe@corp.local</c> (previously <c>CORP\jdoe</c>, handed to <c>FindByIdentity</c>
+        /// unexamined); <c>CORP\jdoe</c> or <c>OTHER\jdoe</c> with no <c>DefaultDomain</c>
+        /// configured now resolves to bare <c>jdoe</c> (previously <c>CORP\jdoe</c> /
+        /// <c>OTHER\jdoe</c> respectively) — an unmatched NetBIOS qualifier is DROPPED, not kept,
+        /// when there is no configured domain to validate or canonicalize it against. This is
+        /// deliberate, not incidental: it is what makes this provider agree with the LDAP
+        /// provider's qualifier handling, which is the point of routing through the shared
+        /// helper.</para>
+        /// </remarks>
         private string FixUsernameWithDomain(string username)
         {
             if (_idType != IdentityType.UserPrincipalName) return username; // No fixing needed if IdentityType is not UserPrincipalName
 
-            var parts = username.Split('@', StringSplitOptions.RemoveEmptyEntries); // Split username by '@' to check for domain part
+            var qualified = UsernameQualifier.Resolve(
+                username, _options.DefaultDomain, DirectoryErrorTranslator.InvalidCredentialsMessage);
 
-            // Append domain to username if no domain part is present and default domain is configured
-            return parts.Length > 1 || string.IsNullOrWhiteSpace(_options.DefaultDomain) ? username : $"{username}@{_options.DefaultDomain}";
+            // UsernameQualifier.Resolve validates only the qualifier; the local part is
+            // its caller's concern. A control character here reaches FindByIdentity
+            // unexamined otherwise -- unlike ',' or '=', a control character cannot be
+            // part of a legitimate DistinguishedName-style identity, so this check is
+            // safe to add without reopening the DN concern that keeps the fuller
+            // sAMAccountName rules in the LDAP provider.
+            if (qualified.LocalPart.Any(char.IsControl))
+                throw new InvalidCredentialsException(DirectoryErrorTranslator.InvalidCredentialsMessage);
+
+            return string.IsNullOrEmpty(qualified.DomainPart)
+                ? qualified.LocalPart
+                : $"{qualified.LocalPart}@{qualified.DomainPart}";
         }
 
         /// <summary>

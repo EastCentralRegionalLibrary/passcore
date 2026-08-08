@@ -666,6 +666,19 @@ public class AdProviderDirectoryWriteAuditTests
     /// for real in <c>ShippedConfigurationUsernameFormTests</c> — this side can only
     /// be audited, for the reasons in the class summary above.
     /// </summary>
+    /// <summary>
+    /// The load-bearing fact behind the shipped-config claim is not "the body
+    /// contains no 'throw'" -- rejection moved INSIDE
+    /// <c>UsernameQualifier.Resolve</c>, so that proves nothing about this
+    /// method's own name and would still pass if the call were changed to a
+    /// hardcoded domain. What actually has to hold is that
+    /// <c>FixUsernameWithDomain</c> passes <c>_options.DefaultDomain</c>
+    /// unaltered as the domain argument, and references no other domain
+    /// source -- so with the shipped <c>DefaultDomain: ""</c>, the behavior
+    /// this test title describes is exactly
+    /// <c>UsernameQualifierTests.UnconfiguredDefaultDomain_KeepsAUpnSuffix</c>,
+    /// which is the behavioral half of this pin.
+    /// </summary>
     [Fact]
     public void AdProvider_AcceptsAQualifiedUsernameWhenNoDefaultDomainIsConfigured()
     {
@@ -678,16 +691,117 @@ public class AdProviderDirectoryWriteAuditTests
             CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
             "string FixUsernameWithDomain(");
 
-        // Two branches return the supplied name untouched: it already carries a
-        // domain, or there is no configured domain to qualify it with.
-        Assert.Contains("parts.Length > 1", body, StringComparison.Ordinal);
-        Assert.Contains("string.IsNullOrWhiteSpace(_options.DefaultDomain)", body, StringComparison.Ordinal);
+        // Whitespace-normalized so formatting (line breaks, extra spaces
+        // around the call) cannot mask a changed argument.
+        var normalizedBody = Regex.Replace(body, @"\s+", " ").Trim();
 
-        // And neither branch rejects. A format rejection here would surface as
-        // InvalidCredentials — indistinguishable from a wrong password, with nothing
-        // logged to point at configuration — which is exactly the divergence the LDAP
-        // provider carried until its qualifier handling was corrected.
-        Assert.DoesNotContain("throw", body, StringComparison.Ordinal);
+        Assert.Contains(
+            "UsernameQualifier.Resolve( username, _options.DefaultDomain,",
+            normalizedBody,
+            StringComparison.Ordinal);
+
+        // No other domain source feeds the call: a hardcoded string or a
+        // different option would still leave "throw" absent from this method
+        // and pass a weaker check.
+        Assert.DoesNotContain("_options.LdapHostnames", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Pins the behavior change this batch made: <c>FixUsernameWithDomain</c> keeps
+    /// its early return for every identity type except
+    /// <c>IdentityType.UserPrincipalName</c> — <c>DistinguishedName</c>, <c>Guid</c>,
+    /// <c>Sid</c> and <c>SamAccountName</c> lookups get the supplied username back
+    /// completely unchanged, with no validation — and on the
+    /// <c>UserPrincipalName</c> path it now routes through the shared
+    /// <c>UsernameQualifier</c> rather than the old three-line "append the domain if
+    /// there's no '@'" check, so a mismatched domain qualifier or a control
+    /// character reaches <c>UsernameQualifier.Resolve</c> (and is rejected there)
+    /// instead of being handed straight to <c>FindByIdentity</c>.
+    /// </summary>
+    [Fact]
+    public void AdProvider_FixUsernameWithDomain_EarlyReturnsForNonUpnAndRoutesUpnThroughSharedQualifier()
+    {
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "string FixUsernameWithDomain(");
+
+        // Non-UPN identity types return the username unchanged before anything
+        // else runs.
+        var earlyReturnAt = body.IndexOf(
+            "if (_idType != IdentityType.UserPrincipalName) return username;",
+            StringComparison.Ordinal);
+        Assert.True(
+            earlyReturnAt >= 0,
+            "FixUsernameWithDomain no longer returns early, unchanged, for non-UserPrincipalName " +
+            "identity types. DistinguishedName/Guid/Sid/SamAccountName lookups must not be routed " +
+            "through qualifier validation meant for a UPN.");
+
+        // The UPN path delegates to the shared helper, after the early return.
+        var qualifierAt = body.IndexOf("UsernameQualifier.Resolve(", StringComparison.Ordinal);
+        Assert.True(
+            qualifierAt > earlyReturnAt,
+            "FixUsernameWithDomain no longer routes the UserPrincipalName path through the shared " +
+            "UsernameQualifier. Without it, a mismatched domain qualifier or a control character in " +
+            "the submitted username reaches FindByIdentity unexamined.");
+
+        // Rejections on this path use the AD provider's own credential-rejection
+        // message, not the LDAP provider's "Invalid username format" — so a
+        // rejected UPN stays indistinguishable from every other credential
+        // failure this provider produces.
+        Assert.Contains("DirectoryErrorTranslator.InvalidCredentialsMessage", body, StringComparison.Ordinal);
+
+        // Checked against the RAW source, not the skeleton: CodeSkeleton blanks
+        // every string literal to "" before extraction, so "Invalid username
+        // format" can never appear in a skeleton-derived body regardless of
+        // what the source actually contains -- that check would pass even if
+        // the literal were reintroduced.
+        var rawBody = ExtractMethodBody(
+            ReadRepoFile(ProviderRelativePath),
+            "string FixUsernameWithDomain(");
+        Assert.DoesNotContain("Invalid username format", rawBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>ResolveMembershipAsync</c> -- the group-membership path, not the
+    /// password-change path -- must route its identity through
+    /// <c>FixUsernameWithDomain</c> too, so it inherits the same domain
+    /// qualification and (new) rejection rules rather than handing a raw
+    /// username straight to <c>FindByIdentity</c>. Without this, a mismatched
+    /// or control-character-bearing qualifier would be rejected on the
+    /// password-change path but silently accepted (and presumably resolve to
+    /// "no such user") on the group-membership path -- an inconsistency
+    /// nothing else in this suite would catch, since the provider cannot be
+    /// exercised off Windows.
+    /// </summary>
+    [Fact]
+    public void ResolveMembershipAsync_RoutesTheUsernameThroughFixUsernameWithDomain()
+    {
+        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
+        var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
+
+        Assert.Contains("FixUsernameWithDomain(username)", resolveBody, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <c>UsernameQualifier.Resolve</c> validates only the qualifier (see its
+    /// own remarks) -- the local part is left to each provider. The AD
+    /// provider's UPN path now depends on its own narrower check for it: a
+    /// control character in the local part must be rejected the same way a
+    /// bad qualifier is, rather than reaching <c>FindByIdentity</c>
+    /// unexamined. A control-character check cannot reject ',' or '=', so this
+    /// is safe to add without reopening the <c>DistinguishedName</c> concern
+    /// that keeps the fuller <c>sAMAccountName</c> rules in the LDAP provider.
+    /// </summary>
+    [Fact]
+    public void AdProvider_FixUsernameWithDomain_RejectsAControlCharacterInTheLocalPart()
+    {
+        var body = ExtractMethodBody(
+            CodeSkeleton(ReadRepoFile(ProviderRelativePath)),
+            "string FixUsernameWithDomain(");
+
+        Assert.Contains("qualified.LocalPart", body, StringComparison.Ordinal);
+        Assert.Contains("IsControl", body, StringComparison.Ordinal);
+        Assert.Contains("DirectoryErrorTranslator.InvalidCredentialsMessage", body, StringComparison.Ordinal);
     }
 
     [Fact]
