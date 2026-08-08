@@ -57,7 +57,7 @@ PassCore has the following features:
     - If you download the source code you need to run the following command via an Command Prompt. Make sure you start the Command Prompt with the Administrator option.
     - `dotnet publish --configuration Release --runtime win-x64 --output "<path>"`
     - The `<path>` is the directory where you will be serving the website from.
-1. Install the [.NET Core 5.0.1 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/dotnet/thank-you/runtime-aspnetcore-5.0.1-windows-hosting-bundle-installer).
+1. Install the [.NET 8 ASP.NET Core Windows Hosting Bundle](https://dotnet.microsoft.com/download/dotnet/8.0).
 1. Go to your *IIS Manager*, Right-click on *Application Pools* and select *Add Application Pool*.
 1. A dialog appears. Under Name enter **PassCore Application Pool**, Under .NET CLR Version select **No Managed Code** and finally, under Managed pipeline mode select **Integrated**. Click OK after all fields have been set.
 1. Now, right-click on the application pool you just created in the previous step and select *Advanced Settings ...*. Change the *Start Mode* to **AlwaysRunning**, and the *Idle Time-out (minutes)* to **0**. Click on *OK*. This will ensure PassCore stays responsive even after long periods of inactivity.
@@ -73,7 +73,7 @@ PassCore has the following features:
 
 ## PowerShell Installer
 
-Use PowerShell to download and setup Passcore using the following command line, just make sure you have installed the [.NET Core 5.0.1 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/dotnet/thank-you/runtime-aspnetcore-5.0.1-windows-hosting-bundle-installer) and enabled World Wide Web publishing service:
+Use PowerShell to download and setup Passcore using the following command line, just make sure you have installed the [.NET 8 ASP.NET Core Windows Hosting Bundle](https://dotnet.microsoft.com/download/dotnet/8.0) and enabled World Wide Web publishing service:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/Installer.ps1'))
@@ -206,7 +206,7 @@ To run as a sub-application you need to modify the `base href="/"` value in the 
 
 ## Troubleshooting
 
-- At first run if you find an error (e.g. **HTTP Error 502.5**) first ensure you have installed [.NET Core 5.0.1 Windows Server Hosting bundle](https://dotnet.microsoft.com/download/dotnet/thank-you/runtime-aspnetcore-5.0.1-windows-hosting-bundle-installer), or better.
+- At first run if you find an error (e.g. **HTTP Error 500.30**) first ensure you have installed [.NET 8 ASP.NET Core Windows Hosting Bundle](https://dotnet.microsoft.com/download/dotnet/8.0), or better.
 - If you find an [HTTP Error 500](https://stackoverflow.com/questions/45415832/http-error-500-19-in-iis-10-and-visual-studio-2017) you can try
   1. Press Win Key+R to Open Run Window
   1. in the Run Window, enter "OptionalFeatures.exe"
