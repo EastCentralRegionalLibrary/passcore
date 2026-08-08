@@ -213,3 +213,7 @@ test-results/
 # Claude Code machine-local settings
 .claude/settings.local.json
 .claude/worktrees/
+
+# Claude Code plugin/marketplace state (machine-local, never shared)
+.claude/plugins/
+.claude/marketplaces/
