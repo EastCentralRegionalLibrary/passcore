@@ -12,7 +12,7 @@ curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
 export PATH="$HOME/.dotnet:$PATH"          # needed in EVERY shell; nothing sets it for you
 
-# 2. Full test suite (expect 300 / 369 / 24 / 4, zero failures)
+# 2. Full test suite (expect 357 / 386 / 24 / 4 = 771, zero failures)
 dotnet test Unosquare.PassCore.sln -c Release
 
 # 3. The Windows-only AD provider, compiled on Linux
@@ -102,14 +102,16 @@ Four suites; these counts are the regression baseline:
 
 | Assembly | Tests |
 | --- | --- |
-| `Unosquare.PassCore.Common.Tests` | 300 |
-| `Zyborg.PassCore.PasswordProvider.LDAP.Tests` | 369 |
+| `Unosquare.PassCore.Common.Tests` | 357 |
+| `Zyborg.PassCore.PasswordProvider.LDAP.Tests` | 386 |
 | `Unosquare.PassCore.PasswordProvider.Debug.Tests` | 24 |
 | `PwnedPasswordsSearch.Tests` | 4 |
 
-- **Parse `Total tests:`, not `Total:`.** This SDK prints `Total tests: N`. A grep for `Total:`
-  matches nothing and yields a silently empty result — which reads identically before and after a
-  change, so a comparison against it always "passes".
+- **Parse `Total:`, not `Total tests:`.** Verified against SDK 8.0.423: the per-assembly summary
+  line is `Passed!  - Failed: 0, Passed: 357, Skipped: 0, Total: 357, Duration: … - <assembly>.dll`.
+  There is no `Total tests:` line anywhere in the output, so grepping for it matches nothing and
+  yields a silently empty result — which reads identically before and after a change, so a
+  comparison against it always "passes".
 - **Some tests read repository source from disk.** The audit tests (logging conventions, shipped
   config, hardened defaults) use `Unosquare.PassCore.Testing.RepositorySource`, which walks up from
   `AppContext.BaseDirectory` looking for `Unosquare.PassCore.sln`. They must run from a source
