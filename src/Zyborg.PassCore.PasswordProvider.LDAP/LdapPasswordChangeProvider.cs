@@ -677,18 +677,73 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         return -1;
     }
 
+    private static bool IsHexDigit(char c)
+    {
+        return (c >= '0' && c <= '9') ||
+               (c >= 'a' && c <= 'f') ||
+               (c >= 'A' && c <= 'F');
+    }
+
+    private static byte ParseHexByte(char high, char low)
+    {
+        return (byte)((GetHexValue(high) << 4) | GetHexValue(low));
+    }
+
+    private static int GetHexValue(char c)
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return 0;
+    }
+
     private static string UnescapeRdnValue(string value)
     {
         if (!value.Contains('\\', StringComparison.Ordinal))
             return value;
 
         var sb = new StringBuilder(value.Length);
+        var escapedBytes = new List<byte>();
+
         for (var i = 0; i < value.Length; i++)
         {
-            if (value[i] == '\\' && i + 1 < value.Length)
-                i++;
+            if (value[i] == '\\')
+            {
+                if (i + 2 < value.Length && IsHexDigit(value[i + 1]) && IsHexDigit(value[i + 2]))
+                {
+                    escapedBytes.Add(ParseHexByte(value[i + 1], value[i + 2]));
+                    i += 2;
+                }
+                else
+                {
+                    if (escapedBytes.Count > 0)
+                    {
+                        sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
+                        escapedBytes.Clear();
+                    }
 
-            sb.Append(value[i]);
+                    if (i + 1 < value.Length)
+                    {
+                        i++;
+                    }
+                    sb.Append(value[i]);
+                }
+            }
+            else
+            {
+                if (escapedBytes.Count > 0)
+                {
+                    sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
+                    escapedBytes.Clear();
+                }
+
+                sb.Append(value[i]);
+            }
+        }
+
+        if (escapedBytes.Count > 0)
+        {
+            sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
         }
 
         return sb.ToString();

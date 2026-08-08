@@ -52,22 +52,32 @@ public class Rfc4514DnMatchingTests
 
     /// <summary>
     /// RFC 4514 permits hex escapes, so a comma may arrive as '\2C' rather than '\,'.
-    /// LdapPasswordChangeProvider.UnescapeRdnValue currently only handles the backslash-character form:
-    /// it skips the backslash and appends the next single character, which turns '\2C' into '2C' instead of ','.
-    /// This test pins this CURRENT behaviour and is marked as pinned-not-endorsed.
+    /// Verified that LdapPasswordChangeProvider.UnescapeRdnValue correctly handles hex escapes.
     /// </summary>
     [Fact]
-    public void DnMatchesGroup_HexEscapedComma_PinnedNotEndorsed_ReturnsFalse()
+    public void DnMatchesGroup_HexEscapedComma_Corrected_ReturnsTrue()
     {
-        // Pinned-not-endorsed behavior:
-        // A hex-escaped comma (e.g. \2C) is not correctly unescaped to ',' by UnescapeRdnValue.
-        // It skips '\' and keeps '2', resulting in "Admins2C Senior" (with the 'C' remaining in the stream).
-        // Let's assert that the current implementation turns CN=Admins\2C Senior into "Admins2C Senior",
-        // and therefore does NOT match "Admins, Senior".
         var dnWithHexEscapedComma = @"CN=Admins\2C Senior,OU=Groups,DC=example,DC=com";
 
-        // Current behavior turns CN part into "Admins2C Senior".
-        Assert.True(LdapPasswordChangeProvider.DnMatchesGroup(dnWithHexEscapedComma, "Admins2C Senior"));
-        Assert.False(LdapPasswordChangeProvider.DnMatchesGroup(dnWithHexEscapedComma, "Admins, Senior"));
+        Assert.False(LdapPasswordChangeProvider.DnMatchesGroup(dnWithHexEscapedComma, "Admins2C Senior"));
+        Assert.True(LdapPasswordChangeProvider.DnMatchesGroup(dnWithHexEscapedComma, "Admins, Senior"));
+    }
+
+    [Theory]
+    // Hex escape cases
+    [InlineData(@"CN=Admins\2C Senior,OU=Groups,DC=example,DC=com", "Admins, Senior", true)]
+    [InlineData(@"CN=Admins\5C Senior,OU=Groups,DC=example,DC=com", @"Admins\ Senior", true)]
+    [InlineData(@"CN=Admins\2c Senior,OU=Groups,DC=example,DC=com", "Admins, Senior", true)]
+    // Consecutive hex escapes (UTF-8 multi-byte sequence \C3\A9 -> é)
+    [InlineData(@"CN=Caf\C3\A9,OU=Groups,DC=example,DC=com", "Café", true)]
+    // Hex escape adjacent to a literal escape (e.g., \2C adjacent to \, or adjacent to literal space or space-escape)
+    [InlineData(@"CN=Admins\2C\, Senior,OU=Groups,DC=example,DC=com", "Admins,, Senior", true)]
+    // Trailing lone backslash at the end of string (does not read past, does not throw, handled gracefully)
+    [InlineData(@"CN=Admins\,OU=Groups,DC=example,DC=com", "Admins", false)]
+    [InlineData(@"CN=Admins\", "Admins", false)]
+    [InlineData(@"CN=Admins\", @"Admins\", true)]
+    public void DnMatchesGroup_HexAndEdgeScenarios_ReturnExpected(string dn, string groupName, bool expected)
+    {
+        Assert.Equal(expected, LdapPasswordChangeProvider.DnMatchesGroup(dn, groupName));
     }
 }
