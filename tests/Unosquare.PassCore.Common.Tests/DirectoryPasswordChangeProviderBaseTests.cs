@@ -46,6 +46,9 @@ public class DirectoryPasswordChangeProviderBaseTests
 
         protected override int? ReadMinPwdLength() => null;
 
+        public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username) =>
+            throw new NotImplementedException();
+
         /// <summary>
         /// Lets each test supply the body of <see cref="ChangeDirectoryPasswordCore"/>
         /// so the sealed terminal catch in <see cref="DirectoryPasswordChangeProviderBase.ChangePasswordCore"/>

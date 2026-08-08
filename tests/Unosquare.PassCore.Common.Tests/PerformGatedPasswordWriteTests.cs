@@ -59,6 +59,9 @@ public class PerformGatedPasswordWriteTests
 
         protected override int? ReadMinPwdLength() => null;
 
+        public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username) =>
+            throw new NotImplementedException();
+
         protected override Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
