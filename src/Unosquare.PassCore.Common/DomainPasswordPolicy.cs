@@ -60,6 +60,11 @@ public static class DomainPasswordPolicy
     /// As <see cref="ResolveMinimumLength(ILogger, Func{int?}, int)"/>, and additionally
     /// reports whether the value actually came from the directory.
     /// </summary>
+    /// <param name="logger">The provider's logger.</param>
+    /// <param name="lookup">The directory-specific lookup; returns the domain's
+    /// minimum length, or <see langword="null"/> when it is unavailable. May throw,
+    /// in which case the exception is logged and the fallback is returned.</param>
+    /// <param name="fallback">The value to advertise when the lookup yields nothing.</param>
     /// <param name="fromDirectory"><see langword="true"/> when the lookup returned a
     /// value; <see langword="false"/> when the logged fallback was used. Callers that
     /// cache the result use this to cache only real answers, so that a failing lookup
@@ -86,7 +91,7 @@ public static class DomainPasswordPolicy
             fromDirectory = false;
             return fallback;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogLookupFailed(logger, fallback, ex);
             fromDirectory = false;

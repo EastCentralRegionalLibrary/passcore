@@ -799,7 +799,7 @@ namespace Unosquare.PassCore.PasswordProvider
             _idType = resolved switch
             {
                 UserIdentityType.DistinguishedName => IdentityType.DistinguishedName,
-                UserIdentityType.Guid => IdentityType.Guid,
+                UserIdentityType.GuidValue => IdentityType.Guid,
                 UserIdentityType.Name => IdentityType.Name,
                 UserIdentityType.SamAccountName => IdentityType.SamAccountName,
                 UserIdentityType.Sid => IdentityType.Sid,

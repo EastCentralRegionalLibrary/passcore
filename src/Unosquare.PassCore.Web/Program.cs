@@ -1,11 +1,8 @@
-using System;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using PwnedPasswordsSearch;
-using Unosquare.PassCore.Common;
 using Unosquare.PassCore.Common.Models;
 using Unosquare.PassCore.Common.Policies;
 using Unosquare.PassCore.Web.Models;
@@ -55,9 +52,10 @@ builder.Services.AddSingleton<IPasswordPolicy, PwnedPasswordPolicy>();
 // Password provider (selected at build time via PASSCORE_PROVIDER)
 // -------------------------------------------------------------------------
 #if PASSCORE_DEBUG_PROVIDER
-if (builder.Environment.IsProduction())
+if (string.Equals(builder.Environment.EnvironmentName, "Production", StringComparison.OrdinalIgnoreCase))
+{
     throw new InvalidOperationException("The debug password change provider cannot be used in Production.");
-
+}
 
 builder.Services.Configure<DebugProviderOptions>(builder.Configuration.GetSection(nameof(DebugProviderOptions)));
 builder.Services.AddSingleton<IPasswordChangeProvider, DebugPasswordChangeProvider>();
@@ -91,4 +89,7 @@ app.MapControllers();
 
 app.Run();
 
+/// <summary>
+/// Main entry point class for the application.
+/// </summary>
 public partial class Program;

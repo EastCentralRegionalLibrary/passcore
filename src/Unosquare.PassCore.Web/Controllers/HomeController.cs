@@ -9,6 +9,9 @@ namespace Unosquare.PassCore.Web.Controllers;
 /// </summary>
 public class HomeController : Controller
 {
-    // GET: /<controller>/
+    /// <summary>
+    /// Serves the single-page application's index HTML page.
+    /// </summary>
+    /// <returns>The index HTML file result.</returns>
     public IActionResult Index() => File("~/index.html", "text/html");
 }

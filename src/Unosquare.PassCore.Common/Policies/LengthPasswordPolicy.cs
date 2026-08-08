@@ -1,12 +1,20 @@
+using System;
 using System.Threading.Tasks;
 using Unosquare.PassCore.Common.Exceptions;
 
 namespace Unosquare.PassCore.Common.Policies;
 
+/// <summary>
+/// Policy to enforce minimum password length requirements.
+/// </summary>
 public class LengthPasswordPolicy : IPasswordPolicy
 {
+    /// <inheritdoc />
     public async Task ValidateAsync(PasswordChangeContext context, IPasswordChangeProvider provider)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(provider);
+
         // Kept even though PasswordChangeProviderBase now implements the
         // interface for every shipped provider. IPasswordChangeProvider is
         // public and can be implemented without deriving from that base, so

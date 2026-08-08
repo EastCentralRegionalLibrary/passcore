@@ -12,7 +12,7 @@ public enum UserIdentityType
     DistinguishedName,
 
     /// <summary>The user's GUID.</summary>
-    Guid,
+    GuidValue,
 
     /// <summary>The user's name.</summary>
     Name,
@@ -56,23 +56,23 @@ public static class UserIdentityTypeClassifier
     /// <param name="usableInWebInterface">
     /// <see langword="true"/> when the resolved <see cref="UserIdentityType"/> can be
     /// accepted from the web interface. <see cref="UserIdentityType.DistinguishedName"/>,
-    /// <see cref="UserIdentityType.Guid"/>, and <see cref="UserIdentityType.Sid"/> are not
+    /// <see cref="UserIdentityType.GuidValue"/>, and <see cref="UserIdentityType.Sid"/> are not
     /// usable; every other member is.
     /// </param>
     /// <returns>The resolved <see cref="UserIdentityType"/>.</returns>
     public static UserIdentityType Classify(string? idTypeForUser, out bool recognized, out bool usableInWebInterface)
     {
-        var normalized = idTypeForUser?.Trim().ToLowerInvariant();
+        var normalized = idTypeForUser?.Trim().ToUpperInvariant();
         var isBlank = string.IsNullOrWhiteSpace(normalized);
 
         var matchedAlias = true;
         var resolved = normalized switch // Use switch expression for concise mapping
         {
-            "distinguishedname" or "distinguished name" or "dn" => UserIdentityType.DistinguishedName,
-            "globally unique identifier" or "globallyuniqueidentifier" or "guid" => UserIdentityType.Guid,
-            "name" or "nm" => UserIdentityType.Name,
-            "samaccountname" or "accountname" or "sam account" or "sam account name" or "sam" => UserIdentityType.SamAccountName,
-            "securityidentifier" or "securityid" or "secid" or "security identifier" or "sid" => UserIdentityType.Sid,
+            "DISTINGUISHEDNAME" or "DISTINGUISHED NAME" or "DN" => UserIdentityType.DistinguishedName,
+            "GLOBALLY UNIQUE IDENTIFIER" or "GLOBALLYUNIQUEIDENTIFIER" or "GUID" => UserIdentityType.GuidValue,
+            "NAME" or "NM" => UserIdentityType.Name,
+            "SAMACCOUNTNAME" or "ACCOUNTNAME" or "SAM ACCOUNT" or "SAM ACCOUNT NAME" or "SAM" => UserIdentityType.SamAccountName,
+            "SECURITYIDENTIFIER" or "SECURITYID" or "SECID" or "SECURITY IDENTIFIER" or "SID" => UserIdentityType.Sid,
             // Not present in the switch this table was moved from, where UserPrincipalName
             // was reachable only through the fallback arm. That was harmless while the
             // fallback was silent, but it is not once an unmatched value warns: the shipped
@@ -80,12 +80,12 @@ public static class UserIdentityTypeClassifier
             // would be told its own documented value is unrecognized. Resolution is
             // unchanged -- these spellings already resolved to UserPrincipalName via the
             // fallback -- this only distinguishes them from a genuine typo.
-            "userprincipalname" or "user principal name" or "upn" => UserIdentityType.UserPrincipalName,
+            "USERPRINCIPALNAME" or "USER PRINCIPAL NAME" or "UPN" => UserIdentityType.UserPrincipalName,
             _ => Unmatched(out matchedAlias) // Default to UserPrincipalName if no match or invalid input
         };
 
         recognized = isBlank || matchedAlias;
-        usableInWebInterface = resolved is not (UserIdentityType.DistinguishedName or UserIdentityType.Guid or UserIdentityType.Sid);
+        usableInWebInterface = resolved is not (UserIdentityType.DistinguishedName or UserIdentityType.GuidValue or UserIdentityType.Sid);
 
         return resolved;
     }
