@@ -23,19 +23,19 @@ public class PasswordController : Controller
     private static readonly Action<ILogger, Exception?> LogInvalidModel =
         LoggerMessage.Define(
             LogLevel.Warning,
-            new EventId(200, "InvalidModel"),
+            new EventId(200, nameof(LogInvalidModel)),
             "Invalid model, validation failed");
 
     private static readonly Action<ILogger, Exception?> LogInvalidRecaptcha =
         LoggerMessage.Define(
             LogLevel.Warning,
-            new EventId(201, "InvalidRecaptcha"),
+            new EventId(201, nameof(LogInvalidRecaptcha)),
             "Invalid Recaptcha");
 
     private static readonly Action<ILogger, string, Exception?> LogFailedToUpdatePassword =
         LoggerMessage.Define<string>(
             LogLevel.Error,
-            new EventId(202, "FailedToUpdatePassword"),
+            new EventId(202, nameof(LogFailedToUpdatePassword)),
             "Failed to update password (ref: {Reference})");
 
     /// <summary>
