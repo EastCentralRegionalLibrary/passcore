@@ -38,7 +38,7 @@ namespace Zyborg.PassCore.PasswordProvider.LDAP;
 ///   syntax, not RFC 4515 filter syntax.)
 /// - Infrastructure failures never surface as auth or policy errors
 /// </summary>
-public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
+public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
 {
     private readonly LdapPasswordChangeOptions _options;
     private readonly LdapSearchConstraints _searchConstraints;
@@ -238,38 +238,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Reports whether <paramref name="username"/> is a member of
-    /// <paramref name="groupName"/>, directly, by primary group, or transitively.
-    /// </summary>
-    /// <remarks>
-    /// <para><b>A negative answer means "determined not to be a member", never "could
-    /// not tell".</b> A positive match is definitive the moment it is found, so every
-    /// lookup below returns immediately on a hit and no later failure can affect it. A
-    /// negative answer is only trustworthy if every lookup that could still have
-    /// produced a match actually completed, so any lookup that fails is recorded and
-    /// the method ends by throwing the shared infrastructure failure instead of
-    /// returning <see langword="false"/>.</para>
-    /// <para>This matters because the caller cannot distinguish the two outcomes from a
-    /// <see langword="bool"/>. <c>GroupMembershipPolicy</c> evaluates
-    /// <c>RestrictedAdGroups</c> as a deny list, so reporting "not a member" for a
-    /// membership that could not be determined makes the deny list <em>fail open</em>:
-    /// during a partial directory failure, a service-account permissions problem, or a
-    /// cross-domain timeout, a member of <c>Domain Admins</c> would be allowed to change
-    /// their password through this utility. Failing closed is the whole point of the
-    /// deny list.</para>
-    /// <para>Ordinary non-membership is unaffected and stays a plain
-    /// <see langword="false"/>: a lookup that ran and matched nothing is a completed
-    /// determination, and an empty result set is not a failure.</para>
-    /// </remarks>
-    public Task<bool> IsMemberOfGroupAsync(string username, string groupName)
-    {
-        ArgumentNullException.ThrowIfNull(username);
-        ArgumentNullException.ThrowIfNull(groupName);
-
-        return IsMemberOfAnyGroup(username, new[] { groupName });
-    }
-
-    /// <summary>
     /// Resolves this user once so that every configured group name can be tested
     /// against the same resolution.
     /// </summary>
@@ -281,7 +249,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase, I
     /// lookups: a name matched by direct <c>memberOf</c> never triggers them, which
     /// is the same short-circuit the per-group path always had.
     /// </remarks>
-    public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
+    public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
     {
         ArgumentNullException.ThrowIfNull(username);
 

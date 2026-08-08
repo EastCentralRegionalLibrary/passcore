@@ -37,6 +37,9 @@ public class AdProviderDirectoryWriteAuditTests
     private const string ProviderRelativePath =
         "src/Unosquare.PassCore.PasswordProvider/PasswordChangeProvider.cs";
 
+    private const string BaseRelativePath =
+        "src/Unosquare.PassCore.Common/DirectoryPasswordChangeProviderBase.cs";
+
     private const string OptionsRelativePath =
         "src/Unosquare.PassCore.PasswordProvider/PasswordChangeOptions.cs";
 
@@ -101,11 +104,13 @@ public class AdProviderDirectoryWriteAuditTests
             "ChangeDirectoryPasswordCore no longer calls ValidateUserCredentials; the ordering this test " +
             "guards has no anchor. Re-establish credential verification before reviewing this test.");
 
+        var foundAny = false;
         foreach (var call in WriteCapableCalls)
         {
             var firstUse = body.IndexOf(call, StringComparison.Ordinal);
             if (firstUse < 0) continue;
 
+            foundAny = true;
             Assert.True(
                 firstUse > verificationAt,
                 $"'{call}' appears in ChangeDirectoryPasswordCore at offset {firstUse}, before the " +
@@ -113,6 +118,11 @@ public class AdProviderDirectoryWriteAuditTests
                 "call runs for a caller who supplied only a username, so a directory write there " +
                 "is an unauthenticated modification. See docs/UPGRADING-error-routing.md.");
         }
+
+        Assert.True(
+            foundAny,
+            "No write-capable tokens were found in ChangeDirectoryPasswordCore's body. The audit " +
+            "is vacuous and offers no protection against unauthorized modifications.");
     }
 
     [Fact]
@@ -378,7 +388,8 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.DoesNotContain("AcquirePrincipalContext", answerBody, StringComparison.Ordinal);
 
         // The per-group entry point delegates rather than carrying its own copy.
-        var perGroupBody = ExtractMethodBody(code, "Task<bool> IsMemberOfGroupAsync(");
+        var baseCode = CodeSkeleton(ReadRepoFile(BaseRelativePath));
+        var perGroupBody = ExtractMethodBody(baseCode, "Task<bool> IsMemberOfGroupAsync(");
         Assert.Contains("ResolveMembershipAsync(", perGroupBody, StringComparison.Ordinal);
     }
 

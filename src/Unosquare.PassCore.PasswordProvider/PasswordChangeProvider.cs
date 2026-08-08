@@ -26,7 +26,7 @@ namespace Unosquare.PassCore.PasswordProvider
     /// <seealso cref="IPasswordChangeProvider" />
     /// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1416#how-to-fix-violations
     [SupportedOSPlatform("windows")]
-    public class PasswordChangeProvider : DirectoryPasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
+    public class PasswordChangeProvider : DirectoryPasswordChangeProviderBase
     {
         private readonly PasswordChangeOptions _options;
 
@@ -347,39 +347,6 @@ namespace Unosquare.PassCore.PasswordProvider
         }
 
         /// <summary>
-        /// Reports whether <paramref name="username"/> is a member of
-        /// <paramref name="groupName"/>, directly, by primary group, or transitively.
-        /// </summary>
-        /// <remarks>
-        /// <para><b>A negative answer means "determined not to be a member", never
-        /// "could not tell".</b> A positive match is definitive the moment it is found,
-        /// so each enumeration returns immediately on a hit and no later failure can
-        /// affect it. A negative answer is only trustworthy if every enumeration that
-        /// could still have produced a match completed, so a failed enumeration is
-        /// recorded and the method throws the shared infrastructure failure instead of
-        /// returning <see langword="false"/>.</para>
-        /// <para><b>Only security groups can match.</b> <c>GetAuthorizationGroups</c>
-        /// is the sole source, and it returns the complete transitive security-group
-        /// closure including the primary group. Distribution groups are therefore never
-        /// matched, by either list, and that is deliberate: a distribution group cannot
-        /// enter a Windows access token, so it carries no authorization anywhere else
-        /// in Windows, and on many directories users can add themselves to one. A
-        /// self-joinable group must not be able to satisfy <c>AllowedAdGroups</c>, and
-        /// an administrator converting a group to a distribution group must not be able
-        /// to quietly step out of <c>RestrictedAdGroups</c> — see the LDAP provider,
-        /// which warns on exactly that condition.</para>
-        /// <para>Reporting "not a member" for a membership that could not be determined
-        /// makes <c>RestrictedAdGroups</c> <em>fail open</em>, letting a member of
-        /// <c>Domain Admins</c> through during a partial directory failure. This keeps
-        /// it failing closed, matching the LDAP provider for the same condition.</para>
-        /// </remarks>
-        public async Task<bool> IsMemberOfGroupAsync(string username, string groupName)
-        {
-            var membership = await ResolveMembershipAsync(username).ConfigureAwait(false);
-            return await membership.IsMemberOfAnyAsync(new[] { groupName }).ConfigureAwait(false);
-        }
-
-        /// <summary>
         /// Resolves this user's group names once so that every configured group name
         /// can be tested against the same resolution.
         /// </summary>
@@ -393,7 +360,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// that the <c>PrincipalContext</c> and <c>UserPrincipal</c> can be disposed
         /// immediately rather than held open across the policy's evaluation.</para>
         /// </remarks>
-        public Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
+        public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username)
         {
             // Every operation here is a service-account directory read (context,
             // resolve, group enumeration); a failure is infrastructure, never an
@@ -856,41 +823,6 @@ namespace Unosquare.PassCore.PasswordProvider
 
             if (!usableInWebInterface)
                 LogIdentityTypeNotWebUsable(Logger, _idType, _idType, null);
-        }
-
-        /// <summary>
-        /// Runs a service-account directory operation, guaranteeing that any
-        /// failure surfaces as an infrastructure error rather than an end-user
-        /// credential/existence/account-state error. This is the AD provider's
-        /// counterpart to the LDAP provider's <c>BindAsServiceAccount</c>: both
-        /// route through the shared <see cref="DirectoryErrorTranslator"/> with
-        /// <see cref="DirectoryActor.ServiceAccount"/>, which is the single point
-        /// enforcing "a service-account failure can never be reported as invalid
-        /// credentials." Every service-account operation in this provider goes
-        /// through this method, so a future maintainer adding one inherits the
-        /// guarantee. Domain exceptions (should any arise) pass through unchanged.
-        /// </summary>
-        /// <typeparam name="T">The operation's result type.</typeparam>
-        /// <param name="operation">A short label used for diagnostics logging.</param>
-        /// <param name="correlationId">The request correlation ID, or null when unavailable.</param>
-        /// <param name="action">The service-account operation to run.</param>
-        /// <returns>The operation's result.</returns>
-        private T RunAsServiceAccount<T>(string operation, string? correlationId, Func<T> action)
-        {
-            try
-            {
-                return action();
-            }
-            catch (PasswordChangeException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                ServiceAccountFailure.Log(Logger, correlationId, operation, ServiceAccountHost(), ex);
-                throw DirectoryErrorTranslator.TranslateException(
-                    ex, _options.ErrorDisclosureMode, DirectoryActor.ServiceAccount);
-            }
         }
 
         /// <summary>

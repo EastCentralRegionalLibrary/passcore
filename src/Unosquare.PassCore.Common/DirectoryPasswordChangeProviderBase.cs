@@ -33,8 +33,60 @@ namespace Unosquare.PassCore.Common;
 /// tests. Every decision moved from a provider into this class becomes
 /// testable for both providers at once.</para>
 /// </remarks>
-public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProviderBase
+public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProviderBase, IGroupMembershipTester, IGroupMembershipResolver
 {
+    /// <inheritdoc />
+    public async Task<bool> IsMemberOfGroupAsync(string username, string groupName)
+    {
+        // Added null guards here as intended so both provider implementations
+        // inherit them. The AD provider previously lacked null guards, so it
+        // gains them now.
+        ArgumentNullException.ThrowIfNull(username);
+        ArgumentNullException.ThrowIfNull(groupName);
+
+        var membership = await ResolveMembershipAsync(username).ConfigureAwait(false);
+        return await membership.IsMemberOfAnyAsync(new[] { groupName }).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public abstract Task<IResolvedGroupMembership> ResolveMembershipAsync(string username);
+
+    /// <summary>
+    /// Runs a service-account directory operation, guaranteeing that any
+    /// failure surfaces as an infrastructure error rather than an end-user
+    /// credential/existence/account-state error. This is the directory provider's
+    /// counterpart to the LDAP provider's <c>BindAsServiceAccount</c>: both
+    /// route through the shared <see cref="DirectoryErrorTranslator"/> with
+    /// <see cref="DirectoryActor.ServiceAccount"/>, which is the single point
+    /// enforcing "a service-account failure can never be reported as invalid
+    /// credentials." Every service-account operation in this provider goes
+    /// through this method, so a future maintainer adding one inherits the
+    /// guarantee. Domain exceptions (should any arise) pass through unchanged.
+    /// </summary>
+    /// <typeparam name="T">The operation's result type.</typeparam>
+    /// <param name="operation">A short label used for diagnostics logging.</param>
+    /// <param name="correlationId">The request correlation ID, or null when unavailable.</param>
+    /// <param name="action">The service-account operation to run.</param>
+    /// <returns>The operation's result.</returns>
+    protected T RunAsServiceAccount<T>(string operation, string? correlationId, Func<T> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        try
+        {
+            return action();
+        }
+        catch (PasswordChangeException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            ServiceAccountFailure.Log(Logger, correlationId, operation, ServiceAccountHost(), ex);
+            throw TranslateDirectoryException(ex, DirectoryActor.ServiceAccount);
+        }
+    }
+
     /// <summary>
     /// The provider's directory settings. Held as <see cref="IAppSettings"/>
     /// rather than the concrete options type so that shared logic here can read
