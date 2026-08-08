@@ -83,7 +83,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     //            Common: AD UnrecognizedIdentityType (120), AD IdentityTypeNotWebUsable
     //            (121).
     //                                                                     next: 122
-    //   200-209  web controller events                                     next: 210
+    //   200-202  Web layer (PasswordController)                            next: 203
     //   300-304  PwnedPasswordsSearch                                      next: 305
     //
     // Take the next free number in the appropriate range; never reuse or
