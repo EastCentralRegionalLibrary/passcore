@@ -196,11 +196,13 @@ public class DirectoryErrorTranslatorTests
         Assert.Equal(DirectoryFailureClass.Infrastructure, DirectoryErrorTranslator.Classify(code));
     }
 
+    // The codes LogonUser reports in decimal are these same values — 0x532 is
+    // 1330 and 0x773 is 1907 — so there is no second form to cover. Spelling
+    // them out again as decimal literals produced duplicate theory cases
+    // (xUnit1025), not extra coverage.
     [Theory]
     [InlineData(0x532, true)]
     [InlineData(0x773, true)]
-    [InlineData(1330, true)]  // 0x532 as LogonUser reports it (decimal)
-    [InlineData(1907, true)]  // 0x773 as LogonUser reports it (decimal)
     [InlineData(0x52E, false)]
     [InlineData(0x775, false)]
     [InlineData(0x9999, false)]
