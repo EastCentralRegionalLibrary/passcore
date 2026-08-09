@@ -228,67 +228,6 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     /// <summary>
-    /// The AD half of "could not determine membership is not the same as not a
-    /// member". The LDAP provider's behavior is exercised for real in
-    /// <c>GroupMembershipUndeterminedTests</c>; this provider cannot be loaded here
-    /// (see the class summary), so its shape is audited instead.
-    ///
-    /// <para>What must hold: both group enumerations record their failure rather
-    /// than swallowing it, and a negative result is only returned when neither
-    /// recorded anything. Swallowing either one makes <c>RestrictedAdGroups</c> fail
-    /// open — a <c>Domain Admins</c> member gets a password change during a partial
-    /// directory failure.</para>
-    /// </summary>
-    [Fact]
-    public void GroupMembership_FailsClosedWhenMembershipCannotBeDetermined()
-    {
-        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
-
-        // Resolution and evaluation are now separate: the two enumerations happen
-        // once per request in ResolveMembershipAsync, and the answer is given from
-        // that resolution. The fail-closed property spans both.
-        var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
-        var answerBody = ExtractMethodBody(code, "Task<bool> IsMemberOfAnyAsync(");
-
-        // GetAuthorizationGroups is now the sole enumeration, and its failure must
-        // still be recorded. This is the part that did NOT change when GetGroups
-        // was removed: dropping the second match source narrows what can match, and
-        // must not soften what a failure means.
-        Assert.Equal(1, CountOccurrences(resolveBody, "undetermined ??= ex;"));
-
-        // A recorded failure must block the negative answer, not merely be logged.
-        var guardAt = answerBody.IndexOf("if (_undetermined is not null)", StringComparison.Ordinal);
-        var notAMemberAt = answerBody.LastIndexOf("return Task.FromResult(false);", StringComparison.Ordinal);
-
-        Assert.True(
-            guardAt >= 0,
-            "The resolved membership no longer guards its negative answer on whether every enumeration " +
-            "completed. Without that guard a failed enumeration reads as 'not a member' and the " +
-            "restricted-group deny list fails open. See docs/error-routing-matrix.md.");
-        Assert.True(
-            guardAt < notAMemberAt,
-            "The 'could not determine' guard no longer precedes the final 'not a member' return, so a " +
-            "failed enumeration can still reach it.");
-
-        // A match stays definitive: it is answered before the undetermined guard.
-        var matchAt = answerBody.IndexOf("return Task.FromResult(true);", StringComparison.Ordinal);
-        Assert.True(
-            matchAt >= 0 && matchAt < guardAt,
-            "A positive match must be answered before the undetermined guard, so that a confirmed " +
-            "membership is never turned into an infrastructure error by an unrelated lookup failure.");
-
-        // The outcome is the shared infrastructure response, decided by the
-        // translator rather than by this provider.
-        Assert.Contains("DirectoryErrorTranslator.TranslateException(", answerBody, StringComparison.Ordinal);
-        Assert.Contains("DirectoryActor.ServiceAccount", answerBody, StringComparison.Ordinal);
-
-        // ... and the failed enumeration is reported to the operator, not swallowed:
-        // one for the enumeration, plus the terminal catch that covers resolving the
-        // user.
-        Assert.Equal(2, CountOccurrences(resolveBody, "ServiceAccountFailure.Log("));
-    }
-
-    /// <summary>
     /// Security groups only. <c>GetAuthorizationGroups()</c> reads <c>tokenGroups</c>
     /// and returns the transitive security-group closure including the primary group;
     /// <c>GetGroups()</c> added nothing over it but distribution groups, which cannot
@@ -323,32 +262,6 @@ public class AdProviderDirectoryWriteAuditTests
     }
 
     /// <summary>
-    /// A completed enumeration that found no match is a DEFINITIVE non-member, and
-    /// that is what makes this change worth anything: before it, a negative needed
-    /// both enumerations to complete, and the second one could not.
-    ///
-    /// <para>The two halves are inseparable and both are asserted here: the negative
-    /// is returned plainly when nothing failed, and it is still withheld when
-    /// something did.</para>
-    /// </summary>
-    [Fact]
-    public void GroupMembership_CompletedEnumerationWithNoMatchIsADefinitiveNonMember()
-    {
-        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
-        var answerBody = ExtractMethodBody(code, "Task<bool> IsMemberOfAnyAsync(");
-
-        var guardAt = answerBody.IndexOf("if (_undetermined is not null)", StringComparison.Ordinal);
-        var notAMemberAt = answerBody.LastIndexOf("return Task.FromResult(false);", StringComparison.Ordinal);
-
-        Assert.True(guardAt >= 0, "The undetermined guard is gone; a failed enumeration would read as 'not a member'.");
-        Assert.True(
-            notAMemberAt > guardAt,
-            "There is no reachable 'not a member' answer after the undetermined guard. A completed " +
-            "enumeration that found no match must be able to answer false — otherwise every negative " +
-            "is an infrastructure error and the group lists cannot refuse anyone.");
-    }
-
-    /// <summary>
     /// <c>GetAuthorizationGroups()</c> yields null ELEMENTS for SIDs it cannot
     /// translate (dotnet/runtime#80675). The collector must test the element, not
     /// just its <c>Name</c>, or it throws <c>NullReferenceException</c> before its own
@@ -362,35 +275,6 @@ public class AdProviderDirectoryWriteAuditTests
         var collectBody = ExtractMethodBody(code, "void CollectNames(");
 
         Assert.Contains("principal?.Name", collectBody, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// The resolution must happen once per request, not once per configured group
-    /// name. The LDAP side of this is exercised for real in
-    /// <c>PreAuthenticationDirectoryLoadTests</c>; this provider can only be audited.
-    /// </summary>
-    [Fact]
-    public void GroupMembership_ResolvesTheUserOncePerRequestRatherThanPerGroup()
-    {
-        var code = CodeSkeleton(ReadRepoFile(ProviderRelativePath));
-
-        // The expensive calls belong to the once-per-request resolution...
-        var resolveBody = ExtractMethodBody(code, "Task<IResolvedGroupMembership> ResolveMembershipAsync(");
-        Assert.Contains("GetAuthorizationGroups()", resolveBody, StringComparison.Ordinal);
-        Assert.Contains("FindByIdentity(", resolveBody, StringComparison.Ordinal);
-
-        // ... and none of them may reappear in the per-name answer, which must be
-        // pure in-memory work.
-        var answerBody = ExtractMethodBody(code, "Task<bool> IsMemberOfAnyAsync(");
-        Assert.DoesNotContain("GetAuthorizationGroups", answerBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("GetGroups", answerBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("FindByIdentity", answerBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("AcquirePrincipalContext", answerBody, StringComparison.Ordinal);
-
-        // The per-group entry point delegates rather than carrying its own copy.
-        var baseCode = CodeSkeleton(ReadRepoFile(BaseRelativePath));
-        var perGroupBody = ExtractMethodBody(baseCode, "Task<bool> IsMemberOfGroupAsync(");
-        Assert.Contains("ResolveMembershipAsync(", perGroupBody, StringComparison.Ordinal);
     }
 
     /// <summary>

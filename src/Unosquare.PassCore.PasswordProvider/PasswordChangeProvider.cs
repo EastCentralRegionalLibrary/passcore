@@ -365,8 +365,8 @@ namespace Unosquare.PassCore.PasswordProvider
                 // Matches FindUser in the LDAP provider (and this provider's own
                 // password-change path, above) for the identical condition: an
                 // unresolvable user is UserNotFound, not "resolved with no
-                // groups". The AdResolvedMembership.NoSuchUser value this used to
-                // return let GroupMembershipPolicy read an unknown user as "not
+                // groups". The dedicated "no such user" resolution value this used
+                // to return let GroupMembershipPolicy read an unknown user as "not
                 // in AllowedAdGroups" and report CreateGroupRejectionError
                 // (ChangeNotPermitted, 6) instead — the same condition the LDAP
                 // provider reports as UserNotFound (3) in Informative mode. Hardened
@@ -411,8 +411,14 @@ namespace Unosquare.PassCore.PasswordProvider
                         ServiceAccountHost(), ex);
                 }
 
-                return Task.FromResult<IResolvedGroupMembership>(
-                    new AdResolvedMembership(groupNames, undetermined, _options.ErrorDisclosureMode));
+                // The enumeration is already materialized, so evaluation is pure
+                // in-memory matching. A match is definitive regardless of what else
+                // failed; only a NEGATIVE answer depends on everything having run.
+                return Task.FromResult(ResolveMembership(requested =>
+                    Task.FromResult(
+                        requested.Any(groupNames.Contains) ? GroupMembershipAnswer.Member
+                        : undetermined is null ? GroupMembershipAnswer.NotMember
+                        : GroupMembershipAnswer.Undetermined(undetermined))));
             }
             catch (PasswordChangeException)
             {
@@ -448,43 +454,6 @@ namespace Unosquare.PassCore.PasswordProvider
                 // It matters more now that this is the only enumeration left.
                 into.Add(principal?.Name ?? throw new InvalidOperationException(
                     "A group principal has no Name, so this enumeration cannot rule out membership."));
-            }
-        }
-
-        /// <summary>
-        /// A single resolution of one user's group names, queried in memory.
-        /// </summary>
-        private sealed class AdResolvedMembership : IResolvedGroupMembership
-        {
-            private readonly HashSet<string> _groupNames;
-            private readonly Exception? _undetermined;
-            private readonly ErrorDisclosureMode _disclosureMode;
-
-            internal AdResolvedMembership(
-                HashSet<string> groupNames, Exception? undetermined, ErrorDisclosureMode disclosureMode)
-            {
-                _groupNames = groupNames;
-                _undetermined = undetermined;
-                _disclosureMode = disclosureMode;
-            }
-
-            public Task<bool> IsMemberOfAnyAsync(IReadOnlyCollection<string> groupNames)
-            {
-                if (groupNames is null || groupNames.Count == 0)
-                    return Task.FromResult(false);
-
-                // A match is definitive regardless of what else failed.
-                if (groupNames.Any(_groupNames.Contains))
-                    return Task.FromResult(true);
-
-                // Nothing matched. That is only an answer if both enumerations ran.
-                if (_undetermined is not null)
-                {
-                    throw DirectoryErrorTranslator.TranslateException(
-                        _undetermined, _disclosureMode, DirectoryActor.ServiceAccount);
-                }
-
-                return Task.FromResult(false);
             }
         }
 
