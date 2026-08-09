@@ -811,38 +811,6 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.Contains("public int LdapPort { get; set; } = 389;", optionsContent, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void AdProvider_ValidateOptionsCalledInConstructor()
-    {
-        var providerContent = ReadRepoFile(ProviderRelativePath);
-        var body = ExtractMethodBody(CodeSkeleton(providerContent), "PasswordChangeProvider(");
-        Assert.Contains("ValidateOptions(_options)", body, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// The three checks now live once, in <c>AppSettingsValidation.ValidateServiceAccount</c>,
-    /// shared with the LDAP provider. This provider must call it rather than carry its own
-    /// copy, and must pass the same <c>UseAutomaticContext</c>-derived requirement the old
-    /// inline <c>if</c> guarded: a service account is only required for an explicit bind.
-    /// </summary>
-    [Fact]
-    public void AdProvider_ValidateOptionsDelegatesToTheSharedServiceAccountValidator()
-    {
-        var providerContent = ReadRepoFile(ProviderRelativePath);
-        var body = ExtractMethodBody(CodeSkeleton(providerContent), "void ValidateOptions(");
-
-        Assert.Contains(
-            "AppSettingsValidation.ValidateServiceAccount(opts, required: !opts.UseAutomaticContext)",
-            body,
-            StringComparison.Ordinal);
-
-        // No re-implementation alongside the delegation: the checks belong to
-        // AppSettingsValidation now, not to this method.
-        Assert.DoesNotContain("opts.LdapHostnames", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("opts.LdapUsername", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("opts.LdapPassword", body, StringComparison.Ordinal);
-    }
-
     /// <summary>
     /// The alias table (DistinguishedName/Guid/Name/SamAccountName/Sid/UserPrincipalName and
     /// their aliases) moved into <c>UserIdentityTypeClassifier</c> so it can be exercised

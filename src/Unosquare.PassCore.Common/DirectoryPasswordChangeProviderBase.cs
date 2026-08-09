@@ -100,17 +100,20 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
     /// </summary>
     /// <param name="logger">The provider's logger.</param>
     /// <param name="settings">The directory settings; required.</param>
+    /// <param name="serviceAccountRequired">Whether a service account is required for this provider's configuration.</param>
     /// <param name="clientSettings">The client settings, or <see langword="null"/> for defaults.</param>
     /// <param name="policies">The password policies to evaluate, or <see langword="null"/> for none.</param>
     protected DirectoryPasswordChangeProviderBase(
         ILogger logger,
         IAppSettings settings,
+        bool serviceAccountRequired,
         ClientSettings? clientSettings = null,
         IEnumerable<IPasswordPolicy>? policies = null)
         : base(logger, clientSettings, policies)
     {
         ArgumentNullException.ThrowIfNull(settings);
         Settings = settings;
+        AppSettingsValidation.ValidateServiceAccount(settings, serviceAccountRequired);
     }
 
     /// <inheritdoc />

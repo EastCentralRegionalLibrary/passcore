@@ -50,7 +50,7 @@ public class PerformGatedPasswordWriteTests
         private readonly bool _administrativeResetSupported;
 
         public StubProvider(IAppSettings settings, ILogger logger, bool administrativeResetSupported = true)
-            : base(logger, settings)
+            : base(logger, settings, false)
         {
             _administrativeResetSupported = administrativeResetSupported;
         }

@@ -39,8 +39,8 @@ public class DirectoryPasswordChangeProviderBaseTests
 
     private class TestProvider : DirectoryPasswordChangeProviderBase
     {
-        public TestProvider(IAppSettings settings)
-            : base(NullLogger.Instance, settings)
+        public TestProvider(IAppSettings settings, bool serviceAccountRequired = false)
+            : base(NullLogger.Instance, settings, serviceAccountRequired)
         {
         }
 
@@ -77,8 +77,8 @@ public class DirectoryPasswordChangeProviderBaseTests
     /// </summary>
     private sealed class OverridingProvider : TestProvider
     {
-        public OverridingProvider(IAppSettings settings)
-            : base(settings)
+        public OverridingProvider(IAppSettings settings, bool serviceAccountRequired = false)
+            : base(settings, serviceAccountRequired)
         {
         }
 
@@ -101,8 +101,56 @@ public class DirectoryPasswordChangeProviderBaseTests
         public int Code { get; }
     }
 
-    private static TestProvider MakeProvider(ErrorDisclosureMode mode = ErrorDisclosureMode.Hardened) =>
-        new(new FakeAppSettings { ErrorDisclosureMode = mode });
+    private static TestProvider MakeProvider(ErrorDisclosureMode mode = ErrorDisclosureMode.Hardened, bool serviceAccountRequired = false) =>
+        new(new FakeAppSettings { ErrorDisclosureMode = mode }, serviceAccountRequired);
+
+    [Fact]
+    public void Constructor_ServiceAccountRequiredTrue_IncompleteServiceAccount_ThrowsArgumentException()
+    {
+        var settings = new FakeAppSettings
+        {
+            LdapHostnames = Array.Empty<string>(),
+            LdapUsername = "",
+            LdapPassword = ""
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() => new TestProvider(settings, serviceAccountRequired: true));
+        Assert.Equal("Hostnames are not configured.", ex.Message);
+    }
+
+    [Fact]
+    public void Constructor_ServiceAccountRequiredFalse_IncompleteServiceAccount_Succeeds()
+    {
+        var settings = new FakeAppSettings
+        {
+            LdapHostnames = Array.Empty<string>(),
+            LdapUsername = "",
+            LdapPassword = ""
+        };
+
+        var provider = new TestProvider(settings, serviceAccountRequired: false);
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Constructor_ServiceAccountRequiredTrue_CompleteServiceAccount_Succeeds()
+    {
+        var settings = new FakeAppSettings
+        {
+            LdapHostnames = new[] { "ldap.example.com" },
+            LdapUsername = "admin",
+            LdapPassword = "password"
+        };
+
+        var provider = new TestProvider(settings, serviceAccountRequired: true);
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Constructor_NullSettings_ThrowsArgumentNullExceptionBeforeValidation()
+    {
+        Assert.Throws<ArgumentNullException>(() => new TestProvider(null!, serviceAccountRequired: true));
+    }
 
     [Theory]
     [InlineData(ErrorDisclosureMode.Hardened)]
