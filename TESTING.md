@@ -71,7 +71,7 @@ against it, and exercises the API end-to-end:
 
 - Happy path (`alloweduser` in `AllowedGroup`).
 - Invalid current password → `InvalidCredentials`.
-- Unknown user → `InvalidCredentials` (because `HideUserNotFound` defaults to true).
+- Unknown user → `InvalidCredentials` (because `ErrorDisclosureMode` defaults to `Hardened`).
 - User in `RestrictedGroup` → `ChangeNotPermitted`.
 - User not in any allowed group → `ChangeNotPermitted`.
 - LDAP outage → `LdapProblem` (or `InvalidCredentials`).
