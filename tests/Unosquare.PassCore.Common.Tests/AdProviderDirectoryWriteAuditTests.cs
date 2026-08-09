@@ -31,6 +31,46 @@ namespace Unosquare.PassCore.Common.Tests;
 /// <para>Scanning runs over a skeleton of the source with comments removed and
 /// string literals blanked, so prose about the removed code cannot mask a real
 /// reintroduction of it.</para>
+///
+/// <para><b>What is left here is deliberate, not a backlog.</b> A pass was made
+/// specifically to convert these into executable tests wherever a shared
+/// structural guarantee could replace one. That retired five: the two asserting
+/// <c>ValidateOptions</c> delegated to the shared service-account validator, once
+/// the base constructor made the call itself; and the three asserting the
+/// fail-closed group-membership rules, once
+/// <see cref="GroupMembershipAnswer"/> made an undetermined membership
+/// unrepresentable as a negative answer. In both cases the audit was deleted
+/// rather than kept alongside the new test.</para>
+///
+/// <para>The remaining audits fall into three groups, none of which has that
+/// escape route:</para>
+/// <list type="bullet">
+///   <item><description><b>Absence invariants</b> — no <c>pwdLastSet</c> write
+///   anywhere, no <see cref="ApiErrorCode"/> decided locally, retired EventIds
+///   not reused. No runtime test proves the absence of something across every
+///   path; scanning the source does.</description></item>
+///   <item><description><b>AccountManagement / ADSI call sequences</b> — both
+///   writes going over an LDAPS-bound entry, the bind falling back rather than
+///   failing the change, sign-and-seal being attempted first. These are
+///   assertions about concrete Windows-only types that cannot be loaded here,
+///   and moving them into shared code is not possible because the types are the
+///   subject.</description></item>
+///   <item><description><b>Options and shipped configuration</b> — the provider
+///   project declares a singular <c>TargetFramework</c> of
+///   <c>net8.0-windows</c>, so its assembly does not exist on any other target
+///   and no cross-platform test project can reference it. Even
+///   <c>PasswordChangeOptions</c>, which has no <c>#if WINDOWS</c> around it, is
+///   only ever compiled into that Windows assembly.</description></item>
+/// </list>
+///
+/// <para>So a reader finding several hundred lines of string matching here
+/// should not read it as debt awaiting conversion. Behavioural coverage of this
+/// provider comes from <c>ad-provider-smoke-test.yml</c>, which drives real
+/// password changes against a live directory on every pull request. Before
+/// adding a new audit, check whether the property could instead be moved into
+/// <see cref="DirectoryPasswordChangeProviderBase"/> and tested for both
+/// providers — that is the preferred outcome, and this file should shrink when
+/// it is available rather than grow.</para>
 /// </summary>
 public class AdProviderDirectoryWriteAuditTests
 {
