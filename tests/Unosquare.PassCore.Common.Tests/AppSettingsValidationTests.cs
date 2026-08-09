@@ -57,8 +57,8 @@ public class AppSettingsValidationTests
         var settings = new FakeAppSettings
         {
             LdapHostnames = null!,
-            LdapUsername = null,
-            LdapPassword = null,
+            LdapUsername = null!,
+            LdapPassword = null!,
         };
 
         AppSettingsValidation.ValidateServiceAccount(settings, required: false);

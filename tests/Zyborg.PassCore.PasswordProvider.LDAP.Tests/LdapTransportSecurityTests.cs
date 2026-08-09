@@ -104,7 +104,9 @@ public class LdapTransportSecurityTests
 
     private static bool Validate(LdapPasswordChangeProvider provider, SslPolicyErrors errors)
     {
+#pragma warning disable SYSLIB0026 // Parameterless constructor is obsolete, but required here to create a dummy non-null certificate without throwing on invalid data or loading real files
         using var cert = new X509Certificate();
+#pragma warning restore SYSLIB0026
         using var chain = new X509Chain();
         return provider.ValidateServerCertificate(provider, cert, chain, errors);
     }

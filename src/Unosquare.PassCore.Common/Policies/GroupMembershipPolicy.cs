@@ -35,9 +35,11 @@ public class GroupMembershipPolicy : IPasswordPolicy
         // Resolved once, then tested against both lists. Previously each configured
         // group name cost its own full resolution of the user. A provider that does
         // not opt into IGroupMembershipResolver keeps the old per-group path.
+#pragma warning disable CA1859 // The interface is required because the value comes from a provider-supplied implementation, not only from the local fallback.
         var membership = provider is IGroupMembershipResolver resolver
             ? await resolver.ResolveMembershipAsync(context.Username).ConfigureAwait(false)
             : new PerGroupResolvedMembership(tester, context.Username);
+#pragma warning restore CA1859
 
         // Restricted before allowed, unchanged: a member of a restricted group is
         // rejected regardless of what the allowed list says.
