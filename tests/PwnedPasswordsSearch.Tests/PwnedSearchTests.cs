@@ -190,17 +190,32 @@ public class PwnedSearchTests
     }
 
     [Fact]
-    public async Task IsPwnedPasswordAsync_SuffixDiffersInCase_ReturnsFalse_PinnedNotEndorsed()
+    public async Task IsPwnedPasswordAsync_SuffixDiffersInCase_ReturnsTrue()
     {
-        // Pin the current behavior: case-sensitive match means a lowercase suffix in response
-        // does not match the uppercase computed suffix. This behavior is pinned, not endorsed.
+        // Assert that the comparison is deliberately case-insensitive, because a case mismatch
+        // would otherwise report a breached password as safe.
         var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent($"{PasswordSuffix.ToLowerInvariant()}:42"),
         });
         var search = new PwnedSearch(factory, NullLogger<PwnedSearch>.Instance);
 
-        Assert.False(await search.IsPwnedPasswordAsync("password"));
+        Assert.True(await search.IsPwnedPasswordAsync("password"));
+    }
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_SuffixMixedCase_ReturnsTrue()
+    {
+        // Assert that a mixed-case suffix in the response is also correctly matched.
+        // Let's create a mixed case version of the password suffix (e.g., "1e4c9b93f3f0682250b6cf8331b7ee68fd8" with some uppercase: "1E4c9B93f3f0682250b6cf8331b7ee68fd8")
+        const string mixedCaseSuffix = "1E4c9B93f3f0682250b6cf8331b7ee68fd8";
+        var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"{mixedCaseSuffix}:42"),
+        });
+        var search = new PwnedSearch(factory, NullLogger<PwnedSearch>.Instance);
+
+        Assert.True(await search.IsPwnedPasswordAsync("password"));
     }
 
     [Fact]

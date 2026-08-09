@@ -149,7 +149,7 @@ namespace PwnedPasswordsSearch
                     while ((line = await reader.ReadLineAsync()) != null)
                     {
                         string[] parts = line.Split(':');
-                        if (parts.Length == 2 && parts[0] == hashSuffixToCheck)
+                        if (parts.Length == 2 && string.Equals(parts[0], hashSuffixToCheck, StringComparison.OrdinalIgnoreCase))
                         {
                             LogPwnedPasswordFound(_logger, hashSuffixToCheck, null);
                             return true; // Password is PWNED!
