@@ -50,10 +50,9 @@ public class PreAuthenticationDirectoryLoadTests
         // And the supplementary lookups are likewise not repeated per group name.
         Assert.Equal(1, filters.Count(f => f.Contains("1.2.840.113556.1.4.1941", StringComparison.Ordinal)));
 
-        // Two binds: one for the user lookup, one for the in-chain search. Each
-        // search opens its own connection, so the floor for this configuration is
-        // two -- the point is that it no longer scales with the number of names.
-        Assert.Equal(2, provider.Binds);
+        // One bind: the membership path is consolidated onto one service-account connection,
+        // so the floor for this configuration is exactly one bind.
+        Assert.Equal(1, provider.Binds);
     }
 
     /// <summary>
