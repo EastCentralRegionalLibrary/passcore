@@ -328,8 +328,13 @@ namespace Unosquare.PassCore.PasswordProvider
                 UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
             }
 
-            userPrincipal.Save();
-
+            // No userPrincipal.Save() here. Nothing in this provider ever assigns a
+            // property on the principal, and every write path commits on its own:
+            // ChangePassword/SetPassword apply immediately, and the LDAPS paths write
+            // through the separate DirectoryEntry that BindForWrite returns, not
+            // through this object. A Save() would therefore have nothing to persist —
+            // it was left behind by the removed pre-flight 'pwdLastSet' write (see
+            // docs/UPGRADING-error-routing.md).
             return Task.CompletedTask;
         }
 

@@ -104,13 +104,11 @@ public class AdProviderDirectoryWriteAuditTests
             "ChangeDirectoryPasswordCore no longer calls ValidateUserCredentials; the ordering this test " +
             "guards has no anchor. Re-establish credential verification before reviewing this test.");
 
-        var foundAny = false;
         foreach (var call in WriteCapableCalls)
         {
             var firstUse = body.IndexOf(call, StringComparison.Ordinal);
             if (firstUse < 0) continue;
 
-            foundAny = true;
             Assert.True(
                 firstUse > verificationAt,
                 $"'{call}' appears in ChangeDirectoryPasswordCore at offset {firstUse}, before the " +
@@ -119,10 +117,36 @@ public class AdProviderDirectoryWriteAuditTests
                 "is an unauthenticated modification. See docs/UPGRADING-error-routing.md.");
         }
 
-        Assert.True(
-            foundAny,
-            "No write-capable tokens were found in ChangeDirectoryPasswordCore's body. The audit " +
-            "is vacuous and offers no protection against unauthorized modifications.");
+        // The anchor is the dispatch to the write paths, not a raw write token.
+        //
+        // This used to require at least one token from WriteCapableCalls to appear in
+        // this method, on the reasoning that a body with none makes the ordering
+        // assertion vacuous. In practice the only token here was a `userPrincipal.Save()`
+        // that persisted nothing, and that guard is what kept it in the code: removing
+        // the dead call failed this test. An audit that can only be satisfied by leaving
+        // a redundant directory write in place is protecting the wrong thing.
+        //
+        // Every real write now lives in UpdatePassword / HandleCannotChangePassword and
+        // the helpers they call, so what this method must get right is dispatching to
+        // them only after verification. That is what is asserted, and it cannot go
+        // vacuous: the branch is required to exist.
+        var writeDispatches = new[] { "UpdatePassword(", "HandleCannotChangePassword(" };
+        foreach (var dispatch in writeDispatches)
+        {
+            var at = body.IndexOf(dispatch, StringComparison.Ordinal);
+            Assert.True(
+                at >= 0,
+                $"ChangeDirectoryPasswordCore no longer dispatches to '{dispatch}'. Every directory " +
+                "write reaches the directory through those two paths, so losing one means either a " +
+                "write path moved (re-anchor this test on it) or the branch was dropped.");
+
+            Assert.True(
+                at > verificationAt,
+                $"'{dispatch}' is dispatched at offset {at}, before the ValidateUserCredentials call " +
+                $"at offset {verificationAt}. Everything above that call runs for a caller who " +
+                "supplied only a username, so a write dispatched there is an unauthenticated " +
+                "modification. See docs/UPGRADING-error-routing.md.");
+        }
     }
 
     [Fact]
