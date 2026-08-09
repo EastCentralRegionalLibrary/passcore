@@ -928,7 +928,13 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// Generic LDAP servers do not emit these AD-specific data codes, so their
     /// bind failures continue to surface as invalid credentials.
     /// </summary>
-    private void VerifyUserCredentials(string userDn, string password)
+    /// <remarks>
+    /// Virtual so a test can stand in for the end-user bind. It is the only step in
+    /// the change path that opens a connection to a real server no test can reach,
+    /// so without a seam here nothing downstream of it — including how many
+    /// service-account binds a password change actually costs — can be asserted.
+    /// </remarks>
+    internal virtual void VerifyUserCredentials(string userDn, string password)
     {
         try
         {
