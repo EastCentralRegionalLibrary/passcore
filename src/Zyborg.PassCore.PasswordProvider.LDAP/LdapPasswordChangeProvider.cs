@@ -823,24 +823,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Resolves the user on a connection this method owns.
-    /// </summary>
-    /// <remarks>
-    /// Used by the callers that need a single lookup and nothing else. A caller
-    /// that goes on to perform more service-account work should bind once and use
-    /// the <see cref="FindUser(LdapConnection, string)"/> overload instead, so the
-    /// two operations share one connection.
-    /// </remarks>
-#pragma warning disable IDE0052 // Remove unread private members
-    private LdapUser FindUser(string username, string? correlationId = null)
-    {
-        using var ldap = BindAsServiceAccount(correlationId);
-
-        return FindUser(ldap, username);
-    }
-#pragma warning restore IDE0052
-
-    /// <summary>
     /// Resolves the user on a caller-owned connection.
     /// </summary>
     /// <remarks>
@@ -897,7 +879,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// A <c>sAMAccountName</c>-shaped filter matches the bare account name, never a
     /// qualified one, so a domain qualifier the sanitizer kept is dropped before
     /// substitution; a <c>userPrincipalName</c>-shaped filter keeps it. Split out from
-    /// <see cref="FindUser(string, string?)"/> so the filter a given username and configuration produce
+    /// <see cref="FindUser(LdapConnection, string)"/> so the filter a given username and configuration produce
     /// can be asserted without a directory.
     /// </remarks>
     internal static string BuildUserSearchFilter(
