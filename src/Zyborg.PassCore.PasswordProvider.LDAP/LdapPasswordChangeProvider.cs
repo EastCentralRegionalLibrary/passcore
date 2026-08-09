@@ -778,17 +778,31 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
 
         try
         {
-            // 1. Resolve user DN (service-account bind + search)
-            var user = FindUser(context.Username, context.CorrelationId);
+            // One service-account bind for the whole change. Resolving the user and
+            // writing the new password are both service-account work against the same
+            // directory, microseconds apart, and used to open a connection each. This
+            // mirrors the AD provider, which acquires one PrincipalContext and reuses
+            // it across the phase rather than rebinding per operation.
+            //
+            // Scoped to this method, deliberately, and not to the request: the policy
+            // pipeline that runs before this includes an outbound call to Have I Been
+            // Pwned, and a request-scoped connection would sit open across that
+            // third-party round trip. The AD provider draws the same boundary.
+            using var ldap = BindAsServiceAccount(context.CorrelationId);
 
-            // 2. Verify current credentials (portable across LDAP servers)
+            // 1. Resolve user DN (search on the shared service-account connection)
+            var user = FindUser(ldap, context.Username);
+
+            // 2. Verify current credentials (portable across LDAP servers). This binds
+            //    as the user on its OWN connection -- the service-account connection
+            //    above must keep its identity for the write below.
             VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
 
             // 3. Perform password change using administrative context. The
             //    verified flag is derived from control flow: VerifyUserCredentials
             //    throws on failure, so this line is reachable only after the user
             //    proved knowledge of the current password in this request.
-            ExecutePasswordChange(user.DistinguishedName, context, currentPasswordVerified: true);
+            ExecutePasswordChange(ldap, user.DistinguishedName, context, currentPasswordVerified: true);
         }
         catch (LdapException ex)
         {
@@ -808,11 +822,33 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     // User resolution
     // ---------------------------------------------------------------------
 
+    /// <summary>
+    /// Resolves the user on a connection this method owns.
+    /// </summary>
+    /// <remarks>
+    /// Used by the callers that need a single lookup and nothing else. A caller
+    /// that goes on to perform more service-account work should bind once and use
+    /// the <see cref="FindUser(LdapConnection, string)"/> overload instead, so the
+    /// two operations share one connection.
+    /// </remarks>
     private LdapUser FindUser(string username, string? correlationId = null)
     {
-        var filter = BuildUserSearchFilter(username, _options.DefaultDomain, _options.LdapSearchFilter);
-
         using var ldap = BindAsServiceAccount(correlationId);
+
+        return FindUser(ldap, username);
+    }
+
+    /// <summary>
+    /// Resolves the user on a caller-owned connection.
+    /// </summary>
+    /// <remarks>
+    /// The connection is not disposed here: it belongs to the caller, which is what
+    /// lets a password change resolve the user and write the new password over a
+    /// single service-account bind rather than two.
+    /// </remarks>
+    private LdapUser FindUser(LdapConnection ldap, string username)
+    {
+        var filter = BuildUserSearchFilter(username, _options.DefaultDomain, _options.LdapSearchFilter);
 
         var search = SearchLdap(
             ldap,
@@ -950,10 +986,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// ever rescuable. The Replace mechanism is already administrative, so
     /// neither detection nor fallback applies there.
     /// </summary>
-    private void ExecutePasswordChange(string userDn, PasswordChangeContext context, bool currentPasswordVerified)
+    private void ExecutePasswordChange(
+        LdapConnection ldap, string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
-        using var ldap = BindAsServiceAccount(context.CorrelationId);
-
         if (!_options.LdapChangePasswordWithDelAdd)
         {
             ChangePasswordReplace(
