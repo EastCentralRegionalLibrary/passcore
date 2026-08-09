@@ -238,10 +238,9 @@ namespace Unosquare.PassCore.PasswordProvider
             IOptions<PasswordChangeOptions> options,
             IOptions<ClientSettings> clientSettings,
             IEnumerable<IPasswordPolicy> policies)
-            : base(logger, (options ?? throw new ArgumentNullException(nameof(options))).Value, clientSettings?.Value, policies)
+            : base(logger, (options ?? throw new ArgumentNullException(nameof(options))).Value, !options.Value.UseAutomaticContext, clientSettings?.Value, policies)
         {
             _options = options.Value;
-            ValidateOptions(_options);
             SetIdType();
 
             if (_options.AllowAdministrativeReset && _options.UseAutomaticContext)
@@ -254,18 +253,6 @@ namespace Unosquare.PassCore.PasswordProvider
             // error from a deployment whose every other operation is healthy.
             if (!_options.UseAutomaticContext)
                 LogLdapsWriteRequired(Logger, null);
-        }
-
-        private static void ValidateOptions(PasswordChangeOptions opts)
-        {
-            if (opts == null)
-                throw new ArgumentNullException(nameof(opts));
-
-            // A service account is only required for an explicit bind. In
-            // automatic-context mode (UseAutomaticContext == true) there is no
-            // service account and none of LdapHostnames/LdapUsername/LdapPassword
-            // need be configured.
-            AppSettingsValidation.ValidateServiceAccount(opts, required: !opts.UseAutomaticContext);
         }
 
         /// <inheritdoc />

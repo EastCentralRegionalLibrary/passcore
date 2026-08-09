@@ -203,6 +203,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         : base(
             logger,
             (options ?? throw new ArgumentNullException(nameof(options))).Value,
+            true,
             clientSettings?.Value,
             policies)
     {
@@ -1440,8 +1441,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
 
     private static void ValidateOptions(LdapPasswordChangeOptions opts)
     {
-        AppSettingsValidation.ValidateServiceAccount(opts, required: true);
-
         if (string.IsNullOrWhiteSpace(opts.LdapSearchBase))
             throw new ArgumentException("LDAP search base not configured");
 
