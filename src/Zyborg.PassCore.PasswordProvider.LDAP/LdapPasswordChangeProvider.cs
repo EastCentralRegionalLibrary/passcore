@@ -277,10 +277,12 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
 
         try
         {
+            using var ldap = BindAsServiceAccount();
+
             // Resolved inside the try so that a failure here is translated exactly as
             // it always was, and cached on the resolution so a second evaluation of
             // the same request does not repeat it.
-            var user = resolution?.User ?? FindUser(username);
+            var user = resolution?.User ?? FindUser(ldap, username);
             if (resolution is not null)
                 resolution.User = user;
 
@@ -311,7 +313,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 if (matchedName is null)
                     continue;
 
-                switch (ClassifyGroupByDn(dn))
+                switch (ClassifyGroupByDn(ldap, dn))
                 {
                     case GroupTypeClass.Security:
                     case GroupTypeClass.Absent:
@@ -346,7 +348,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 {
                     try
                     {
-                        using var ldap = BindAsServiceAccount();
                         var primaryFilter = FormattableString.Invariant(
                             $"(primaryGroupToken={primaryGroupToken})");
                         var primarySearch = SearchLdap(
@@ -393,7 +394,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             // 3. Transitive/Nested Group Resolution via LDAP_MATCHING_RULE_IN_CHAIN OID (Active Directory specific)
             try
             {
-                using var ldap = BindAsServiceAccount();
                 // The DN comes back from the directory, but it is not inert: RFC 4514
                 // DN string form escapes none of '(', ')' or '*', so an account named
                 // e.g. "CN=Smith (Contractor),OU=..." would otherwise produce a
@@ -590,11 +590,10 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// where it must still prove the current password: exactly what it would have done
     /// before this change.</para>
     /// </remarks>
-    private GroupTypeClass ClassifyGroupByDn(string dn)
+    private GroupTypeClass ClassifyGroupByDn(LdapConnection ldap, string dn)
     {
         try
         {
-            using var ldap = BindAsServiceAccount();
             var search = SearchLdap(
                 ldap,
                 dn,
@@ -770,6 +769,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// </remarks>
     protected override bool AdministrativeResetSupported => _options.LdapChangePasswordWithDelAdd;
 
+    /// <inheritdoc />
     protected override Task ChangeDirectoryPasswordCore(
         PasswordChangeContext context,
         CancellationToken cancellationToken)
@@ -821,22 +821,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     // ---------------------------------------------------------------------
     // User resolution
     // ---------------------------------------------------------------------
-
-    /// <summary>
-    /// Resolves the user on a connection this method owns.
-    /// </summary>
-    /// <remarks>
-    /// Used by the callers that need a single lookup and nothing else. A caller
-    /// that goes on to perform more service-account work should bind once and use
-    /// the <see cref="FindUser(LdapConnection, string)"/> overload instead, so the
-    /// two operations share one connection.
-    /// </remarks>
-    private LdapUser FindUser(string username, string? correlationId = null)
-    {
-        using var ldap = BindAsServiceAccount(correlationId);
-
-        return FindUser(ldap, username);
-    }
 
     /// <summary>
     /// Resolves the user on a caller-owned connection.
@@ -895,7 +879,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// A <c>sAMAccountName</c>-shaped filter matches the bare account name, never a
     /// qualified one, so a domain qualifier the sanitizer kept is dropped before
     /// substitution; a <c>userPrincipalName</c>-shaped filter keeps it. Split out from
-    /// <see cref="FindUser"/> so the filter a given username and configuration produce
+    /// <see cref="FindUser(LdapConnection, string)"/> so the filter a given username and configuration produce
     /// can be asserted without a directory.
     /// </remarks>
     internal static string BuildUserSearchFilter(
