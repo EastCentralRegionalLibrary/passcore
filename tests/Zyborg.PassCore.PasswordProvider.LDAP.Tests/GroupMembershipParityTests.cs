@@ -26,10 +26,42 @@ public class TestLdapPasswordChangeProvider : LdapPasswordChangeProvider
     {
     }
 
+    /// <summary>
+    /// Lets a test make acquiring the service-account connection fail, or count it.
+    /// </summary>
+    /// <remarks>
+    /// Search failures are simulated through <see cref="OnSearchLdap"/>, which is a
+    /// different thing: a search can fail on a connection that is otherwise healthy.
+    /// This hook covers the case where the connection itself cannot be obtained,
+    /// which nothing could reach before — <see cref="BindAsServiceAccount"/> was
+    /// stubbed to always succeed.
+    /// </remarks>
+    public Action<string?>? OnBindAsServiceAccount { get; set; }
+
     internal override LdapConnection BindAsServiceAccount(string? correlationId = null)
     {
+        OnBindAsServiceAccount?.Invoke(correlationId);
+
         // Return a dummy connection without connecting to any real server
         return new LdapConnection();
+    }
+
+    /// <summary>
+    /// Stands in for the end-user bind, which is the one step of the change path
+    /// that no test can reach: it connects to a real server. Left null, verification
+    /// runs for real and throws.
+    /// </summary>
+    public Action<string, string>? OnVerifyUserCredentials { get; set; }
+
+    internal override void VerifyUserCredentials(string userDn, string password)
+    {
+        if (OnVerifyUserCredentials != null)
+        {
+            OnVerifyUserCredentials(userDn, password);
+            return;
+        }
+
+        base.VerifyUserCredentials(userDn, password);
     }
 
     internal override ILdapSearchResults SearchLdap(
