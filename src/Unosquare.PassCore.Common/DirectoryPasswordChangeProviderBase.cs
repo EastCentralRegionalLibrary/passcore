@@ -52,6 +52,28 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
     public abstract Task<IResolvedGroupMembership> ResolveMembershipAsync(string username);
 
     /// <summary>
+    /// Wraps a provider's membership evaluation in the shared
+    /// <see cref="IResolvedGroupMembership"/> contract.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is how a provider returns a resolution: it supplies the evaluation
+    /// and nothing else. The decision about what an undetermined membership means —
+    /// throw as a service-account infrastructure failure, never answer
+    /// <see langword="false"/> — is made here, once, for every provider.</para>
+    /// <para>Both providers previously carried their own <c>IResolvedGroupMembership</c>
+    /// implementation and their own copy of that decision, kept honest only by a
+    /// source-text audit over each provider's file. Supplying the translation from the
+    /// base removes the possibility of the two drifting.</para>
+    /// </remarks>
+    /// <param name="evaluate">Tests the resolved user against a set of group names.</param>
+    /// <returns>A resolution presenting the shared bool-or-throw contract.</returns>
+    protected IResolvedGroupMembership ResolveMembership(
+        Func<IReadOnlyCollection<string>, Task<GroupMembershipAnswer>> evaluate) =>
+        new ResolvedGroupMembership(
+            evaluate,
+            reason => TranslateDirectoryException(reason, DirectoryActor.ServiceAccount));
+
+    /// <summary>
     /// Runs a service-account directory operation, guaranteeing that any
     /// failure surfaces as an infrastructure error rather than an end-user
     /// credential/existence/account-state error. This is the directory provider's

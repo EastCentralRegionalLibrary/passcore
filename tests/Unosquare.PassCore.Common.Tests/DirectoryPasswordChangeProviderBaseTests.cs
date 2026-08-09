@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
@@ -65,6 +66,10 @@ public class DirectoryPasswordChangeProviderBaseTests
 
         public Exception TestTranslateDirectoryException(Exception exception, DirectoryActor actor) =>
             TranslateDirectoryException(exception, actor);
+
+        public IResolvedGroupMembership TestResolveMembership(
+            Func<IReadOnlyCollection<string>, Task<GroupMembershipAnswer>> evaluate) =>
+            ResolveMembership(evaluate);
 
         public Exception TestTranslateDirectoryException(Exception exception) =>
             TranslateDirectoryException(exception);
@@ -409,5 +414,42 @@ public class DirectoryPasswordChangeProviderBaseTests
         {
             HResult = hresult;
         }
+    }
+
+    // ---------------------------------------------------------------
+    // ResolveMembership: the base supplies the undetermined translation
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// The translation a provider gets is the service-account one, and it is not the
+    /// provider's to choose. A credentials-shaped failure is used deliberately: for
+    /// <see cref="DirectoryActor.User"/> the same exception becomes
+    /// <c>InvalidCredentialsException</c>, so seeing infrastructure here proves the
+    /// actor the base supplied rather than merely that something was thrown.
+    /// </summary>
+    [Fact]
+    public async Task ResolveMembership_UndeterminedTranslatesAsAServiceAccountFailure()
+    {
+        var provider = MakeProvider();
+        var cause = new Win32Exception(0x52E); // would be InvalidCredentials for a user
+        var resolution = provider.TestResolveMembership(
+            _ => Task.FromResult(GroupMembershipAnswer.Undetermined(cause)));
+
+        var thrown = await Assert.ThrowsAsync<DirectoryUnavailableException>(
+            () => resolution.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
+
+        Assert.Same(cause, thrown.InnerException);
+    }
+
+    [Fact]
+    public async Task ResolveMembership_DefinitiveAnswersPassThroughUntranslated()
+    {
+        var provider = MakeProvider();
+
+        var member = provider.TestResolveMembership(_ => Task.FromResult(GroupMembershipAnswer.Member));
+        var notMember = provider.TestResolveMembership(_ => Task.FromResult(GroupMembershipAnswer.NotMember));
+
+        Assert.True(await member.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
+        Assert.False(await notMember.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
     }
 }

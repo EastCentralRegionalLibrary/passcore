@@ -254,7 +254,13 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     {
         ArgumentNullException.ThrowIfNull(username);
 
-        return Task.FromResult<IResolvedGroupMembership>(new LdapResolvedMembership(this, username));
+        // Nothing is resolved yet: unlike the AD provider, every directory read here
+        // is deferred to the first evaluation, and the cache keeps later ones free.
+        var cache = new ResolvedUserCache();
+
+        return Task.FromResult(ResolveMembership(
+            requested => IsMemberOfAnyGroup(
+                username, requested as string[] ?? requested.ToArray(), cache)));
     }
 
     /// <summary>
@@ -263,11 +269,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// definitive, and a negative answer requires every lookup that could still have
     /// matched to have completed.
     /// </summary>
-    private Task<bool> IsMemberOfAnyGroup(
-        string username, string[] groupNames, LdapResolvedMembership? resolution = null)
+    private Task<GroupMembershipAnswer> IsMemberOfAnyGroup(
+        string username, string[] groupNames, ResolvedUserCache? resolution = null)
     {
         if (groupNames.Length == 0)
-            return Task.FromResult(false);
+            return Task.FromResult(GroupMembershipAnswer.NotMember);
 
         try
         {
@@ -309,7 +315,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 {
                     case GroupTypeClass.Security:
                     case GroupTypeClass.Absent:
-                        return Task.FromResult(true);
+                        return Task.FromResult(GroupMembershipAnswer.Member);
                     case GroupTypeClass.Distribution:
                         // Not a match. Said out loud, because it changes the answer
                         // and group type is mutable.
@@ -324,11 +330,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             {
                 // Robust check for well-known RIDs:
                 if (user.PrimaryGroupId == "513" && groupNames.Any(g => g.Equals("Domain Users", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(true);
+                    return Task.FromResult(GroupMembershipAnswer.Member);
                 if (user.PrimaryGroupId == "512" && groupNames.Any(g => g.Equals("Domain Admins", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(true);
+                    return Task.FromResult(GroupMembershipAnswer.Member);
                 if (user.PrimaryGroupId == "519" && groupNames.Any(g => g.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(true);
+                    return Task.FromResult(GroupMembershipAnswer.Member);
 
                 // primaryGroupID is a RID, read back from the directory as a string.
                 // Validating it as an integer is what keeps it inert in the filter
@@ -356,7 +362,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                         {
                             var primaryDn = primarySearch.Next().Dn;
                             if (groupNames.Any(groupName => DnMatchesGroup(primaryDn, groupName)))
-                                return Task.FromResult(true);
+                                return Task.FromResult(GroupMembershipAnswer.Member);
                         }
                     }
                     catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
@@ -422,7 +428,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                     {
                         case GroupTypeClass.Security:
                         case GroupTypeClass.Absent:
-                            return Task.FromResult(true);
+                            return Task.FromResult(GroupMembershipAnswer.Member);
                         case GroupTypeClass.Distribution:
                             if (reportedNonSecurityGroups.Add(entry.Dn))
                                 LogGroupNotSecurityEnabled(Logger, matchedName, entry.Dn, null);
@@ -442,15 +448,14 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             }
 
             // Nothing matched. That is only an answer if everything that could have
-            // matched actually ran; otherwise this is "could not determine", and the
-            // shared translator turns it into the infrastructure response rather than
-            // letting it read as "not a member".
-            if (undetermined is not null)
-            {
-                throw TranslateDirectoryException(undetermined, DirectoryActor.ServiceAccount);
-            }
-
-            return Task.FromResult(false);
+            // matched actually ran; otherwise this is "could not determine". The
+            // shared resolution turns that into the infrastructure response rather
+            // than letting it read as "not a member" — reporting it here rather than
+            // throwing keeps that translation in one place for both providers.
+            return Task.FromResult(
+                undetermined is null
+                    ? GroupMembershipAnswer.NotMember
+                    : GroupMembershipAnswer.Undetermined(undetermined));
         }
         catch (PasswordChangeException)
         {
@@ -1589,27 +1594,19 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// worth more than collapsing the two calls the policy makes (restricted, then
     /// allowed) when a deployment configures both lists.
     /// </remarks>
-    private sealed class LdapResolvedMembership : IResolvedGroupMembership
+    /// <summary>
+    /// Holds the user resolved on the first evaluation so later ones reuse it.
+    /// </summary>
+    /// <remarks>
+    /// All this carries is the cache. The resolution itself, and the decision about
+    /// what an undetermined membership means, live in the shared
+    /// <c>ResolvedGroupMembership</c> the base class supplies — so this provider no
+    /// longer implements <c>IResolvedGroupMembership</c> and cannot translate an
+    /// undetermined answer differently from the AD provider.
+    /// </remarks>
+    private sealed class ResolvedUserCache
     {
-        private readonly LdapPasswordChangeProvider _provider;
-        private readonly string _username;
-
-        public LdapResolvedMembership(LdapPasswordChangeProvider provider, string username)
-        {
-            _provider = provider;
-            _username = username;
-        }
-
-        /// <summary>The resolved user, populated on first evaluation and reused after.</summary>
         internal LdapUser? User { get; set; }
-
-        public Task<bool> IsMemberOfAnyAsync(IReadOnlyCollection<string> groupNames)
-        {
-            if (groupNames is null || groupNames.Count == 0)
-                return Task.FromResult(false);
-
-            return _provider.IsMemberOfAnyGroup(_username, groupNames as string[] ?? groupNames.ToArray(), this);
-        }
     }
 }
 
