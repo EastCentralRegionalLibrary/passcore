@@ -1,65 +1,88 @@
 import { SnackbarMessageType } from "./Components";
 
+/**
+ * Mirrors the server-side ApiErrorCode enum.
+ * Source of truth: src/Unosquare.PassCore.Common/ApiErrorCode.cs
+ */
+export enum ApiErrorCode {
+    Generic = 0,
+    FieldRequired = 1,
+    FieldMismatch = 2,
+    UserNotFound = 3,
+    InvalidCredentials = 4,
+    InvalidCaptcha = 5,
+    ChangeNotPermitted = 6,
+    InvalidDomain = 7,
+    LdapProblem = 8,
+    ComplexPassword = 9,
+    MinimumScore = 10,
+    MinimumDistance = 11,
+    PwnedPassword = 12,
+}
+
 export interface IAlerts {
-    errorCaptcha: string;
-    errorComplexPassword: string;
-    errorConnectionLdap: string;
-    errorFieldMismatch: string;
-    errorFieldRequired: string;
-    errorInvalidCredentials: string;
-    errorInvalidDomain: string;
-    errorInvalidUser: string;
-    errorPasswordChangeNotAllowed: string;
-    errorScorePassword: string;
-    errorDistancePassword: string;
-    successAlertBody: string;
-    successAlertTitle: string;
-    errorPwnedPassword: string;
+    errorCaptcha?: string | null;
+    errorComplexPassword?: string | null;
+    errorConnectionLdap?: string | null;
+    errorFieldMismatch?: string | null;
+    errorFieldRequired?: string | null;
+    errorInvalidCredentials?: string | null;
+    errorInvalidDomain?: string | null;
+    errorInvalidUser?: string | null;
+    errorPasswordChangeNotAllowed?: string | null;
+    errorScorePassword?: string | null;
+    errorDistancePassword?: string | null;
+    successAlertBody?: string | null;
+    successAlertTitle?: string | null;
+    errorPwnedPassword?: string | null;
 }
 
 export interface IChangePasswordForm {
-    changePasswordButtonLabel: string;
-    currentPasswordHelpblock: string;
-    currentPasswordLabel: string;
-    helpText: string;
-    newPasswordHelpblock: string;
-    newPasswordLabel: string;
-    newPasswordVerifyHelpblock: string;
-    newPasswordVerifyLabel: string;
-    usernameDefaultDomainHelperBlock: string;
-    usernameHelpblock: string;
-    usernameLabel: string;
-    recaptchaHelpblock?: string;
+    changePasswordButtonLabel?: string | null;
+    currentPasswordHelpblock?: string | null;
+    currentPasswordLabel?: string | null;
+    helpText?: string | null;
+    newPasswordHelpblock?: string | null;
+    newPasswordLabel?: string | null;
+    newPasswordVerifyHelpblock?: string | null;
+    newPasswordVerifyLabel?: string | null;
+    usernameDefaultDomainHelperBlock?: string | null;
+    usernameHelpblock?: string | null;
+    usernameLabel?: string | null;
 }
 
 export interface IErrorsPasswordForm {
-    fieldRequired: string;
-    passwordMatch: string;
-    usernameEmailPattern: string;
-    usernamePattern: string;
+    fieldRequired?: string | null;
+    passwordMatch?: string | null;
+    usernameEmailPattern?: string | null;
+    usernamePattern?: string | null;
 }
 
 export interface IRecaptcha {
-    languageCode: string;
-    siteKey: string;
+    languageCode?: string | null;
+    siteKey?: string | null;
 }
 
 export interface IValidationRegex {
-    emailRegex: string;
-    usernameRegex: string;
+    emailRegex?: string | null;
+    usernameRegex?: string | null;
 }
 
 export interface IGlobalContext {
-    alerts: IAlerts;
-    applicationTitle: string;
-    changePasswordForm: IChangePasswordForm;
-    changePasswordTitle: string;
-    usePasswordGeneration: boolean;
-    errorsPasswordForm: IErrorsPasswordForm;
-    recaptcha: IRecaptcha;
-    showPasswordMeter: boolean;
-    useEmail: boolean;
-    validationRegex: IValidationRegex;
+    alerts?: IAlerts | null;
+    applicationTitle?: string | null;
+    changePasswordForm?: IChangePasswordForm | null;
+    changePasswordTitle?: string | null;
+    usePasswordGeneration?: boolean | null;
+    errorsPasswordForm?: IErrorsPasswordForm | null;
+    recaptcha?: IRecaptcha | null;
+    showPasswordMeter?: boolean | null;
+    useEmail?: boolean | null;
+    validationRegex?: IValidationRegex | null;
+    minimumDistance?: number | null;
+    passwordEntropy?: number | null;
+    minimumScore?: number | null;
+    enablePwnedPasswordCheck?: boolean | null;
 }
 
 export interface ISnackbarContext {
@@ -91,10 +114,3 @@ export interface ApiResponse<T = unknown> {
     /** The payload data returned from the API call. */
     payload?: T;
 }
-
-/**
- * Represents the response from the password generation endpoint.
- * In this endpoint, the payload is expected to be a string (the generated password).
- */
-export type PasswordGenResponse = ApiResponse<string>;
-

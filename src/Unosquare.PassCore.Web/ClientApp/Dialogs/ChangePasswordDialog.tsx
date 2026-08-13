@@ -16,7 +16,9 @@ export function ChangePasswordDialog({
     open,
     onClose,
 }: IChangePasswordDialogProps) {
-    const { successAlertBody, successAlertTitle } = use(GlobalContext)!.alerts;
+    const context = use(GlobalContext)!;
+    const successAlertBody = context?.alerts?.successAlertBody || '';
+    const successAlertTitle = context?.alerts?.successAlertTitle || '';
     return (
         <Dialog
             data-testid="success-dialog"
