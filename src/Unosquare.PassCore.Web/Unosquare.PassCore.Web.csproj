@@ -4,9 +4,7 @@
 		<Copyright>Copyright (c) 2018-2024 - Unosquare</Copyright>
 		<AssemblyName>Unosquare.PassCore.Web</AssemblyName>
 		<PackageId>Unosquare.PassCore.Web</PackageId>
-		<TypeScriptCompileBlocked>true</TypeScriptCompileBlocked>
 		<IsPackable>false</IsPackable>
-		<TypeScriptToolsVersion>4.2</TypeScriptToolsVersion>
 		<GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
 		<RootNamespace>Unosquare.PassCore.Web</RootNamespace>
 		<EnableNETAnalyzers>true</EnableNETAnalyzers>
@@ -26,10 +24,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.TypeScript.MSBuild">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
 		<PackageReference Include="SimpleBase" />
 		<PackageReference Include="zxcvbn-core" />
 	</ItemGroup>
