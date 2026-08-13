@@ -11,7 +11,7 @@ interface IRecaptchaProps {
 export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
     const captchaRef = useRef<InstanceType<typeof GoogleReCaptcha> | null>(null);
 
-    const { siteKey } = use(GlobalContext)!.recaptcha;
+    const siteKey = use(GlobalContext)?.recaptcha?.siteKey || '';
 
     useEffect(() => {
         if (captchaRef.current) {
