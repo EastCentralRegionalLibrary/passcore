@@ -9,7 +9,6 @@ interface IReCaptchaProps {
     onError: () => void;
     onExpired: () => void;
     onLoad: () => void;
-    onloadCallback: () => void;
     onSuccess: (recaptchaToken: string) => void;
     render: string;
     sitekey: string;
@@ -95,18 +94,20 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
 
     public render() {
         const {
+            badge,
+            hl,
+            inherit,
+            isolated,
             onError,
             onExpired,
             onLoad,
             onSuccess,
-            inherit,
-            isolated,
+            render,
             sitekey,
+            size,
+            tabIndex,
             theme,
             type,
-            size,
-            badge,
-            tabIndex,
             ...rest
         } = this.props;
 

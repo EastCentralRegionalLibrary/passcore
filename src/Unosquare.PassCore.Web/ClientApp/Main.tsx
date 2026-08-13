@@ -15,14 +15,11 @@ export function Main() {
 
     useEffect(() => {
         if (settings?.recaptcha?.siteKey && settings.recaptcha.siteKey !== '') {
-            loadReCaptcha();
+            loadReCaptcha(settings.recaptcha.languageCode);
         }
 
         if (settings?.applicationTitle) {
-            const titleElement = document.getElementById('title');
-            if (titleElement) {
-                titleElement.textContent = settings.applicationTitle;
-            }
+            document.title = settings.applicationTitle;
         }
     }, [settings]);
 
