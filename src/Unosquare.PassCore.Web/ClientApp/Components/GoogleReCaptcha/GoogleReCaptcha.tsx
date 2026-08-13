@@ -45,7 +45,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
         type: 'image',
     };
 
-    private readyIntervalId: ReturnType<typeof setInterval>;
+    private readyIntervalId!: ReturnType<typeof setInterval>;
     private recaptcha = createRef<HTMLDivElement>();
 
     private widgetId: number | undefined;

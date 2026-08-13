@@ -51,6 +51,20 @@ public class ClientSettings
     public ValidationRegex? ValidationRegex { get; set; }
 
     /// <summary>Gets or sets extended settings for policies.</summary>
+    /// <remarks>
+    /// Server-side only, and deliberately excluded from the JSON the browser receives.
+    /// This whole object is bound from the <c>ClientSettings</c> configuration section
+    /// for the convenience of sharing one options class, but it is consumed exclusively
+    /// by <see cref="Policies.GroupMembershipPolicy"/>; no part of the web client reads
+    /// it. Without this attribute the anonymous <c>GET /api/password</c> endpoint hands
+    /// every visitor the deployment's restricted and allowed directory group names,
+    /// which describes the directory's privileged-group topology to anyone who asks.
+    /// <para><see cref="System.Text.Json"/> attributes affect serialization only;
+    /// configuration binding does not go through <c>System.Text.Json</c>, so this does
+    /// not stop the section from being populated. <see cref="Recaptcha.PrivateKey"/> is
+    /// protected the same way.</para>
+    /// </remarks>
+    [JsonIgnore]
     public PasswordProviderOptions? PasswordProviderOptions { get; set; }
 }
 
