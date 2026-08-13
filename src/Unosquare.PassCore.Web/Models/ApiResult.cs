@@ -28,18 +28,6 @@ public class ApiResult
     public object? Payload { get; }
 
     /// <summary>
-    /// Creates a generic invalid request response.
-    /// </summary>
-    /// <returns>The ApiResult wih Invalid request error.</returns>
-    public static ApiResult InvalidRequest()
-    {
-        var result = new ApiResult("Invalid Request");
-        result.Errors.Add(new ApiErrorItem(ApiErrorCode.Generic, "Invalid Request"));
-
-        return result;
-    }
-
-    /// <summary>
     /// Invalids the captcha.
     /// </summary>
     /// <returns>The ApiResult from Invalid Recaptcha.</returns>

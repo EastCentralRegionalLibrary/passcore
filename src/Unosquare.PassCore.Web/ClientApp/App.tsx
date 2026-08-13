@@ -1,5 +1,3 @@
-import './vendor';
-
 import { ThemeProvider } from '@mui/material/styles';
 import { createRoot } from 'react-dom/client';
 import { Main } from './Main';

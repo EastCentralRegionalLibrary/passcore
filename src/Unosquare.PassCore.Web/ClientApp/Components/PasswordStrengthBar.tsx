@@ -71,9 +71,7 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
                 ? theme.palette.error.main
                 : score <= 2
                   ? theme.palette.warning.main
-                  : score <= 4
-                    ? theme.palette.success.main
-                    : theme.palette.grey[500];
+                  : theme.palette.success.main;
 
         return {
             kind: 'evaluated' as const,
