@@ -79,4 +79,45 @@ test.describe('Password Change Flow', () => {
     await expect(page.getByTestId('snackbar-notification')).toBeVisible();
     await expect(page.locator('text=The new password was rejected by the domain')).toBeVisible();
   });
+
+  test('should support password generation flow when enabled', async ({ page }) => {
+    // Intercept config endpoint and set usePasswordGeneration: true
+    await page.route('**/api/password', async route => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.usePasswordGeneration = true;
+      await route.fulfill({ json });
+    });
+
+    // Intercept generated password endpoint
+    await page.route('**/api/password/generated', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ password: 'm!/j%JZ.&Hjq,8.V9_TM' })
+      });
+    });
+
+    // Intercept the submission
+    const responsePromise = page.waitForResponse(response => response.url().includes('/api/password') && response.status() === 200);
+
+    await page.goto('/');
+
+    await page.getByLabel('Username', { exact: true }).fill('someuser@test.com');
+    await page.getByLabel('Current Password', { exact: true }).fill('OldPassword123!');
+
+    // Wait for password generator input to be populated with the generated password
+    const generatedInput = page.locator('#generatedPassword');
+    await expect(generatedInput).toHaveValue('m!/j%JZ.&Hjq,8.V9_TM');
+
+    // The submit button should not be disabled
+    const submitBtn = page.getByTestId('submit-button');
+    await expect(submitBtn).toBeEnabled();
+
+    await submitBtn.click();
+
+    await responsePromise;
+    await expect(page.getByTestId('success-dialog')).toBeVisible();
+    await expect(page.locator('text=You have changed your password successfully')).toBeVisible();
+  });
 });

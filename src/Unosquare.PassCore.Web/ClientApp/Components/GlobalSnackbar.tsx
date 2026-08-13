@@ -1,40 +1,36 @@
 import Snackbar, { SnackbarOrigin } from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
-import { useState, useEffect } from 'react';
 import { SnackbarMessageType } from '../types/Components';
 
 export interface GlobalSnackbarProps {
+    open: boolean;
     message: { messageText: string; messageType: SnackbarMessageType };
+    onClose: () => void;
     milliSeconds?: number;
 }
 
 export function GlobalSnackbar({
+    open,
     message,
-    milliSeconds = 2500,
+    onClose,
+    milliSeconds = 5000,
 }: GlobalSnackbarProps) {
-    const [open, setOpen] = useState(false);
-
-    useEffect(() => {
-        if (message?.messageText) {
-            setOpen(true);
-            const timer = setTimeout(() => setOpen(false), milliSeconds);
-            return () => {
-                clearTimeout(timer);
-            };
-        }
-        return undefined;
-    }, [message, milliSeconds]);
-
     const anchorOrigin: SnackbarOrigin = {
         horizontal: 'right',
         vertical: 'bottom',
     };
 
     return (
-        <Snackbar data-testid="snackbar-notification" anchorOrigin={anchorOrigin} open={open}>
+        <Snackbar
+            data-testid="snackbar-notification"
+            anchorOrigin={anchorOrigin}
+            open={open}
+            autoHideDuration={milliSeconds}
+            onClose={onClose}
+        >
             <Alert
                 severity={message.messageType}
-                onClose={() => setOpen(false)}
+                onClose={onClose}
                 variant="filled"
             >
                 {message.messageText}

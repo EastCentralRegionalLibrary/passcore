@@ -7,16 +7,16 @@ import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import { use, useState, useEffect } from 'react';
 import { LoadingIcon } from './LoadingIcon';
-import { SnackbarContext } from '../Provider/GlobalContext';
+import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { IPasswordGenProps } from '../types/Components';
 import { fetchRequest } from '../Utils/FetchRequest';
-import { PasswordGenResponse } from '../types/Providers'; // Imported shared API type
 
 export function PasswordGenerator({
     value,
     setValue,
 }: IPasswordGenProps) {
     const { sendMessage } = use(SnackbarContext)!;
+    const { changePasswordForm } = use(GlobalContext)!;
     const [visibility, setVisibility] = useState(false);
     const [isLoading, setLoading] = useState(true);
 
@@ -31,16 +31,11 @@ export function PasswordGenerator({
     useEffect(() => {
         const retrievePassword = async () => {
             try {
-                // Cast response as PasswordGenResponse which expects a payload of type string.
-                const response = (await fetchRequest('api/password/generated', 'GET')) as PasswordGenResponse;
-                if (response?.payload) {
-                    setValue(response.payload);
-                } else if (response?.errors?.length) {
-                    const errorMsg = response.errors.map((error) => error.message).join(' ');
-                    sendMessage(errorMsg, 'error');
+                const response = await fetchRequest<{ password: string }>('api/password/generated', 'GET');
+                if (response?.password) {
+                    setValue(response.password);
                 }
             } catch (error: unknown) {
-                // Use type narrowing to extract the error message
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 sendMessage(`Failed to retrieve password. Error: ${errorMessage}`, 'error');
             } finally {
@@ -51,6 +46,8 @@ export function PasswordGenerator({
         retrievePassword();
     }, [sendMessage, setValue]);
 
+    const labelText = changePasswordForm?.newPasswordLabel || 'New Password';
+
     return isLoading ? (
         <Box sx={{ paddingTop: '30px' }}>
             <LoadingIcon />
@@ -59,7 +56,7 @@ export function PasswordGenerator({
         <TextField
             id="generatedPassword"
             disabled
-            label="New Password"
+            label={labelText}
             value={value}
             type={visibility ? 'text' : 'password'}
             sx={{

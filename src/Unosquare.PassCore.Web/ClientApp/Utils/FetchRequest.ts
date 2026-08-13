@@ -1,21 +1,17 @@
-import { ApiResponse } from '../types/Providers';
-
 /**
- * Makes an HTTP request and returns a typed API response.
+ * Makes an HTTP request and returns the typed response.
  *
- * This function mirrors the server's API response structure, which contains an optional list of errors and a payload.
- *
- * @template T - The type of the payload contained in the ApiResponse. Defaults to unknown.
+ * @template T - The type of the parsed response body. Defaults to unknown.
  * @param url - The API endpoint URL.
  * @param requestMethod - The HTTP method (e.g., 'GET', 'POST').
  * @param requestBody - Optional request payload. If this is not a string, it will be stringified.
- * @returns A promise that resolves to an ApiResponse of type T.
+ * @returns A promise that resolves to the parsed response body of type T.
  */
 export async function fetchRequest<T = unknown>(
     url: string,
     requestMethod: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
     requestBody?: unknown
-): Promise<ApiResponse<T>> {
+): Promise<T> {
     // Determine the body. If requestBody is already a string, use it directly.
     const body =
         typeof requestBody === 'string'
@@ -42,8 +38,8 @@ export async function fetchRequest<T = unknown>(
     const responseBody = await response.text();
 
     try {
-        // Parse and return the response as a typed ApiResponse.
-        return responseBody ? (JSON.parse(responseBody) as ApiResponse<T>) : ({} as ApiResponse<T>);
+        // Parse and return the response as a typed T.
+        return responseBody ? (JSON.parse(responseBody) as T) : ({} as T);
     } catch (error) {
         console.error('Error parsing API response:', error);
         throw new Error(`Failed to parse API response: ${(error as Error).message}`);

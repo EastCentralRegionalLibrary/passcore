@@ -8,8 +8,10 @@ import { use } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
 export function ClientAppBar() {
-    const { changePasswordForm, changePasswordTitle } = use(GlobalContext)!;
-    const { helpText } = changePasswordForm;
+    const context = use(GlobalContext)!;
+    const changePasswordForm = context?.changePasswordForm;
+    const changePasswordTitle = context?.changePasswordTitle || '';
+    const helpText = changePasswordForm?.helpText || '';
 
     return (
         <AppBar

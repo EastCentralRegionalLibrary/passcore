@@ -52,7 +52,10 @@ export function ChangePasswordForm({
     const [fields, setFields] = useState<IChangePasswordFormInitialModel>(defaultState);
     const [errors, setErrors] = useState<ValidationErrors>({});
     const context = use(GlobalContext)!;
-    const { changePasswordForm, usePasswordGeneration, showPasswordMeter, recaptcha } = context;
+    const changePasswordForm = context?.changePasswordForm;
+    const usePasswordGeneration = context?.usePasswordGeneration;
+    const showPasswordMeter = context?.showPasswordMeter;
+    const recaptcha = context?.recaptcha;
     const recaptchaRequired = !!recaptcha?.siteKey;
     const [touched, setTouched] = useState(() =>
         Object.keys(defaultState).reduce(
@@ -61,27 +64,25 @@ export function ChangePasswordForm({
         ),
     );
 
-    const {
-        currentPasswordHelpblock,
-        currentPasswordLabel,
-        newPasswordHelpblock,
-        newPasswordLabel,
-        newPasswordVerifyHelpblock,
-        newPasswordVerifyLabel,
-        usernameDefaultDomainHelperBlock,
-        usernameHelpblock,
-        usernameLabel,
-    } = changePasswordForm;
+    const currentPasswordHelpblock = changePasswordForm?.currentPasswordHelpblock || '';
+    const currentPasswordLabel = changePasswordForm?.currentPasswordLabel || '';
+    const newPasswordHelpblock = changePasswordForm?.newPasswordHelpblock || '';
+    const newPasswordLabel = changePasswordForm?.newPasswordLabel || '';
+    const newPasswordVerifyHelpblock = changePasswordForm?.newPasswordVerifyHelpblock || '';
+    const newPasswordVerifyLabel = changePasswordForm?.newPasswordVerifyLabel || '';
+    const usernameDefaultDomainHelperBlock = changePasswordForm?.usernameDefaultDomainHelperBlock || '';
+    const usernameHelpblock = changePasswordForm?.usernameHelpblock || '';
+    const usernameLabel = changePasswordForm?.usernameLabel || '';
 
     const fieldHelpTextMap: Record<keyof IChangePasswordFormInitialModel, string> = useMemo(
         () => ({
-            username: context.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
+            username: context?.useEmail ? usernameHelpblock : usernameDefaultDomainHelperBlock,
             currentPassword: currentPasswordHelpblock,
             recaptcha: '',
             newPassword: '',
             newPasswordVerify: newPasswordVerifyHelpblock,
         }),
-        [context, usernameHelpblock, usernameDefaultDomainHelperBlock, currentPasswordHelpblock, newPasswordVerifyHelpblock],
+        [context?.useEmail, usernameHelpblock, usernameDefaultDomainHelperBlock, currentPasswordHelpblock, newPasswordVerifyHelpblock],
     );
 
     const getHelperText = useCallback(
@@ -122,32 +123,32 @@ export function ChangePasswordForm({
 
     const validationRegex = useMemo(
         () =>
-            context.useEmail
-                ? new RegExp(context.validationRegex.emailRegex)
-                : new RegExp(context.validationRegex.usernameRegex),
-        [context.useEmail, context.validationRegex.emailRegex, context.validationRegex.usernameRegex],
+            context?.useEmail
+                ? new RegExp(context?.validationRegex?.emailRegex || '')
+                : new RegExp(context?.validationRegex?.usernameRegex || ''),
+        [context?.useEmail, context?.validationRegex?.emailRegex, context?.validationRegex?.usernameRegex],
     );
 
     const fieldRules: FieldValidationRules = useMemo(
         () => ({
             username: [
-                isRequired(context.errorsPasswordForm.fieldRequired),
+                isRequired(context?.errorsPasswordForm?.fieldRequired || 'Field is required'),
                 {
                     name: 'isUsernameValid',
                     rule: (value, formData, ctx) => isUsernamePatternValid(value, formData, ctx, validationRegex),
-                    message: context.useEmail
-                        ? context.errorsPasswordForm.usernameEmailPattern
-                        : context.errorsPasswordForm.usernamePattern,
+                    message: context?.useEmail
+                        ? (context?.errorsPasswordForm?.usernameEmailPattern || 'Invalid email')
+                        : (context?.errorsPasswordForm?.usernamePattern || 'Invalid username'),
                 },
             ],
-            currentPassword: [isRequired(context.errorsPasswordForm.fieldRequired)],
-            newPassword: [isRequired(context.errorsPasswordForm.fieldRequired)],
+            currentPassword: [isRequired(context?.errorsPasswordForm?.fieldRequired || 'Field is required')],
+            newPassword: [isRequired(context?.errorsPasswordForm?.fieldRequired || 'Field is required')],
             newPasswordVerify: [
-                isRequired(context.errorsPasswordForm.fieldRequired),
+                isRequired(context?.errorsPasswordForm?.fieldRequired || 'Field is required'),
                 {
                     name: 'isPasswordMatch',
                     rule: isPasswordMatchRule,
-                    message: context.errorsPasswordForm.passwordMatch,
+                    message: context?.errorsPasswordForm?.passwordMatch || 'Passwords do not match',
                 },
             ],
         }),
