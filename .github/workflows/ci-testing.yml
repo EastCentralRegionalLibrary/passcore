@@ -55,6 +55,12 @@ jobs:
             --property:PASSCORE_PROVIDER=DEBUG \
             --no-restore
 
+      - name: Run Frontend Typecheck and Lint
+        run: |
+          npm run typecheck
+          npm run lint
+        working-directory: src/Unosquare.PassCore.Web/ClientApp
+
       - name: Run Backend Unit Tests
         run: |
           set -euo pipefail

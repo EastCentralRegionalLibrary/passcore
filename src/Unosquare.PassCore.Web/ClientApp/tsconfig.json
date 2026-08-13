@@ -18,20 +18,17 @@
         "forceConsistentCasingInFileNames": true,
         // Emit
         "noEmit": true,
-        // Note sourceMap does nothing with noEmit true
-        "sourceMap": true,
         // Build behavior
         "isolatedModules": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "types": [
+            "node"
+        ]
     },
     "include": [
         "./**/*"
     ],
     "exclude": [
-        "node_modules",
-        "build",
-        "scripts",
-        "acceptance-tests",
-        "webpack"
+        "node_modules"
     ]
 }
