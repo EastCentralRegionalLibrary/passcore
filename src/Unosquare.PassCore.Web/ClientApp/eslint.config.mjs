@@ -16,7 +16,8 @@ export default [
       'react-hooks': pluginReactHooks
     },
     rules: {
-      ...pluginReactHooks.configs.recommended.rules
+      ...pluginReactHooks.configs.recommended.rules,
+      'react-hooks/exhaustive-deps': 'error'
     }
   },
   {
