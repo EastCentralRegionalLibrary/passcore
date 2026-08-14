@@ -11,7 +11,7 @@ import { resolveAppSettings } from './Utils/AppSettings';
 import { IGlobalContext } from './types/Providers';
 
 export function Main() {
-    const [settings, isLoading, error] = useEffectWithLoading<IGlobalContext>(resolveAppSettings, {} as IGlobalContext, []);
+    const [settings, isLoading, error] = useEffectWithLoading<IGlobalContext>(resolveAppSettings, {} as IGlobalContext);
 
     useEffect(() => {
         if (settings?.recaptcha?.siteKey && settings.recaptcha.siteKey !== '') {
