@@ -36,7 +36,7 @@ export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
                 size="normal"
                 render="explicit"
                 sitekey={siteKey}
-                onloadCallback={onLoadRecaptcha}
+                onLoad={onLoadRecaptcha}
                 onSuccess={verifyCallback}
             />
         </Box>
