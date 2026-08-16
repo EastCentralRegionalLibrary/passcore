@@ -1,9 +1,8 @@
-import { useState, useEffect, type DependencyList } from 'react';
+import { useState, useEffect } from 'react';
 
 export function useEffectWithLoading<T>(
     effect: () => Promise<T>,
-    initialValue: T,
-    inputs: DependencyList
+    initialValue: T
 ): [T, boolean, Error | null] {
     const [getter, setter] = useState(initialValue);
     const [isLoading, setIsLoading] = useState(true);
@@ -31,7 +30,8 @@ export function useEffectWithLoading<T>(
         return (): void => {
             _isMounted = false;
         };
-    }, inputs);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- Run effect once on mount like a standard loader hook
+    }, []);
 
     return [getter, isLoading, error];
 }

@@ -183,7 +183,7 @@ export function ChangePasswordForm({
             resetTouchedState();
             changeResetState(false);
         }
-    }, [shouldReset, changeResetState]);
+    }, [shouldReset, changeResetState, resetTouchedState]);
 
     const setGenerated = useCallback((password: string) => {
         setFields((prevFields) => ({

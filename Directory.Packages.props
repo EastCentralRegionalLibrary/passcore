@@ -14,7 +14,6 @@
 
     <PackageVersion Include="SimpleBase" Version="3.0.2" />
     <PackageVersion Include="zxcvbn-core" Version="7.0.92" />
-    <PackageVersion Include="Microsoft.TypeScript.MSBuild" Version="4.6.4" />
     <PackageVersion Include="Novell.Directory.Ldap.NETStandard" Version="3.6.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
     <PackageVersion Include="xunit" Version="2.7.0" />
