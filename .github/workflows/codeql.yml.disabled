@@ -1,3 +1,40 @@
+# =============================================================================
+# DISABLED — kept as a reference, not as a running workflow.
+#
+# GitHub Actions only picks up files ending in .yml or .yaml, so the .disabled
+# suffix on this filename is what stops it running. Nothing else about the file
+# has been changed.
+#
+# WHY IT IS DISABLED
+# This repository uses CodeQL "default setup", configured in Settings > Code
+# security > Code scanning. GitHub will not accept results from an advanced
+# configuration while default setup is enabled — such runs fail with:
+#
+#   Code Scanning could not process the submitted SARIF file:
+#   CodeQL analyses from advanced configurations cannot be processed when the
+#   default setup is enabled
+#
+# Default setup is also the better of the two here: it analyses csharp,
+# javascript-typescript AND actions, where the matrix below covers only csharp
+# and javascript, and it needs no pinned action versions to keep current.
+#
+# WHY IT IS KEPT
+# Default setup is a per-repository setting and does not carry across a fork.
+# Anyone forking PassCore who has not enabled it would otherwise have no code
+# scanning at all and no record of how to get it. This file is that record.
+#
+# TO RE-ENABLE
+#   1. Turn OFF default setup in Settings > Code security > Code scanning,
+#      switching code scanning to "Advanced". Leaving both on fails, as above.
+#   2. Rename this file back to codeql.yml.
+#   3. Re-resolve the three github/codeql-action SHAs pinned below before
+#      trusting them. Dependabot only scans live workflow files, so while this
+#      file is disabled its pins are NOT being updated and will drift. Resolve
+#      them against the peeled commit ref, which is what a pinned action needs:
+#        git ls-remote https://github.com/github/codeql-action "refs/tags/<tag>^{}"
+#      Note that codeql-action v2 is retired, so stay on v3 or later.
+# =============================================================================
+
 # For most projects, this workflow file will not need changing; you simply need
 # to commit it to your repository.
 #
