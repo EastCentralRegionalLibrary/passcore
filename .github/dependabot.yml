@@ -24,6 +24,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Only default-days is valid here. Dependabot rejects the semver-* keys for the
+    # github-actions ecosystem, and it rejects the whole file rather than the one
+    # entry, which silently stops updates for nuget and npm too.
     cooldown:
       default-days: 7
-      semver-major-days: 14
