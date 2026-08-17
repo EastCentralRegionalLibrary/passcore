@@ -1,15 +1,14 @@
 import { useMemo } from 'react';
 import { Box, LinearProgress, Typography, Tooltip, useTheme } from '@mui/material';
-import { zxcvbn, zxcvbnOptions } from '@zxcvbn-ts/core';
+import { ZxcvbnFactory } from '@zxcvbn-ts/core';
 import { dictionary as commonDictionary, adjacencyGraphs } from '@zxcvbn-ts/language-common';
 import { dictionary as enDictionary, translations } from '@zxcvbn-ts/language-en';
 
 /**
- * zxcvbn-ts global configuration
+ * zxcvbn-ts factory instance
  * Initialized once at module load
  */
-
-zxcvbnOptions.setOptions({
+const zxcvbn = new ZxcvbnFactory({
     translations,
     graphs: adjacencyGraphs,
     dictionary: {
@@ -63,7 +62,7 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
             };
         }
 
-        const result = zxcvbn(newPassword);
+        const result = zxcvbn.check(newPassword);
         const score = result.score;
 
         const barColor =

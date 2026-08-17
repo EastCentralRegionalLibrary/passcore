@@ -36,14 +36,18 @@
         "url": "https://github.com/EastCentralRegionalLibrary/passcore/issues"
     },
     "homepage": "https://github.com/EastCentralRegionalLibrary/passcore",
+    "alias": {
+        "@zxcvbn-ts/dictionary-compression/decompress": "@zxcvbn-ts/dictionary-compression/dist/decompress.mjs",
+        "@zxcvbn-ts/dictionary-compression/compress": "@zxcvbn-ts/dictionary-compression/dist/compress.mjs"
+    },
     "dependencies": {
         "@emotion/react": "^11.14.0",
         "@emotion/styled": "^11.14.1",
         "@mui/icons-material": "^9.3.1",
         "@mui/material": "^9.3.1",
-        "@zxcvbn-ts/core": "^3.0.4",
-        "@zxcvbn-ts/language-common": "^3.0.4",
-        "@zxcvbn-ts/language-en": "^3.0.2",
+        "@zxcvbn-ts/core": "^4.1.2",
+        "@zxcvbn-ts/language-common": "^4.1.3",
+        "@zxcvbn-ts/language-en": "^4.1.1",
         "react": "^19.0.0",
         "react-dom": "^19.0.0"
     },
