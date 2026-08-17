@@ -39,10 +39,10 @@ public class PasswordChangeProviderBaseTests
         // a provider author has to answer "what is your minimum length" rather
         // than inheriting a silent default. Returning null is a valid answer and
         // takes the shared logged-fallback path.
-        protected override int? ReadMinPwdLength()
+        protected override Task<int?> ReadMinPwdLength()
         {
             MinimumLengthLookups++;
-            return _minimumLengthLookup();
+            return Task.FromResult(_minimumLengthLookup());
         }
 
         protected override Task ChangePasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)

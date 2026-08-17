@@ -38,12 +38,12 @@ public class TestLdapPasswordChangeProvider : LdapPasswordChangeProvider
     /// </remarks>
     public Action<string?>? OnBindAsServiceAccount { get; set; }
 
-    internal override LdapConnection BindAsServiceAccount(string? correlationId = null)
+    internal override Task<LdapConnection> BindAsServiceAccount(string? correlationId = null)
     {
         OnBindAsServiceAccount?.Invoke(correlationId);
 
         // Return a dummy connection without connecting to any real server
-        return new LdapConnection();
+        return Task.FromResult(new LdapConnection());
     }
 
     /// <summary>
@@ -53,18 +53,18 @@ public class TestLdapPasswordChangeProvider : LdapPasswordChangeProvider
     /// </summary>
     public Action<string, string>? OnVerifyUserCredentials { get; set; }
 
-    internal override void VerifyUserCredentials(string userDn, string password)
+    internal override Task VerifyUserCredentials(string userDn, string password)
     {
         if (OnVerifyUserCredentials != null)
         {
             OnVerifyUserCredentials(userDn, password);
-            return;
+            return Task.CompletedTask;
         }
 
-        base.VerifyUserCredentials(userDn, password);
+        return base.VerifyUserCredentials(userDn, password);
     }
 
-    internal override ILdapSearchResults SearchLdap(
+    internal override Task<ILdapSearchResults> SearchLdap(
         LdapConnection ldap,
         string @base,
         int scope,
@@ -74,11 +74,11 @@ public class TestLdapPasswordChangeProvider : LdapPasswordChangeProvider
         LdapSearchConstraints cons)
     {
         if (OnSearchLdap != null)
-            return OnSearchLdap(filter, attrs);
+            return Task.FromResult(OnSearchLdap(filter, attrs));
 
         var mock = new Mock<ILdapSearchResults>();
-        mock.Setup(r => r.HasMore()).Returns(false);
-        return mock.Object;
+        mock.Setup(r => r.HasMoreAsync(default)).ReturnsAsync(false);
+        return Task.FromResult(mock.Object);
     }
 }
 
@@ -123,13 +123,13 @@ public class GroupMembershipParityTests
             if (filter.Contains("sAMAccountName="))
             {
                 var sMock = new Mock<ILdapSearchResults>();
-                sMock.Setup(s => s.HasMore()).Returns(true);
-                sMock.Setup(s => s.Next()).Returns(userEntry);
+                sMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                sMock.Setup(s => s.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
                 return sMock.Object;
             }
 
             var emptyMock = new Mock<ILdapSearchResults>();
-            emptyMock.Setup(s => s.HasMore()).Returns(false);
+            emptyMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             return emptyMock.Object;
         };
 
@@ -168,13 +168,13 @@ public class GroupMembershipParityTests
             if (filter.Contains("sAMAccountName="))
             {
                 var sMock = new Mock<ILdapSearchResults>();
-                sMock.Setup(s => s.HasMore()).Returns(true);
-                sMock.Setup(s => s.Next()).Returns(userEntry);
+                sMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                sMock.Setup(s => s.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
                 return sMock.Object;
             }
 
             var emptyMock = new Mock<ILdapSearchResults>();
-            emptyMock.Setup(s => s.HasMore()).Returns(false);
+            emptyMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             return emptyMock.Object;
         };
 
@@ -217,23 +217,23 @@ public class GroupMembershipParityTests
             if (filter.Contains("sAMAccountName="))
             {
                 var sMock = new Mock<ILdapSearchResults>();
-                sMock.Setup(s => s.HasMore()).Returns(true);
-                sMock.Setup(s => s.Next()).Returns(userEntry);
+                sMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                sMock.Setup(s => s.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
                 return sMock.Object;
             }
 
             if (filter.Contains("primaryGroupToken=1234"))
             {
                 var pMock = new Mock<ILdapSearchResults>();
-                pMock.SetupSequence(p => p.HasMore())
-                    .Returns(true)
-                    .Returns(false);
-                pMock.Setup(p => p.Next()).Returns(primaryGroupEntry);
+                pMock.SetupSequence(p => p.HasMoreAsync(It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(true)
+                    .ReturnsAsync(false);
+                pMock.Setup(p => p.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(primaryGroupEntry);
                 return pMock.Object;
             }
 
             var emptyMock = new Mock<ILdapSearchResults>();
-            emptyMock.Setup(s => s.HasMore()).Returns(false);
+            emptyMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             return emptyMock.Object;
         };
 
@@ -278,23 +278,23 @@ public class GroupMembershipParityTests
             if (filter.Contains("sAMAccountName="))
             {
                 var sMock = new Mock<ILdapSearchResults>();
-                sMock.Setup(s => s.HasMore()).Returns(true);
-                sMock.Setup(s => s.Next()).Returns(userEntry);
+                sMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                sMock.Setup(s => s.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
                 return sMock.Object;
             }
 
             if (filter.Contains("1.2.840.113556.1.4.1941"))
             {
                 var cMock = new Mock<ILdapSearchResults>();
-                cMock.SetupSequence(c => c.HasMore())
-                    .Returns(true)
-                    .Returns(false);
-                cMock.Setup(c => c.Next()).Returns(nestedGroupEntry);
+                cMock.SetupSequence(c => c.HasMoreAsync(It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(true)
+                    .ReturnsAsync(false);
+                cMock.Setup(c => c.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(nestedGroupEntry);
                 return cMock.Object;
             }
 
             var emptyMock = new Mock<ILdapSearchResults>();
-            emptyMock.Setup(s => s.HasMore()).Returns(false);
+            emptyMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             return emptyMock.Object;
         };
 
@@ -353,8 +353,8 @@ public class GroupMembershipParityTests
             if (filter.Contains("sAMAccountName="))
             {
                 var sMock = new Mock<ILdapSearchResults>();
-                sMock.Setup(s => s.HasMore()).Returns(true);
-                sMock.Setup(s => s.Next()).Returns(userEntry);
+                sMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                sMock.Setup(s => s.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
                 return sMock.Object;
             }
 
@@ -363,20 +363,20 @@ public class GroupMembershipParityTests
                 var cMock = new Mock<ILdapSearchResults>();
                 if (state == "nested")
                 {
-                    cMock.SetupSequence(c => c.HasMore())
-                        .Returns(true)
-                        .Returns(false);
-                    cMock.Setup(c => c.Next()).Returns(nestedGroupEntry);
+                    cMock.SetupSequence(c => c.HasMoreAsync(It.IsAny<CancellationToken>()))
+                        .ReturnsAsync(true)
+                        .ReturnsAsync(false);
+                    cMock.Setup(c => c.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(nestedGroupEntry);
                 }
                 else
                 {
-                    cMock.Setup(c => c.HasMore()).Returns(false);
+                    cMock.Setup(c => c.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
                 }
                 return cMock.Object;
             }
 
             var emptyMock = new Mock<ILdapSearchResults>();
-            emptyMock.Setup(s => s.HasMore()).Returns(false);
+            emptyMock.Setup(s => s.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             return emptyMock.Object;
         };
 

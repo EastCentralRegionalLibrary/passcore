@@ -98,4 +98,40 @@ public static class DomainPasswordPolicy
             return fallback;
         }
     }
+
+    /// <summary>
+    /// Asynchronously resolves the minimum password length: returns the looked-up value when
+    /// present, otherwise logs at Warning and returns <paramref name="fallback"/>.
+    /// Never throws — a lookup failure is turned into the logged fallback.
+    /// </summary>
+    /// <param name="logger">The provider's logger.</param>
+    /// <param name="lookup">The directory-specific lookup; returns the domain's
+    /// minimum length, or <see langword="null"/> when it is unavailable. May throw,
+    /// in which case the exception is logged and the fallback is returned.</param>
+    /// <param name="fallback">The value to advertise when the lookup yields nothing.</param>
+    /// <returns>The resolved minimum length and whether it came from the directory.</returns>
+    public static async System.Threading.Tasks.Task<(int Length, bool FromDirectory)> ResolveMinimumLengthAsync(
+        ILogger logger,
+        Func<System.Threading.Tasks.Task<int?>> lookup,
+        int fallback = DefaultMinimumLength)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(lookup);
+
+        try
+        {
+            if (await lookup().ConfigureAwait(false) is { } minLength)
+            {
+                return (minLength, true);
+            }
+
+            LogLookupFailed(logger, fallback, null);
+            return (fallback, false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogLookupFailed(logger, fallback, ex);
+            return (fallback, false);
+        }
+    }
 }

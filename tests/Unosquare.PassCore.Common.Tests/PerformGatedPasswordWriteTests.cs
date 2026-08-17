@@ -57,7 +57,7 @@ public class PerformGatedPasswordWriteTests
 
         protected override bool AdministrativeResetSupported => _administrativeResetSupported;
 
-        protected override int? ReadMinPwdLength() => null;
+        protected override Task<int?> ReadMinPwdLength() => Task.FromResult<int?>(null);
 
         public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username) =>
             throw new NotImplementedException();
@@ -69,13 +69,13 @@ public class PerformGatedPasswordWriteTests
 
         public int ResetInvocations { get; private set; }
 
-        public void RunGatedWrite(
+        public Task RunGatedWrite(
             PasswordChangeContext context,
             bool currentPasswordVerified,
             Exception? changeFailure,
             Exception? resetFailure = null)
         {
-            PerformGatedPasswordWrite(
+            return PerformGatedPasswordWrite(
                 context,
                 currentPasswordVerified,
                 writeChangeAsUser: () =>
@@ -83,21 +83,23 @@ public class PerformGatedPasswordWriteTests
                     ChangeInvocations++;
                     if (changeFailure is not null)
                         throw changeFailure;
+                    return Task.CompletedTask;
                 },
                 writeResetAsService: () =>
                 {
                     ResetInvocations++;
                     if (resetFailure is not null)
                         throw resetFailure;
+                    return Task.CompletedTask;
                 });
         }
 
-        public void RunGatedBlockedWrite(
+        public Task RunGatedBlockedWrite(
             PasswordChangeContext context,
             bool currentPasswordVerified,
             Exception? resetFailure = null)
         {
-            PerformGatedBlockedWrite(
+            return PerformGatedBlockedWrite(
                 context,
                 currentPasswordVerified,
                 writeResetAsService: () =>
@@ -105,6 +107,7 @@ public class PerformGatedPasswordWriteTests
                     ResetInvocations++;
                     if (resetFailure is not null)
                         throw resetFailure;
+                    return Task.CompletedTask;
                 });
         }
     }
@@ -144,13 +147,13 @@ public class PerformGatedPasswordWriteTests
     }
 
     [Fact]
-    public void BlockedByFlag_NotEligible_ThrowsChangeNotPermitted_ResetNeverInvoked()
+    public async Task BlockedByFlag_NotEligible_ThrowsChangeNotPermitted_ResetNeverInvoked()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: false, logger: logger);
         var context = MakeContext();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedBlockedWrite(context, currentPasswordVerified: true));
 
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
@@ -160,13 +163,13 @@ public class PerformGatedPasswordWriteTests
     }
 
     [Fact]
-    public void BlockedByFlag_Eligible_ResetInvokedOnce_ChangeNeverInvoked_AndLoggedExactlyOnce()
+    public async Task BlockedByFlag_Eligible_ResetInvokedOnce_ChangeNeverInvoked_AndLoggedExactlyOnce()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext(correlationId: "blocked-corr-id");
 
-        provider.RunGatedBlockedWrite(context, currentPasswordVerified: true);
+        await provider.RunGatedBlockedWrite(context, currentPasswordVerified: true);
 
         Assert.Equal(1, provider.ResetInvocations);
         Assert.Equal(0, provider.ChangeInvocations);
@@ -186,13 +189,13 @@ public class PerformGatedPasswordWriteTests
     /// flag) path, which had no test for this before.
     /// </summary>
     [Fact]
-    public void BlockedByFlag_CredentialsNotVerified_ThrowsAndNeverResets()
+    public async Task BlockedByFlag_CredentialsNotVerified_ThrowsAndNeverResets()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedBlockedWrite(context, currentPasswordVerified: false));
 
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
@@ -201,13 +204,13 @@ public class PerformGatedPasswordWriteTests
     }
 
     [Fact]
-    public void ChangeSucceeds_NeitherResetNorThrow_NothingLogged()
+    public async Task ChangeSucceeds_NeitherResetNorThrow_NothingLogged()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
 
-        provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: null);
+        await provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: null);
 
         Assert.Equal(1, provider.ChangeInvocations);
         Assert.Equal(0, provider.ResetInvocations);
@@ -215,13 +218,13 @@ public class PerformGatedPasswordWriteTests
     }
 
     [Fact]
-    public void ChangeFails_ChangeNotPermittedClass_Eligible_ResetInvoked_AndLoggedExactlyOnce()
+    public async Task ChangeFails_ChangeNotPermittedClass_Eligible_ResetInvoked_AndLoggedExactlyOnce()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext(correlationId: "change-corr-id");
 
-        provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: ChangeNotPermittedFailure());
+        await provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: ChangeNotPermittedFailure());
 
         Assert.Equal(1, provider.ChangeInvocations);
         Assert.Equal(1, provider.ResetInvocations);
@@ -235,14 +238,14 @@ public class PerformGatedPasswordWriteTests
     /// reset when the current password was never verified this request.
     /// </summary>
     [Fact]
-    public void ChangeFails_ChangeNotPermittedClass_CredentialsNotVerified_ThrowsAndNeverResets()
+    public async Task ChangeFails_ChangeNotPermittedClass_CredentialsNotVerified_ThrowsAndNeverResets()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var failure = ChangeNotPermittedFailure();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedWrite(context, currentPasswordVerified: false, changeFailure: failure));
 
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
@@ -257,14 +260,14 @@ public class PerformGatedPasswordWriteTests
     /// is ever rescuable.
     /// </summary>
     [Fact]
-    public void ChangeFails_NewPasswordPolicyClass_Eligible_ThrowsAndNeverResets()
+    public async Task ChangeFails_NewPasswordPolicyClass_Eligible_ThrowsAndNeverResets()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var failure = NewPasswordPolicyFailure();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: failure));
 
         Assert.Equal(ApiErrorCode.ComplexPassword, ex.ErrorCode);
@@ -274,14 +277,14 @@ public class PerformGatedPasswordWriteTests
     }
 
     [Fact]
-    public void AdministrativeResetNotSupported_ThrowsAndNeverResets_EvenWhenOtherwiseEligible()
+    public async Task AdministrativeResetNotSupported_ThrowsAndNeverResets_EvenWhenOtherwiseEligible()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger, administrativeResetSupported: false);
         var context = MakeContext();
         var failure = ChangeNotPermittedFailure();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: failure));
 
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
@@ -296,13 +299,13 @@ public class PerformGatedPasswordWriteTests
     /// eligibility computation.
     /// </summary>
     [Fact]
-    public void AdministrativeResetNotSupported_BlockedByFlag_ThrowsAndNeverResets()
+    public async Task AdministrativeResetNotSupported_BlockedByFlag_ThrowsAndNeverResets()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger, administrativeResetSupported: false);
         var context = MakeContext();
 
-        var ex = Assert.Throws<PasswordPolicyViolationException>(
+        var ex = await Assert.ThrowsAsync<PasswordPolicyViolationException>(
             () => provider.RunGatedBlockedWrite(context, currentPasswordVerified: true));
 
         Assert.Equal(ApiErrorCode.ChangeNotPermitted, ex.ErrorCode);
@@ -318,14 +321,14 @@ public class PerformGatedPasswordWriteTests
     /// and the reset is never attempted.
     /// </summary>
     [Fact]
-    public void ChangeFails_UntranslatableException_BecomesDirectoryUnavailable_ResetNeverInvoked()
+    public async Task ChangeFails_UntranslatableException_BecomesDirectoryUnavailable_ResetNeverInvoked()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var failure = new InvalidOperationException("not a directory error at all");
 
-        var ex = Assert.Throws<DirectoryUnavailableException>(
+        var ex = await Assert.ThrowsAsync<DirectoryUnavailableException>(
             () => provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: failure));
 
         Assert.Equal(DirectoryErrorTranslator.DirectoryFailureMessage, ex.Message);
@@ -343,14 +346,14 @@ public class PerformGatedPasswordWriteTests
     /// shape so a pass here cannot be explained by coincidental rescue logic.
     /// </summary>
     [Fact]
-    public void ChangeFails_AlreadyCuratedPasswordChangeException_ReachesCallerUnwrapped()
+    public async Task ChangeFails_AlreadyCuratedPasswordChangeException_ReachesCallerUnwrapped()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var curated = new InvalidCredentialsException("already curated");
 
-        var ex = Assert.Throws<InvalidCredentialsException>(
+        var ex = await Assert.ThrowsAsync<InvalidCredentialsException>(
             () => provider.RunGatedWrite(context, currentPasswordVerified: true, changeFailure: curated));
 
         Assert.Same(curated, ex);
@@ -365,14 +368,14 @@ public class PerformGatedPasswordWriteTests
     /// failure is.
     /// </summary>
     [Fact]
-    public void ResetThrows_PropagatesUnchanged_NotSwallowedOrRetranslated()
+    public async Task ResetThrows_PropagatesUnchanged_NotSwallowedOrRetranslated()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var resetFailure = new InvalidOperationException("the reset closure itself blew up");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => provider.RunGatedWrite(
                 context,
                 currentPasswordVerified: true,
@@ -392,14 +395,14 @@ public class PerformGatedPasswordWriteTests
     /// for the pre-flight (blocked-by-flag) path.
     /// </summary>
     [Fact]
-    public void BlockedByFlag_ResetThrows_PropagatesUnchanged()
+    public async Task BlockedByFlag_ResetThrows_PropagatesUnchanged()
     {
         var logger = new CapturingLogger();
         var provider = MakeProvider(allowAdministrativeReset: true, logger: logger);
         var context = MakeContext();
         var resetFailure = new InvalidOperationException("the reset closure itself blew up");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => provider.RunGatedBlockedWrite(context, currentPasswordVerified: true, resetFailure: resetFailure));
 
         Assert.Same(resetFailure, ex);

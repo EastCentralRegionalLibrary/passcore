@@ -162,12 +162,12 @@ public class ShippedConfigurationUsernameFormTests
             var results = new Mock<ILdapSearchResults>();
             if (filter == "(sAMAccountName=jdoe)")
             {
-                results.Setup(r => r.HasMore()).Returns(true);
-                results.Setup(r => r.Next()).Returns(userEntry);
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+                results.Setup(r => r.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(userEntry);
             }
             else
             {
-                results.Setup(r => r.HasMore()).Returns(false);
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             }
 
             return results.Object;

@@ -147,8 +147,8 @@ public class ServiceAccountConnectionCostTests
         var mock = new Mock<ILdapSearchResults>();
         var remaining = new Queue<LdapEntry>(entries);
 
-        mock.Setup(r => r.HasMore()).Returns(() => remaining.Count > 0);
-        mock.Setup(r => r.Next()).Returns(() => remaining.Dequeue());
+        mock.Setup(r => r.HasMoreAsync(It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(() => remaining.Count > 0);
+        mock.Setup(r => r.NextAsync(It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(() => remaining.Dequeue());
         return mock.Object;
     }
 }

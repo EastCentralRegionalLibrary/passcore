@@ -264,7 +264,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <see cref="IAppSettings.ErrorDisclosureMode"/> setting shared by both
         /// providers; see <see cref="ErrorDisclosureMode"/> for the trade-off.
         /// </remarks>
-        protected override Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
+        protected override async Task ChangeDirectoryPasswordCore(PasswordChangeContext context, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(context);
 
@@ -321,11 +321,11 @@ namespace Unosquare.PassCore.PasswordProvider
             // returned true.
             if (userPrincipal.UserCannotChangePassword)
             {
-                HandleCannotChangePassword(context, userPrincipal, currentPasswordVerified: true);
+                await HandleCannotChangePassword(context, userPrincipal, currentPasswordVerified: true).ConfigureAwait(false);
             }
             else
             {
-                UpdatePassword(context, userPrincipal, currentPasswordVerified: true);
+                await UpdatePassword(context, userPrincipal, currentPasswordVerified: true).ConfigureAwait(false);
             }
 
             // No userPrincipal.Save() here. Nothing in this provider ever assigns a
@@ -335,7 +335,6 @@ namespace Unosquare.PassCore.PasswordProvider
             // through this object. A Save() would therefore have nothing to persist —
             // it was left behind by the removed pre-flight 'pwdLastSet' write (see
             // docs/UPGRADING-error-routing.md).
-            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -587,7 +586,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="context">The password change context.</param>
         /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
         /// <param name="currentPasswordVerified">Whether the current password was verified in this request.</param>
-        private void UpdatePassword(
+        private Task UpdatePassword(
             PasswordChangeContext context,
             AuthenticablePrincipal userPrincipal,
             bool currentPasswordVerified)
@@ -600,7 +599,7 @@ namespace Unosquare.PassCore.PasswordProvider
             // bodies are the EXISTING write calls, unchanged, and stay in this
             // file — see the remarks on PerformGatedPasswordWrite for why that
             // matters to AdProviderDirectoryWriteAuditTests.
-            PerformGatedPasswordWrite(
+            return PerformGatedPasswordWrite(
                 context,
                 currentPasswordVerified,
                 writeChangeAsUser: () =>
@@ -611,8 +610,14 @@ namespace Unosquare.PassCore.PasswordProvider
                         userPrincipal.ChangePassword(context.CurrentPassword, context.NewPassword);
                     else
                         entry.Invoke("ChangePassword", new object[] { context.CurrentPassword, context.NewPassword });
+
+                    return Task.CompletedTask;
                 },
-                writeResetAsService: () => PerformAdministrativeReset(context, userPrincipal));
+                writeResetAsService: () =>
+                {
+                    PerformAdministrativeReset(context, userPrincipal);
+                    return Task.CompletedTask;
+                });
         }
 
         /// <summary>
@@ -629,7 +634,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// <param name="context">The password change context.</param>
         /// <param name="userPrincipal">The UserPrincipal object for the user.</param>
         /// <param name="currentPasswordVerified">Whether the current password was verified in this request.</param>
-        private void HandleCannotChangePassword(
+        private Task HandleCannotChangePassword(
             PasswordChangeContext context,
             AuthenticablePrincipal userPrincipal,
             bool currentPasswordVerified)
@@ -637,10 +642,14 @@ namespace Unosquare.PassCore.PasswordProvider
             // The user-context ChangePassword is doomed for this account and
             // must not be attempted: PerformGatedBlockedWrite goes straight to
             // the gate and, if eligible, the reset closure below.
-            PerformGatedBlockedWrite(
+            return PerformGatedBlockedWrite(
                 context,
                 currentPasswordVerified,
-                writeResetAsService: () => PerformAdministrativeReset(context, userPrincipal));
+                writeResetAsService: () =>
+                {
+                    PerformAdministrativeReset(context, userPrincipal);
+                    return Task.CompletedTask;
+                });
         }
 
         /// <summary>
@@ -924,7 +933,7 @@ namespace Unosquare.PassCore.PasswordProvider
         /// fallback decision belong to the base class; this supplies only the
         /// AccountManagement-specific lookup.
         /// </remarks>
-        protected override int? ReadMinPwdLength()
+        protected override Task<int?> ReadMinPwdLength()
         {
             DirectoryEntry? entry = null; // Initialize to null for try-finally
             try
@@ -933,7 +942,8 @@ namespace Unosquare.PassCore.PasswordProvider
                     ? Domain.GetCurrentDomain().GetDirectoryEntry()
                     : GetDirectoryEntry();
 
-                return entry?.Properties["minPwdLength"]?.Value is int minLength ? minLength : null;
+                var val = entry?.Properties["minPwdLength"]?.Value is int minLength ? minLength : (int?)null;
+                return Task.FromResult(val);
             }
             finally
             {

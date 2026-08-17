@@ -45,7 +45,7 @@ public class DirectoryPasswordChangeProviderBaseTests
         {
         }
 
-        protected override int? ReadMinPwdLength() => null;
+        protected override Task<int?> ReadMinPwdLength() => Task.FromResult<int?>(null);
 
         public override Task<IResolvedGroupMembership> ResolveMembershipAsync(string username) =>
             throw new NotImplementedException();

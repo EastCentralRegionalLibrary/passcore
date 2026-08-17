@@ -269,20 +269,20 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// definitive, and a negative answer requires every lookup that could still have
     /// matched to have completed.
     /// </summary>
-    private Task<GroupMembershipAnswer> IsMemberOfAnyGroup(
+    private async Task<GroupMembershipAnswer> IsMemberOfAnyGroup(
         string username, string[] groupNames, ResolvedUserCache? resolution = null)
     {
         if (groupNames.Length == 0)
-            return Task.FromResult(GroupMembershipAnswer.NotMember);
+            return GroupMembershipAnswer.NotMember;
 
         try
         {
-            using var ldap = BindAsServiceAccount();
+            using var ldap = await BindAsServiceAccount();
 
             // Resolved inside the try so that a failure here is translated exactly as
             // it always was, and cached on the resolution so a second evaluation of
             // the same request does not repeat it.
-            var user = resolution?.User ?? FindUser(ldap, username);
+            var user = resolution?.User ?? await FindUser(ldap, username);
             if (resolution is not null)
                 resolution.User = user;
 
@@ -313,11 +313,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 if (matchedName is null)
                     continue;
 
-                switch (ClassifyGroupByDn(ldap, dn))
+                switch (await ClassifyGroupByDn(ldap, dn))
                 {
                     case GroupTypeClass.Security:
                     case GroupTypeClass.Absent:
-                        return Task.FromResult(GroupMembershipAnswer.Member);
+                        return GroupMembershipAnswer.Member;
                     case GroupTypeClass.Distribution:
                         // Not a match. Said out loud, because it changes the answer
                         // and group type is mutable.
@@ -332,11 +332,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             {
                 // Robust check for well-known RIDs:
                 if (user.PrimaryGroupId == "513" && groupNames.Any(g => g.Equals("Domain Users", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(GroupMembershipAnswer.Member);
+                    return GroupMembershipAnswer.Member;
                 if (user.PrimaryGroupId == "512" && groupNames.Any(g => g.Equals("Domain Admins", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(GroupMembershipAnswer.Member);
+                    return GroupMembershipAnswer.Member;
                 if (user.PrimaryGroupId == "519" && groupNames.Any(g => g.Equals("Enterprise Admins", StringComparison.OrdinalIgnoreCase)))
-                    return Task.FromResult(GroupMembershipAnswer.Member);
+                    return GroupMembershipAnswer.Member;
 
                 // primaryGroupID is a RID, read back from the directory as a string.
                 // Validating it as an integer is what keeps it inert in the filter
@@ -350,7 +350,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                     {
                         var primaryFilter = FormattableString.Invariant(
                             $"(primaryGroupToken={primaryGroupToken})");
-                        var primarySearch = SearchLdap(
+                        var primarySearch = await SearchLdap(
                             ldap,
                             _options.LdapSearchBase!,
                             LdapConnection.ScopeSub,
@@ -359,11 +359,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                             false,
                             _searchConstraints);
 
-                        if (primarySearch.HasMore())
+                        if (await primarySearch.HasMoreAsync())
                         {
-                            var primaryDn = primarySearch.Next().Dn;
+                            var primaryDn = (await primarySearch.NextAsync()).Dn;
                             if (groupNames.Any(groupName => DnMatchesGroup(primaryDn, groupName)))
-                                return Task.FromResult(GroupMembershipAnswer.Member);
+                                return GroupMembershipAnswer.Member;
                         }
                     }
                     catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
@@ -408,7 +408,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 // distribution group" from "this directory has no groupType attribute",
                 // which is exactly what the non-AD fallback turns on, and not every
                 // directory implements the extensible match in the first place.
-                var chainSearch = SearchLdap(
+                var chainSearch = await SearchLdap(
                     ldap,
                     _options.LdapSearchBase!,
                     LdapConnection.ScopeSub,
@@ -417,9 +417,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                     false,
                     _searchConstraints);
 
-                while (chainSearch.HasMore())
+                while (await chainSearch.HasMoreAsync())
                 {
-                    var entry = chainSearch.Next();
+                    var entry = await chainSearch.NextAsync();
                     var matchedName = groupNames.FirstOrDefault(groupName => DnMatchesGroup(entry.Dn, groupName));
                     if (matchedName is null)
                         continue;
@@ -428,7 +428,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                     {
                         case GroupTypeClass.Security:
                         case GroupTypeClass.Absent:
-                            return Task.FromResult(GroupMembershipAnswer.Member);
+                            return GroupMembershipAnswer.Member;
                         case GroupTypeClass.Distribution:
                             if (reportedNonSecurityGroups.Add(entry.Dn))
                                 LogGroupNotSecurityEnabled(Logger, matchedName, entry.Dn, null);
@@ -452,10 +452,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             // shared resolution turns that into the infrastructure response rather
             // than letting it read as "not a member" — reporting it here rather than
             // throwing keeps that translation in one place for both providers.
-            return Task.FromResult(
-                undetermined is null
-                    ? GroupMembershipAnswer.NotMember
-                    : GroupMembershipAnswer.Undetermined(undetermined));
+            return undetermined is null
+                ? GroupMembershipAnswer.NotMember
+                : GroupMembershipAnswer.Undetermined(undetermined);
         }
         catch (PasswordChangeException)
         {
@@ -491,14 +490,14 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// Costs a bind plus two searches, which is why the base class caches the
     /// result rather than calling this per request.
     /// </remarks>
-    protected override int? ReadMinPwdLength()
+    protected override async Task<int?> ReadMinPwdLength()
     {
-        using var ldap = BindAsServiceAccount();
+        using var ldap = await BindAsServiceAccount();
 
         string domainNcRootDn = "";
         try
         {
-            var rootDseSearch = SearchLdap(
+            var rootDseSearch = await SearchLdap(
                 ldap,
                 "",
                 LdapConnection.ScopeBase,
@@ -507,9 +506,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 false,
                 _searchConstraints);
 
-            if (rootDseSearch.HasMore())
+            if (await rootDseSearch.HasMoreAsync())
             {
-                var entry = rootDseSearch.Next();
+                var entry = await rootDseSearch.NextAsync();
                 var attributeSet = entry.GetAttributeSet();
                 var defaultNamingContextKey = attributeSet.Keys
                     .FirstOrDefault(k => k.Equals("defaultNamingContext", StringComparison.OrdinalIgnoreCase));
@@ -532,7 +531,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         if (string.IsNullOrEmpty(domainNcRootDn))
             return null;
 
-        var ncSearch = SearchLdap(
+        var ncSearch = await SearchLdap(
             ldap,
             domainNcRootDn,
             LdapConnection.ScopeBase,
@@ -541,9 +540,9 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             false,
             _searchConstraints);
 
-        if (ncSearch.HasMore())
+        if (await ncSearch.HasMoreAsync())
         {
-            var entry = ncSearch.Next();
+            var entry = await ncSearch.NextAsync();
             var attributeSet = entry.GetAttributeSet();
             var minPwdLengthKey = attributeSet.Keys
                 .FirstOrDefault(k => k.Equals("minPwdLength", StringComparison.OrdinalIgnoreCase));
@@ -590,11 +589,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// where it must still prove the current password: exactly what it would have done
     /// before this change.</para>
     /// </remarks>
-    private GroupTypeClass ClassifyGroupByDn(LdapConnection ldap, string dn)
+    private async Task<GroupTypeClass> ClassifyGroupByDn(LdapConnection ldap, string dn)
     {
         try
         {
-            var search = SearchLdap(
+            var search = await SearchLdap(
                 ldap,
                 dn,
                 LdapConnection.ScopeBase,
@@ -603,7 +602,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 false,
                 _searchConstraints);
 
-            return search.HasMore() ? ClassifyGroupType(search.Next()) : GroupTypeClass.Absent;
+            return await search.HasMoreAsync() ? ClassifyGroupType(await search.NextAsync()) : GroupTypeClass.Absent;
         }
         catch (Exception ex) when (ex is LdapException || ex is DirectoryUnavailableException)
         {
@@ -770,7 +769,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     protected override bool AdministrativeResetSupported => _options.LdapChangePasswordWithDelAdd;
 
     /// <inheritdoc />
-    protected override Task ChangeDirectoryPasswordCore(
+    protected override async Task ChangeDirectoryPasswordCore(
         PasswordChangeContext context,
         CancellationToken cancellationToken)
     {
@@ -788,21 +787,21 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             // pipeline that runs before this includes an outbound call to Have I Been
             // Pwned, and a request-scoped connection would sit open across that
             // third-party round trip. The AD provider draws the same boundary.
-            using var ldap = BindAsServiceAccount(context.CorrelationId);
+            using var ldap = await BindAsServiceAccount(context.CorrelationId);
 
             // 1. Resolve user DN (search on the shared service-account connection)
-            var user = FindUser(ldap, context.Username);
+            var user = await FindUser(ldap, context.Username);
 
             // 2. Verify current credentials (portable across LDAP servers). This binds
             //    as the user on its OWN connection -- the service-account connection
             //    above must keep its identity for the write below.
-            VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
+            await VerifyUserCredentials(user.DistinguishedName, context.CurrentPassword);
 
             // 3. Perform password change using administrative context. The
             //    verified flag is derived from control flow: VerifyUserCredentials
             //    throws on failure, so this line is reachable only after the user
             //    proved knowledge of the current password in this request.
-            ExecutePasswordChange(ldap, user.DistinguishedName, context, currentPasswordVerified: true);
+            await ExecutePasswordChange(ldap, user.DistinguishedName, context, currentPasswordVerified: true);
         }
         catch (LdapException ex)
         {
@@ -814,8 +813,6 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             // must not re-scan for a Win32 code.
             throw TranslateDirectoryException(ex);
         }
-
-        return Task.CompletedTask;
     }
 
     // ---------------------------------------------------------------------
@@ -830,11 +827,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// lets a password change resolve the user and write the new password over a
     /// single service-account bind rather than two.
     /// </remarks>
-    private LdapUser FindUser(LdapConnection ldap, string username)
+    private async Task<LdapUser> FindUser(LdapConnection ldap, string username)
     {
         var filter = BuildUserSearchFilter(username, _options.DefaultDomain, _options.LdapSearchFilter);
 
-        var search = SearchLdap(
+        var search = await SearchLdap(
             ldap,
             _options.LdapSearchBase!,
             LdapConnection.ScopeSub,
@@ -843,14 +840,14 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             false,
             _searchConstraints);
 
-        if (!search.HasMore())
+        if (!await search.HasMoreAsync())
         {
             // Posture-aware existence handling shared with the AD provider
             // (replaces the deprecated LDAP-only HideUserNotFound switch).
             throw DirectoryErrorTranslator.CreateUserNotFoundError(_options.ErrorDisclosureMode);
         }
 
-        var entry = search.Next();
+        var entry = await search.NextAsync();
 
         var attributeSet = entry.GetAttributeSet();
 
@@ -918,11 +915,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// so without a seam here nothing downstream of it — including how many
     /// service-account binds a password change actually costs — can be asserted.
     /// </remarks>
-    internal virtual void VerifyUserCredentials(string userDn, string password)
+    internal virtual async Task VerifyUserCredentials(string userDn, string password)
     {
         try
         {
-            using var ldap = Bind(userDn, password);
+            using var ldap = await Bind(userDn, password);
         }
         catch (LdapBindException ex)
         {
@@ -976,12 +973,12 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// ever rescuable. The Replace mechanism is already administrative, so
     /// neither detection nor fallback applies there.
     /// </summary>
-    private void ExecutePasswordChange(
+    private async Task ExecutePasswordChange(
         LdapConnection ldap, string userDn, PasswordChangeContext context, bool currentPasswordVerified)
     {
         if (!_options.LdapChangePasswordWithDelAdd)
         {
-            ChangePasswordReplace(
+            await ChangePasswordReplace(
                 ldap, userDn,
                 context.NewPassword);
             return;
@@ -994,16 +991,16 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         // only after credential verification, so the flag is never a pre-auth oracle.
         // Both closures' bodies are the EXISTING write calls, unchanged, and stay
         // in this file; see the remarks on PerformGatedPasswordWrite.
-        if (DetectCannotChangePassword(ldap, userDn))
+        if (await DetectCannotChangePassword(ldap, userDn))
         {
-            PerformGatedBlockedWrite(
+            await PerformGatedBlockedWrite(
                 context,
                 currentPasswordVerified,
                 writeResetAsService: () => AdminResetUnicodePwd(ldap, userDn, context.NewPassword));
             return;
         }
 
-        PerformGatedPasswordWrite(
+        await PerformGatedPasswordWrite(
             context,
             currentPasswordVerified,
             writeChangeAsUser: () => ChangePasswordDelAdd(
@@ -1019,11 +1016,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// history and minimum-age policy; only reachable through the
     /// <see cref="AdministrativeReset"/> gate.
     /// </summary>
-    private static void AdminResetUnicodePwd(
+    private static async Task AdminResetUnicodePwd(
         LdapConnection ldap, string userDn, string newPassword)
     {
         var newBytes = Encoding.Unicode.GetBytes($"\"{newPassword}\"");
-        ldap.Modify(userDn, new[]
+        await ldap.ModifyAsync(userDn, new[]
         {
             new LdapModification(
                 LdapModification.Replace,
@@ -1067,14 +1064,14 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// bytes — logs at Debug and reports not-flagged, so behavior degrades to
     /// exactly what it was before detection existed.
     /// </summary>
-    private bool DetectCannotChangePassword(LdapConnection ldap, string userDn)
+    private async Task<bool> DetectCannotChangePassword(LdapConnection ldap, string userDn)
     {
         try
         {
             var constraints = new LdapSearchConstraints();
             constraints.SetControls(new LdapControl(SdFlagsControlOid, false, SdFlagsDaclOnly));
 
-            var results = SearchLdap(
+            var results = await SearchLdap(
                 ldap,
                 userDn,
                 LdapConnection.ScopeBase,
@@ -1083,13 +1080,13 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 false,
                 constraints);
 
-            if (!results.HasMore())
+            if (!await results.HasMoreAsync())
             {
                 LogSdDetectionSkipped(Logger, userDn, null);
                 return false;
             }
 
-            var attributeSet = results.Next().GetAttributeSet();
+            var attributeSet = (await results.NextAsync()).GetAttributeSet();
             var sdKey = attributeSet.Keys
                 .FirstOrDefault(k => k.Equals("nTSecurityDescriptor", StringComparison.OrdinalIgnoreCase));
             var sdBytes = sdKey != null ? attributeSet[sdKey].ByteValue : null;
@@ -1218,16 +1215,16 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             || (authority == 5 && subAuthority == 10);
     }
 
-    private static void ChangePasswordReplace(
+    private static async Task ChangePasswordReplace(
         LdapConnection ldap, string userDn, string newPassword)
     {
         var attr = new LdapAttribute("userPassword", newPassword);
-        ldap.Modify(userDn, new[] {
+        await ldap.ModifyAsync(userDn, new[] {
             new LdapModification(LdapModification.Replace, attr)
         });
     }
 
-    private static void ChangePasswordDelAdd(
+    private static async Task ChangePasswordDelAdd(
         LdapConnection ldap,
         string userDn,
         string oldPassword,
@@ -1236,7 +1233,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         var oldBytes = Encoding.Unicode.GetBytes($"\"{oldPassword}\"");
         var newBytes = Encoding.Unicode.GetBytes($"\"{newPassword}\"");
 
-        ldap.Modify(userDn, new[]
+        await ldap.ModifyAsync(userDn, new[]
         {
             new LdapModification(
                 LdapModification.Delete,
@@ -1263,11 +1260,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// detail.
     /// </summary>
     /// <param name="correlationId">The request correlation ID, when available.</param>
-    internal virtual LdapConnection BindAsServiceAccount(string? correlationId = null)
+    internal virtual async Task<LdapConnection> BindAsServiceAccount(string? correlationId = null)
     {
         try
         {
-            return Bind(_options.LdapUsername, _options.LdapPassword);
+            return await Bind(_options.LdapUsername, _options.LdapPassword);
         }
         catch (LdapBindException ex)
         {
@@ -1292,7 +1289,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
     /// bind failures (post-connect) surface as <see cref="LdapBindException"/>
     /// so callers can decide whether to treat them as auth or infra failures.
     /// </summary>
-    private LdapConnection Bind(string bindDn, string password)
+    private async Task<LdapConnection> Bind(string bindDn, string password)
     {
         LdapException? lastConnectException = null;
 
@@ -1313,10 +1310,10 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
             try
             {
                 ldap.SecureSocketLayer = _options.LdapSecureSocketLayer;
-                ldap.Connect(host, _options.LdapPort);
+                await ldap.ConnectAsync(host, _options.LdapPort);
 
                 if (_options.LdapStartTls)
-                    ldap.StartTls();
+                    await ldap.StartTlsAsync();
             }
             catch (LdapException ex)
             {
@@ -1327,7 +1324,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
 
             try
             {
-                ldap.Bind(bindDn, password);
+                await ldap.BindAsync(bindDn, password);
                 return ldap;
             }
             catch (LdapException bindEx)
@@ -1590,7 +1587,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         return errors == System.Net.Security.SslPolicyErrors.None;
     }
 
-    internal virtual ILdapSearchResults SearchLdap(
+    internal virtual async Task<ILdapSearchResults> SearchLdap(
         LdapConnection ldap,
         string @base,
         int scope,
@@ -1599,7 +1596,7 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         bool typesOnly,
         LdapSearchConstraints cons)
     {
-        return ldap.Search(@base, scope, filter, attrs, typesOnly, cons);
+        return await ldap.SearchAsync(@base, scope, filter, attrs, typesOnly, cons);
     }
 
     private sealed record LdapUser(

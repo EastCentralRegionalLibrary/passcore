@@ -62,7 +62,7 @@ public class DebugPasswordChangeProvider : PasswordChangeProviderBase
     /// length policy is exercisable in development. See
     /// <see cref="DebugProviderOptions.MinimumLength"/> for why not null.
     /// </remarks>
-    protected override int? ReadMinPwdLength() => _options.MinimumLength;
+    protected override Task<int?> ReadMinPwdLength() => Task.FromResult<int?>(_options.MinimumLength);
 
     /// <inheritdoc />
     protected override async Task ChangePasswordCore(
