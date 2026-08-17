@@ -70,7 +70,21 @@
 		This list is valid ONLY for the current package-lock.json and MUST be re-derived whenever the frontend dependency tree
 		changes by querying `hasInstallScript` against package-lock.json.
 	-->
-	<Target Name="NpmInstall" BeforeTargets="Build">
+	<!--
+		SkipFrontendBuild=true omits the two targets below, so the project compiles
+		without installing npm dependencies or producing a wwwroot bundle.
+
+		This exists for consumers that need the C# assemblies and nothing else. The
+		Sonar analysis is the case in hand: it reads TypeScript from source and needs
+		the C# compiled, never the Parcel output, so it was paying for a full frontend
+		build it discarded, and inheriting that build's failure modes with it.
+
+		Do NOT set this for anything that serves the application. Without wwwroot the
+		site has no client, so every publish path (build_docker.yml, build_windows.yml,
+		ad-provider-smoke-test.yml, the LDAP smoke tests, ci-testing.yml) must leave it
+		unset.
+	-->
+	<Target Name="NpmInstall" BeforeTargets="Build" Condition="'$(SkipFrontendBuild)' != 'true'">
 		<Message Importance="high" Text="Performing first-run npm clean install..." />
 		<Exec Command="node --version" ContinueOnError="true">
 			<Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
@@ -92,7 +106,7 @@
 		<Exec Command="node version-script.mjs" WorkingDirectory="ClientApp" ContinueOnError="true" />
 	</Target>
 
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
+	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build" Condition="'$(SkipFrontendBuild)' != 'true'">
 		<Message Importance="high" Text="Running Parcel build..." />
 		<Exec Command="npm run build" WorkingDirectory="ClientApp" />
 	</Target>
