@@ -1,0 +1,137 @@
+name: Sonar Analysis
+
+# Replaces the inherited build-sonar.yml, which was copied from the upstream
+# Unosquare repository and hardcoded that project's SonarCloud project and
+# organization keys. It could never have produced a report here, and it was
+# disabled in the Actions UI and never ran once.
+#
+# Renamed rather than edited in place on purpose: a workflow disabled through
+# the Actions UI stays disabled no matter how its file changes, so editing the
+# old path would have left this switched off. A new path registers as a new,
+# enabled workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: SonarQube Cloud
+    # Windows is deliberate. Directory.Build.props expands TargetFrameworks to
+    # net8.0;net8.0-windows on Windows hosts, so the Active Directory provider
+    # is compiled and therefore analyzed. Every type in that project sits
+    # inside #if WINDOWS, so a Linux-only analysis would silently report on a
+    # codebase with the whole AD provider missing.
+    runs-on: windows-latest
+
+    # SONAR_TOKEN is not exposed to pull requests from forks. Skip those rather
+    # than failing them, and do not reach for pull_request_target to work
+    # around it: that would run untrusted pull-request code with the token in
+    # scope.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    permissions:
+      contents: read
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Sonar uses history to attribute issues to new code; a shallow clone
+          # degrades that.
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      # dotnet-sonarscanner runs on the JVM and requires Java 17 or later. The
+      # Windows runner image ships several JDKs and which one JAVA_HOME points
+      # at has changed between image releases, so pin one here instead of
+      # depending on the image default.
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Check whether SONAR_TOKEN is configured
+        id: token
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::warning::SONAR_TOKEN is not configured, so Sonar analysis is being skipped. Add it under Settings > Secrets and variables > Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache Sonar packages
+        if: steps.token.outputs.configured == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\sonar\cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Cache Sonar scanner
+        id: cache-sonar-scanner
+        if: steps.token.outputs.configured == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .\.sonar\scanner
+          key: ${{ runner.os }}-sonar-scanner
+          restore-keys: ${{ runner.os }}-sonar-scanner
+
+      - name: Install Sonar scanner
+        if: steps.token.outputs.configured == 'true' && steps.cache-sonar-scanner.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          New-Item -Path .\.sonar\scanner -ItemType Directory
+          dotnet tool update dotnet-sonarscanner --tool-path .\.sonar\scanner
+
+      - name: Build, test and analyze
+        if: steps.token.outputs.configured == 'true'
+        env:
+          # Lets the scanner detect pull-request context and decorate the pull
+          # request itself.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        shell: powershell
+        run: |
+          .\.sonar\scanner\dotnet-sonarscanner begin `
+            /k:"EastCentralRegionalLibrary_passcore" `
+            /o:"eastcentralregionallibrary" `
+            /d:sonar.token="$env:SONAR_TOKEN" `
+            /d:sonar.host.url="https://sonarcloud.io" `
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" `
+            /d:sonar.cs.vstest.reportsPaths="**/*.trx"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          dotnet build --no-incremental -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Coverage is the whole reason this runs tests rather than only
+          # building. Without it Sonar reports 0% against a suite of 842 tests,
+          # which reads as a regression rather than as missing data. Sonar's C#
+          # sensor reads OpenCover, not the Cobertura that coverlet emits by
+          # default, hence the explicit Format.
+          dotnet test -c Release --no-build `
+            --logger trx `
+            --collect:"XPlat Code Coverage;Format=opencover"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
