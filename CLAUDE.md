@@ -12,45 +12,57 @@ curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
 export PATH="$HOME/.dotnet:$PATH"          # needed in EVERY shell; nothing sets it for you
 
-# 2. Full test suite (expect 357 / 386 / 24 / 4 = 771, zero failures)
+# 2. Full test suite (expect 18 / 374 / 24 / 426 = 842, zero failures)
 dotnet test Unosquare.PassCore.sln -c Release
 
-# 3. The Windows-only AD provider, compiled on Linux
-dotnet build src/Unosquare.PassCore.PasswordProvider/Unosquare.PassCore.PasswordProvider.csproj \
-  -c Release -p:TargetFrameworks=net8.0-windows
+# 3. Everything, including the Windows-only AD provider, on Linux
+dotnet build Unosquare.PassCore.sln -c Release
 ```
 
 `-sSL` matters on step 1: `https://dot.net/v1/dotnet-install.sh` answers **301**, so `curl`
 without `-L` writes an empty file.
 
-## The one trap that costs the most time: `TargetFrameworks` is plural
+## Target frameworks: one per project, and never host-dependent
 
-`Directory.Build.props` sets the **plural** `TargetFrameworks`, and varies it by build host:
+Every project targets `net8.0`. Two exceptions, both of which pin their own framework:
+
+| Project | Framework |
+| --- | --- |
+| `Unosquare.PassCore.PasswordProvider` (AD) | `net8.0-windows`, always |
+| `Unosquare.PassCore.Web` | follows `PASSCORE_PROVIDER`: `net8.0-windows` for `AD`, else `net8.0` |
+
+Nothing multi-targets, so ordinary commands work: `dotnet build` on the solution succeeds on
+Linux, `dotnet publish` needs no `-f`, and the AD provider compiles without special flags.
+
+**If you pin a framework in a project, clear the plural at the same time:**
 
 ```xml
-<TargetFrameworks>net8.0</TargetFrameworks>                     <!-- default, incl. Linux -->
-<TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>      <!-- on Windows hosts -->
+<TargetFrameworks />
+<TargetFramework>net8.0-windows</TargetFramework>
 ```
 
-NuGet restore reads the **plural** property. So on Linux, restore writes a `project.assets.json`
-containing only `net8.0`, and asking the build for the Windows TFM the ordinary way fails:
+NuGet restore reads the **plural** `TargetFrameworks`, which `Directory.Build.props` sets. Setting
+only the singular property leaves restore producing assets for the inherited framework while the
+build asks for yours, and it fails with:
 
 ```
 NETSDK1005: Assets file '.../project.assets.json' doesn't have a target for 'net8.0-windows'.
 ```
 
-Overriding the **singular** `-p:TargetFramework=net8.0-windows` does *not* fix this — it changes
-what the build wants without changing what restore produced. Override the plural one:
+The AD provider carried exactly that bug. It was masked on Windows, because the props used to
+expand the plural to `net8.0;net8.0-windows` there, and on Linux the workaround was to pass
+`-p:TargetFrameworks=net8.0-windows` by hand.
 
-```bash
--p:TargetFrameworks=net8.0-windows
-```
+That host-varying plural is gone, and with it: publish refusing to run without `-f`
+(`NETSDK1129`), solution builds failing on Linux, three projects being compiled twice on Windows,
+and the frontend targets in the Web project running once per inner build — in parallel on Windows,
+where two concurrent `npm ci` processes corrupted `node_modules` and failed the Sonar job.
 
-This same plural/singular split has bitten the test projects before. `ci-testing.yml` carries a
-guard that fails the job if `dotnet test` reports "No test is available", because a project
-declaring singular `TargetFramework` skips the package `.props` imports, the xunit VSTest adapter
-never reaches the output directory, and **`dotnet test` then exits 0 having run zero assertions**.
-If you add a test project, declare `TargetFrameworks`.
+The plural/singular split still matters for **test projects**, in the other direction.
+`ci-testing.yml` guards against `dotnet test` reporting "No test is available", because a test
+project declaring the singular `TargetFramework` skips the package `.props` imports, the xunit
+VSTest adapter never reaches the output directory, and **`dotnet test` then exits 0 having run
+zero assertions**. If you add a test project, declare `TargetFrameworks` (plural).
 
 ### `EnableWindowsTargeting` is not needed
 
@@ -81,14 +93,17 @@ Both dead ends are recorded in a comment in
 
 ## Provider selection
 
-The Web project picks its password provider at compile time via `PASSCORE_PROVIDER`
-(`Unosquare.PassCore.Web.csproj:20-24`), which sets a matching `PASSCORE_*_PROVIDER` constant:
+The Web project picks its password provider at compile time via `PASSCORE_PROVIDER`, which selects
+the target framework, the referenced backend project, and a matching `PASSCORE_*_PROVIDER` constant:
 
 | Value | Provider | Notes |
 | --- | --- | --- |
-| `AD` | `Unosquare.PassCore.PasswordProvider` | Requires `TargetFramework=net8.0-windows`; the default when that TFM is active |
-| `LDAP` | `Zyborg.PassCore.PasswordProvider.LDAP` | Cross-platform; the default on any other TFM |
+| `AD` | `Unosquare.PassCore.PasswordProvider` | Builds the Web project as `net8.0-windows` |
+| `LDAP` | `Zyborg.PassCore.PasswordProvider.LDAP` | Cross-platform; **the default when unset** |
 | `DEBUG` | `Unosquare.PassCore.PasswordProvider.Debug` | What CI uses for backend + E2E runs |
+
+The provider decides the framework, not the reverse. `AD` is therefore never implied — ask for it
+explicitly, including in an IDE, or you get an LDAP build.
 
 ```bash
 # Backend as CI builds it

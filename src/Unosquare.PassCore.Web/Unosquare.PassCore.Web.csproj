@@ -14,10 +14,32 @@
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	</PropertyGroup>
 
-	<!-- Provider selection: chooses which backend project and #if constant is active. -->
+	<!--
+		Provider selection: chooses the target framework, the backend project and the
+		#if constant.
+
+		The provider decides the framework, not the other way round. Only the Active
+		Directory provider needs net8.0-windows, so only an AD build targets it, and
+		this project is single-targeted in every invocation.
+
+		It used to work in reverse: Directory.Build.props expanded TargetFrameworks to
+		net8.0;net8.0-windows on Windows hosts and the provider was inferred from
+		whichever framework was building. That made the build graph depend on the
+		machine rather than on what was being built, and everything awkward about
+		building this repository followed from it: `dotnet publish` refused to run
+		without -f (NETSDK1129), a Linux solution build failed with NETSDK1005, restore
+		wrote assets keyed to the plural property, and the frontend targets below ran
+		once per inner build, concurrently on Windows, where two `npm ci` processes
+		then raced in one directory and corrupted node_modules.
+
+		Note the behaviour change: AD is no longer implied by the framework, so an AD
+		build must ask for it with -p:PASSCORE_PROVIDER=AD. Every workflow already does.
+	-->
 	<PropertyGroup>
-		<PASSCORE_PROVIDER Condition="'$(PASSCORE_PROVIDER)' == '' AND '$(TargetFramework)' != 'net8.0-windows'">LDAP</PASSCORE_PROVIDER>
-		<PASSCORE_PROVIDER Condition="'$(PASSCORE_PROVIDER)' == '' AND '$(TargetFramework)' == 'net8.0-windows'">AD</PASSCORE_PROVIDER>
+		<PASSCORE_PROVIDER Condition="'$(PASSCORE_PROVIDER)' == ''">LDAP</PASSCORE_PROVIDER>
+		<TargetFrameworks />
+		<TargetFramework Condition="'$(PASSCORE_PROVIDER)' == 'AD'">net8.0-windows</TargetFramework>
+		<TargetFramework Condition="'$(PASSCORE_PROVIDER)' != 'AD'">net8.0</TargetFramework>
 		<DefineConstants Condition="'$(PASSCORE_PROVIDER)' == 'LDAP'">$(DefineConstants);PASSCORE_LDAP_PROVIDER</DefineConstants>
 		<DefineConstants Condition="'$(PASSCORE_PROVIDER)' == 'DEBUG'">$(DefineConstants);PASSCORE_DEBUG_PROVIDER</DefineConstants>
 		<DefineConstants Condition="'$(PASSCORE_PROVIDER)' == 'AD'">$(DefineConstants);PASSCORE_AD_PROVIDER</DefineConstants>
@@ -51,7 +73,7 @@
 		<ProjectReference Include="..\Zyborg.PassCore.PasswordProvider.LDAP\Zyborg.PassCore.PasswordProvider.LDAP.csproj" />
 	</ItemGroup>
 
-	<ItemGroup Condition="'$(PASSCORE_PROVIDER)' == 'AD' AND '$(TargetFramework)' == 'net8.0-windows'">
+	<ItemGroup Condition="'$(PASSCORE_PROVIDER)' == 'AD'">
 		<ProjectReference Include="..\Unosquare.PassCore.PasswordProvider\Unosquare.PassCore.PasswordProvider.csproj" />
 	</ItemGroup>
 
@@ -70,21 +92,7 @@
 		This list is valid ONLY for the current package-lock.json and MUST be re-derived whenever the frontend dependency tree
 		changes by querying `hasInstallScript` against package-lock.json.
 	-->
-	<!--
-		SkipFrontendBuild=true omits the two targets below, so the project compiles
-		without installing npm dependencies or producing a wwwroot bundle.
-
-		This exists for consumers that need the C# assemblies and nothing else. The
-		Sonar analysis is the case in hand: it reads TypeScript from source and needs
-		the C# compiled, never the Parcel output, so it was paying for a full frontend
-		build it discarded, and inheriting that build's failure modes with it.
-
-		Do NOT set this for anything that serves the application. Without wwwroot the
-		site has no client, so every publish path (build_docker.yml, build_windows.yml,
-		ad-provider-smoke-test.yml, the LDAP smoke tests, ci-testing.yml) must leave it
-		unset.
-	-->
-	<Target Name="NpmInstall" BeforeTargets="Build" Condition="'$(SkipFrontendBuild)' != 'true'">
+	<Target Name="NpmInstall" BeforeTargets="Build">
 		<Message Importance="high" Text="Performing first-run npm clean install..." />
 		<Exec Command="node --version" ContinueOnError="true">
 			<Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
@@ -106,7 +114,7 @@
 		<Exec Command="node version-script.mjs" WorkingDirectory="ClientApp" ContinueOnError="true" />
 	</Target>
 
-	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build" Condition="'$(SkipFrontendBuild)' != 'true'">
+	<Target Name="Parcel" DependsOnTargets="NpmInstall" BeforeTargets="Build">
 		<Message Importance="high" Text="Running Parcel build..." />
 		<Exec Command="npm run build" WorkingDirectory="ClientApp" />
 	</Target>

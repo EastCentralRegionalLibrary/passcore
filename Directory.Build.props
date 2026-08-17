@@ -1,13 +1,25 @@
 <Project>
 
-  <!-- Default: cross-platform -->
+  <!--
+    Every project here targets net8.0. The one exception is the Active Directory
+    provider, which needs net8.0-windows for System.DirectoryServices and pins
+    that itself, and Unosquare.PassCore.Web, which follows PASSCORE_PROVIDER.
+
+    This deliberately does not vary by build host. A previous version expanded
+    this to net8.0;net8.0-windows when building on Windows, which made the build
+    graph depend on the machine rather than on the projects: the same commit
+    produced a different set of assemblies on Windows than on Linux, publish
+    required an explicit -f there, restore wrote assets keyed to the plural
+    property, and multi-targeted projects ran their pre-build steps once per
+    framework in parallel.
+
+    Keep the plural TargetFrameworks. Test projects that declare the singular
+    TargetFramework skip the package .props imports, which leaves the xunit
+    VSTest adapter out of the output directory, and `dotnet test` then exits 0
+    having discovered nothing. ci-testing.yml guards against that recurring.
+  -->
   <PropertyGroup>
     <TargetFrameworks>net8.0</TargetFrameworks>
-  </PropertyGroup>
-
-  <!-- Windows builds also target Windows -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
   </PropertyGroup>
 
 </Project>

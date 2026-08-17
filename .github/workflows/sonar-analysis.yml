@@ -23,11 +23,13 @@ permissions:
 jobs:
   sonar:
     name: SonarQube Cloud
-    # Windows is deliberate. Directory.Build.props expands TargetFrameworks to
-    # net8.0;net8.0-windows on Windows hosts, so the Active Directory provider
-    # is compiled and therefore analyzed. Every type in that project sits
-    # inside #if WINDOWS, so a Linux-only analysis would silently report on a
-    # codebase with the whole AD provider missing.
+    # Windows keeps this analysis on the same platform the AD release is built
+    # for. The Active Directory provider targets net8.0-windows and every type
+    # in it sits inside #if WINDOWS, so it must be compiled for that framework
+    # to be analyzed at all rather than silently reported as an empty project.
+    # It does compile on Linux, so this could move to ubuntu if the minutes
+    # ever matter; running it here means the analyzed assemblies match what the
+    # Windows smoke test and the release build produce.
     runs-on: windows-latest
 
     # SONAR_TOKEN is not exposed to pull requests from forks. Skip those rather
@@ -125,22 +127,7 @@ jobs:
             /d:sonar.cs.vstest.reportsPaths="**/*.trx"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          # SkipFrontendBuild omits npm ci and the Parcel build. Nothing here
-          # consumes wwwroot: Sonar reads TypeScript from source and the C#
-          # analysis needs compilation only. It also removes a real hazard.
-          # Directory.Build.props expands TargetFrameworks to net8.0 and
-          # net8.0-windows on Windows hosts, so a solution build compiles this
-          # project twice and MSBuild runs those inner builds in parallel --
-          # which meant two `npm ci` processes racing in one ClientApp
-          # directory, one wiping node_modules while the other populated it:
-          #
-          #   npm warn cleanup Failed to remove some directories
-          #     EPERM: operation not permitted, rmdir '...\@eslint-community'
-          #   npm error ENOTDIR: mkdir '...\@typescript-eslint\typescript-estree'
-          #
-          # Observed on 2026-08-17. Only a Windows solution build hits it, so
-          # this job was the only one exposed.
-          dotnet build --no-incremental -c Release -p:SkipFrontendBuild=true
+          dotnet build --no-incremental -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # Coverage is the whole reason this runs tests rather than only
@@ -148,7 +135,7 @@ jobs:
           # which reads as a regression rather than as missing data. Sonar's C#
           # sensor reads OpenCover, not the Cobertura that coverlet emits by
           # default, hence the explicit Format.
-          dotnet test -c Release --no-build -p:SkipFrontendBuild=true `
+          dotnet test -c Release --no-build `
             --logger trx `
             --collect:"XPlat Code Coverage;Format=opencover"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
