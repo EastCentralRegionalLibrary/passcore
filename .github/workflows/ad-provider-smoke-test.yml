@@ -25,8 +25,32 @@ jobs:
       ASPNETCORE_URLS: http://localhost:5000
 
     steps:
+      # Superseding an older run is an optimization, never a prerequisite, so
+      # its failure must not decide this job's fate. Without this, a failed
+      # cancellation skips every step below -- the whole suite -- and the
+      # unconditional teardown then fails against a machine where "Setup WSL 2"
+      # never ran, reporting "Windows Subsystem for Linux has no installed
+      # distributions" as though that were the problem. Observed on 2026-08-17,
+      # when the GitHub API was returning "No server is currently available"
+      # and the cancellation call was one of its casualties.
+      #
+      # Note that the fix belongs here rather than in the teardown steps.
+      # Making those tolerate a missing WSL distribution would turn this into a
+      # GREEN job that silently ran no tests, which is the vacuous pass this
+      # repository has already been bitten by once -- see the "No test is
+      # available" guard in ci-testing.yml. A genuine setup failure must stay
+      # loud; only the cancellation is allowed to fail quietly.
+      #
+      # The condition names master because that is this repository's default
+      # branch. It previously said main, which no branch here is called, so it
+      # was always true and superseded runs were cancelled on the default
+      # branch too -- the opposite of the intent. Each push to master should
+      # get its own complete run, because after a squash merge that run is the
+      # only thing validating the merged result, and cancelling it loses the
+      # ability to attribute a break to a specific commit.
       - name: Cancel previous runs
-        if: ${{ github.ref != 'refs/heads/main' }}
+        if: ${{ github.ref != 'refs/heads/master' }}
+        continue-on-error: true
         uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
         with:
           access_token: ${{ github.token }}

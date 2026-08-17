@@ -125,7 +125,22 @@ jobs:
             /d:sonar.cs.vstest.reportsPaths="**/*.trx"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          dotnet build --no-incremental -c Release
+          # SkipFrontendBuild omits npm ci and the Parcel build. Nothing here
+          # consumes wwwroot: Sonar reads TypeScript from source and the C#
+          # analysis needs compilation only. It also removes a real hazard.
+          # Directory.Build.props expands TargetFrameworks to net8.0 and
+          # net8.0-windows on Windows hosts, so a solution build compiles this
+          # project twice and MSBuild runs those inner builds in parallel --
+          # which meant two `npm ci` processes racing in one ClientApp
+          # directory, one wiping node_modules while the other populated it:
+          #
+          #   npm warn cleanup Failed to remove some directories
+          #     EPERM: operation not permitted, rmdir '...\@eslint-community'
+          #   npm error ENOTDIR: mkdir '...\@typescript-eslint\typescript-estree'
+          #
+          # Observed on 2026-08-17. Only a Windows solution build hits it, so
+          # this job was the only one exposed.
+          dotnet build --no-incremental -c Release -p:SkipFrontendBuild=true
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # Coverage is the whole reason this runs tests rather than only
@@ -133,7 +148,7 @@ jobs:
           # which reads as a regression rather than as missing data. Sonar's C#
           # sensor reads OpenCover, not the Cobertura that coverlet emits by
           # default, hence the explicit Format.
-          dotnet test -c Release --no-build `
+          dotnet test -c Release --no-build -p:SkipFrontendBuild=true `
             --logger trx `
             --collect:"XPlat Code Coverage;Format=opencover"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
