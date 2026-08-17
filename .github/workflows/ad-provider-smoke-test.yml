@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   smoke-test:
     permissions:
@@ -24,18 +27,18 @@ jobs:
     steps:
       - name: Cancel previous runs
         if: ${{ github.ref != 'refs/heads/main' }}
-        uses: styfle/cancel-workflow-action@0.13.1
+        uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
         with:
           access_token: ${{ github.token }}
 
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Setup WSL 2
-        uses: Vampire/setup-wsl@v7
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
         with:
           additional-packages: podman ca-certificates
 
@@ -916,7 +919,7 @@ jobs:
           # --- end Configuration naming context probe --------------------------
 
       - name: Setup .NET SDKs
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
         with:
           dotnet-version: |
             8.0.x
@@ -934,7 +937,7 @@ jobs:
           dotnet --list-runtimes
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: 22
           cache: npm
