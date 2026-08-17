@@ -55,6 +55,21 @@
 		<ProjectReference Include="..\Unosquare.PassCore.PasswordProvider\Unosquare.PassCore.PasswordProvider.csproj" />
 	</ItemGroup>
 
+	<!--
+		npm lifecycle scripts (preinstall, install, postinstall) are disabled during `npm ci` using the ignore-scripts flag
+		to prevent malicious dependency hook execution. Only specific packages that genuinely require native compilation
+		or native binding builds are explicitly rebuilt via `npm rebuild`:
+		- @parcel/watcher: native file-watching binding
+		- @swc/core: native compiler binary
+		- lmdb: native DB binding (Parcel cache)
+		- fsevents: optional native macOS file-system events binding
+		- msgpackr-extract: optional native serialization accelerator
+
+		Note: fsevents and msgpackr-extract are optional dependencies (fsevents is darwin-only and msgpackr-extract improves performance)
+		which do not affect Linux CI runners, but are included so macOS developers and build-cache performance are preserved.
+		This list is valid ONLY for the current package-lock.json and MUST be re-derived whenever the frontend dependency tree
+		changes by querying `hasInstallScript` against package-lock.json.
+	-->
 	<Target Name="NpmInstall" BeforeTargets="Build">
 		<Message Importance="high" Text="Performing first-run npm clean install..." />
 		<Exec Command="node --version" ContinueOnError="true">
@@ -65,10 +80,14 @@
 			<Output TaskParameter="ExitCode" PropertyName="NpmVersionExitCode" />
 		</Exec>
 		<Error Condition="'$(NpmVersionExitCode)' != '0'" Text="npm is required but was not found. Ensure Node.js is installed correctly." />
-		<Exec Command="npm ci" WorkingDirectory="ClientApp">
+		<Exec Command="npm ci --ignore-scripts" WorkingDirectory="ClientApp">
 			<Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />
 		</Exec>
 		<Error Condition="'$(NpmExitCode)' != '0'" Text="Installation failed! npm ci encountered an error (exit code $(NpmExitCode))." />
+		<Exec Command="npm rebuild @parcel/watcher @swc/core lmdb fsevents msgpackr-extract" WorkingDirectory="ClientApp">
+			<Output TaskParameter="ExitCode" PropertyName="NpmRebuildExitCode" />
+		</Exec>
+		<Error Condition="'$(NpmRebuildExitCode)' != '0'" Text="Rebuild failed! npm rebuild encountered an error (exit code $(NpmRebuildExitCode))." />
 		<Exec Command="npm audit" WorkingDirectory="ClientApp" ContinueOnError="true" />
 		<Exec Command="node version-script.mjs" WorkingDirectory="ClientApp" ContinueOnError="true" />
 	</Target>
