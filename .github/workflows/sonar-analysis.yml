@@ -86,12 +86,14 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
+      # Installed under RUNNER_TEMP rather than inside the checkout, so the
+      # scanner's own binaries never sit in the tree being analyzed.
       - name: Cache Sonar scanner
         id: cache-sonar-scanner
         if: steps.token.outputs.configured == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .\.sonar\scanner
+          path: ${{ runner.temp }}\scanner
           key: ${{ runner.os }}-sonar-scanner
           restore-keys: ${{ runner.os }}-sonar-scanner
 
@@ -99,8 +101,8 @@ jobs:
         if: steps.token.outputs.configured == 'true' && steps.cache-sonar-scanner.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          New-Item -Path .\.sonar\scanner -ItemType Directory
-          dotnet tool update dotnet-sonarscanner --tool-path .\.sonar\scanner
+          New-Item -Path ${{ runner.temp }}\scanner -ItemType Directory
+          dotnet tool update dotnet-sonarscanner --tool-path ${{ runner.temp }}\scanner
 
       - name: Build, test and analyze
         if: steps.token.outputs.configured == 'true'
@@ -111,11 +113,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         shell: powershell
         run: |
-          .\.sonar\scanner\dotnet-sonarscanner begin `
+          ${{ runner.temp }}\scanner\dotnet-sonarscanner begin `
             /k:"EastCentralRegionalLibrary_passcore" `
             /o:"eastcentralregionallibrary" `
             /d:sonar.token="$env:SONAR_TOKEN" `
-            /d:sonar.host.url="https://sonarcloud.io" `
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" `
             /d:sonar.cs.vstest.reportsPaths="**/*.trx"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -133,5 +134,5 @@ jobs:
             --collect:"XPlat Code Coverage;Format=opencover"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+          ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
