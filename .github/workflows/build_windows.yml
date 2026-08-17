@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*.*.*' # Trigger workflow on tags like v1.0.0, v2.0.1, etc.
 
+permissions:
+  contents: read
+
 jobs:
   build:
     permissions:
@@ -17,23 +20,23 @@ jobs:
     steps:
     - name: Cancel previous runs
       if: ${{ github.ref != 'refs/heads/main' }}
-      uses: styfle/cancel-workflow-action@0.13.1
+      uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
       with:
         access_token: ${{ github.token }}
 
     - name: Checkout Code
-      uses: actions/checkout@v6
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         fetch-depth: 0
         submodules: recursive
 
     - name: Setup .NET 10.0 SDK
-      uses: actions/setup-dotnet@v5
+      uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
       with:
         dotnet-version: '10.0.x'
 
     - name: Setup Node
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
       with:
         node-version: 22 # Plan move to 24 if dependencies support it
         cache: npm
@@ -66,7 +69,7 @@ jobs:
         Get-ChildItem -Path ".\passcore_output"
 
     - name: Upload Binaries
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: passcore-${{ steps.vars.outputs.version || 'latest' }}
         path: .\passcore_output
