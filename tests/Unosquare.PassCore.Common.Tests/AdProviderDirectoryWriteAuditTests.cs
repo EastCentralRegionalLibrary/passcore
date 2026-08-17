@@ -439,7 +439,7 @@ public class AdProviderDirectoryWriteAuditTests
 
         foreach (var (method, signature) in new[]
                  {
-                     ("the ordinary change", "void UpdatePassword("),
+                     ("the ordinary change", "Task UpdatePassword("),
                      ("the administrative reset", "void PerformAdministrativeReset("),
                  })
         {
@@ -507,7 +507,7 @@ public class AdProviderDirectoryWriteAuditTests
         Assert.Contains("return null;", bindBody[catchAt..], StringComparison.Ordinal);
 
         // And the callers honour it.
-        foreach (var signature in new[] { "void UpdatePassword(", "void PerformAdministrativeReset(" })
+        foreach (var signature in new[] { "Task UpdatePassword(", "void PerformAdministrativeReset(" })
         {
             var body = ExtractMethodBody(code, signature);
             Assert.True(

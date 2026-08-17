@@ -188,13 +188,13 @@ public class PreAuthenticationDirectoryLoadTests
             var results = new Mock<ILdapSearchResults>();
             if (entry is null)
             {
-                results.Setup(r => r.HasMore()).Returns(false);
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             }
             else
             {
                 var remaining = new Queue<LdapEntry>(new[] { entry });
-                results.Setup(r => r.HasMore()).Returns(() => remaining.Count > 0);
-                results.Setup(r => r.Next()).Returns(() => remaining.Dequeue());
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => remaining.Count > 0);
+                results.Setup(r => r.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => remaining.Dequeue());
             }
 
             return results.Object;
@@ -259,12 +259,12 @@ public class PreAuthenticationDirectoryLoadTests
             if (filter.Contains("sAMAccountName=testuser", StringComparison.Ordinal))
             {
                 var remaining = new Queue<LdapEntry>(new[] { userEntry });
-                results.Setup(r => r.HasMore()).Returns(() => remaining.Count > 0);
-                results.Setup(r => r.Next()).Returns(() => remaining.Dequeue());
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => remaining.Count > 0);
+                results.Setup(r => r.NextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => remaining.Dequeue());
             }
             else
             {
-                results.Setup(r => r.HasMore()).Returns(false);
+                results.Setup(r => r.HasMoreAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
             }
 
             return results.Object;
@@ -287,10 +287,10 @@ public class PreAuthenticationDirectoryLoadTests
 
         public int Binds { get; private set; }
 
-        internal override LdapConnection BindAsServiceAccount(string? correlationId = null)
+        internal override async Task<LdapConnection> BindAsServiceAccount(string? correlationId = null)
         {
             Binds++;
-            return base.BindAsServiceAccount(correlationId);
+            return await base.BindAsServiceAccount(correlationId);
         }
     }
 }

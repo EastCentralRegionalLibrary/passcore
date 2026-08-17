@@ -94,8 +94,8 @@ public class GroupTypeMatchingTests
     {
         var remaining = new Queue<LdapEntry>(entries);
         var mock = new Mock<ILdapSearchResults>();
-        mock.Setup(s => s.HasMore()).Returns(() => remaining.Count > 0);
-        mock.Setup(s => s.Next()).Returns(() => remaining.Dequeue());
+        mock.Setup(s => s.HasMoreAsync(It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(() => remaining.Count > 0);
+        mock.Setup(s => s.NextAsync(It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(() => remaining.Dequeue());
         return mock.Object;
     }
 

@@ -93,4 +93,38 @@ public sealed class CachedDomainMinimumLength
 
         return resolved;
     }
+
+    /// <summary>
+    /// Asynchronously returns the cached minimum length when one is still fresh, otherwise performs
+    /// the lookup through <see cref="DomainPasswordPolicy.ResolveMinimumLengthAsync(ILogger, Func{System.Threading.Tasks.Task{int?}}, int)"/>
+    /// and caches it if it came from the directory.
+    /// </summary>
+    /// <param name="logger">The provider's logger.</param>
+    /// <param name="lookup">The directory-specific lookup.</param>
+    /// <param name="fallback">The value to advertise when the lookup yields nothing.</param>
+    /// <returns>The resolved minimum length.</returns>
+    public async System.Threading.Tasks.Task<int> ResolveAsync(
+        ILogger logger,
+        Func<System.Threading.Tasks.Task<int?>> lookup,
+        int fallback = DomainPasswordPolicy.DefaultMinimumLength)
+    {
+        lock (_gate)
+        {
+            if (_cachedValue is { } cached && _clock() < _expiresAt)
+                return cached;
+        }
+
+        var (resolved, fromDirectory) = await DomainPasswordPolicy.ResolveMinimumLengthAsync(logger, lookup, fallback).ConfigureAwait(false);
+
+        if (!fromDirectory)
+            return resolved;
+
+        lock (_gate)
+        {
+            _cachedValue = resolved;
+            _expiresAt = _clock().Add(_timeToLive);
+        }
+
+        return resolved;
+    }
 }

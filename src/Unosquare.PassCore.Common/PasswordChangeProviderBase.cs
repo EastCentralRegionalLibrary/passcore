@@ -229,7 +229,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     /// the only part they still supply.</para>
     /// </remarks>
     public Task<int> GetMinimumLengthAsync() =>
-        Task.FromResult(_minimumLength.Resolve(Logger, ReadMinPwdLength));
+        _minimumLength.ResolveAsync(Logger, ReadMinPwdLength);
 
     /// <summary>
     /// Reads the directory's minimum password length, or returns
@@ -247,7 +247,7 @@ public abstract class PasswordChangeProviderBase : IPasswordChangeProvider, IDis
     /// implement it for everyone.</para>
     /// </remarks>
     /// <returns>The directory's minimum password length, or <see langword="null"/>.</returns>
-    protected abstract int? ReadMinPwdLength();
+    protected abstract Task<int?> ReadMinPwdLength();
 
     /// <summary>
     /// Validates that the context contains required fields.

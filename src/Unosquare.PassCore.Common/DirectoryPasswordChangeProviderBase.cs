@@ -307,11 +307,11 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
     /// <see langword="try"/>: an exception it throws propagates as-is rather
     /// than being swallowed or retranslated.
     /// </param>
-    protected void PerformGatedPasswordWrite(
+    protected async Task PerformGatedPasswordWrite(
         PasswordChangeContext context,
         bool currentPasswordVerified,
-        Action writeChangeAsUser,
-        Action writeResetAsService)
+        Func<Task> writeChangeAsUser,
+        Func<Task> writeResetAsService)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(writeChangeAsUser);
@@ -319,7 +319,7 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
 
         try
         {
-            writeChangeAsUser();
+            await writeChangeAsUser().ConfigureAwait(false);
         }
         catch (PasswordChangeException)
         {
@@ -332,7 +332,7 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
             if (!IsRescueEligible(currentPasswordVerified, failureClass))
                 throw translated;
 
-            writeResetAsService();
+            await writeResetAsService().ConfigureAwait(false);
             AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, translated);
         }
     }
@@ -354,10 +354,10 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
     /// Performs the administrative reset with the service account. Invoked only
     /// when the block is rescue-eligible.
     /// </param>
-    protected void PerformGatedBlockedWrite(
+    protected async Task PerformGatedBlockedWrite(
         PasswordChangeContext context,
         bool currentPasswordVerified,
-        Action writeResetAsService)
+        Func<Task> writeResetAsService)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(writeResetAsService);
@@ -367,7 +367,7 @@ public abstract class DirectoryPasswordChangeProviderBase : PasswordChangeProvid
         if (!IsRescueEligible(currentPasswordVerified, DirectoryFailureClass.ChangeNotPermitted))
             throw blocked;
 
-        writeResetAsService();
+        await writeResetAsService().ConfigureAwait(false);
         AdministrativeReset.LogPerformed(Logger, context.CorrelationId, context.Username, blocked);
     }
 
