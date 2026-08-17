@@ -40,8 +40,16 @@ jobs:
       # repository has already been bitten by once -- see the "No test is
       # available" guard in ci-testing.yml. A genuine setup failure must stay
       # loud; only the cancellation is allowed to fail quietly.
+      #
+      # The condition names master because that is this repository's default
+      # branch. It previously said main, which no branch here is called, so it
+      # was always true and superseded runs were cancelled on the default
+      # branch too -- the opposite of the intent. Each push to master should
+      # get its own complete run, because after a squash merge that run is the
+      # only thing validating the merged result, and cancelling it loses the
+      # ability to attribute a break to a specific commit.
       - name: Cancel previous runs
-        if: ${{ github.ref != 'refs/heads/main' }}
+        if: ${{ github.ref != 'refs/heads/master' }}
         continue-on-error: true
         uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
         with:

@@ -13,21 +13,15 @@ jobs:
   build:
     permissions:
       contents: read      # Needed to check out code
-      actions: write      # Needed for cancel-workflow-action to stop old runs
     name: Windows Binaries on Windows Latest
     runs-on: windows-latest
 
     steps:
-    # Superseding an older run is an optimization, never a prerequisite, so its
-    # failure must not skip every step below. See the longer note on the same
-    # step in ad-provider-smoke-test.yml, where this failure mode was observed.
-    - name: Cancel previous runs
-      if: ${{ github.ref != 'refs/heads/main' }}
-      continue-on-error: true
-      uses: styfle/cancel-workflow-action@d07a454dad7609a92316b57b23c9ccfd4f59af66 # 0.13.1
-      with:
-        access_token: ${{ github.token }}
-
+    # This workflow builds release binaries from a v*.*.* tag, so there is
+    # nothing to supersede: every run corresponds to a distinct release, and
+    # cancelling an earlier one means that release's binaries are never built.
+    # build_docker.yml, which publishes from the same tags, has never had a
+    # cancellation step -- this one was the anomaly.
     - name: Checkout Code
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
