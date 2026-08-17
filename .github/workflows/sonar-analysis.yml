@@ -78,11 +78,15 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The scanner's own cache lives under sonar.userHome, which defaults to
+      # ~/.sonar -- note the leading dot. The SonarQube Cloud template says
+      # ~\sonar\cache, which does not exist, so the step logs "Path Validation
+      # Error ... hence no cache is being saved" and caches nothing.
       - name: Cache Sonar packages
         if: steps.token.outputs.configured == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~\sonar\cache
+          path: ~\.sonar\cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
