@@ -121,7 +121,8 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
                     sx={{
                         height: 8,
                         borderRadius: 4,
-                        backgroundColor: theme.palette.mode === 'light' ? theme.palette.grey[200] : theme.palette.grey[800],
+                        backgroundColor:
+                            theme.palette.mode === 'light' ? theme.palette.grey[200] : theme.palette.grey[800],
                         '& .MuiLinearProgress-bar': {
                             borderRadius: 4,
                             backgroundColor: strength.barColor,

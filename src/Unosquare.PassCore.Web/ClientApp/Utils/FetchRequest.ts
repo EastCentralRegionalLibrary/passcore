@@ -10,7 +10,7 @@
 export async function fetchRequest<T = unknown>(
     url: string,
     requestMethod: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
-    requestBody?: unknown
+    requestBody?: unknown,
 ): Promise<T> {
     // Determine the body. If requestBody is already a string, use it directly.
     let body: string | null = null;

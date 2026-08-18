@@ -50,7 +50,8 @@ export function Main() {
         return (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
                 <Typography variant="h6" sx={{ color: 'error.main' }}>
-                    Failed to load application settings. Be sure the settings file exists and file permissions are correct.
+                    Failed to load application settings. Be sure the settings file exists and file permissions are
+                    correct.
                 </Typography>
             </Box>
         );

@@ -27,11 +27,7 @@ export function Footer() {
                     }}
                     alt="PassCore Logo"
                 />
-                <Stack
-                    direction="row"
-                    spacing={1}
-                    sx={{ alignItems: 'center' }}
-                >
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                     <Box component="img" src={osiLogo} sx={{ maxHeight: 30 }} alt="OSI Logo" />
                     <Box component="img" src={mitLogo} sx={{ maxHeight: 30 }} alt="MIT Logo" />
                     <Box component="img" src={uslogo} sx={{ maxHeight: 30 }} alt="US Logo" />

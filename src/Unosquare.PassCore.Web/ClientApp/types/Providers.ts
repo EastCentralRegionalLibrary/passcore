@@ -1,4 +1,4 @@
-import { SnackbarMessageType } from "./Components";
+import { SnackbarMessageType } from './Components';
 
 /**
  * Mirrors the server-side ApiErrorCode enum.

@@ -1,4 +1,4 @@
-import { IGlobalContext } from "../types/Providers";
+import { IGlobalContext } from '../types/Providers';
 
 export async function resolveAppSettings(): Promise<IGlobalContext> {
     const response = await fetch('api/password');

@@ -52,12 +52,7 @@ export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
             const href = anchor?.getAttribute('href') || '#';
             const target = anchor?.getAttribute('target') ?? undefined;
             result.push(
-                <a
-                    key={href}
-                    href={href}
-                    target={target}
-                    rel={target === '_blank' ? 'noopener noreferrer' : undefined}
-                >
+                <a key={href} href={href} target={target} rel={target === '_blank' ? 'noopener noreferrer' : undefined}>
                     {parts[i + 2] || ''}
                 </a>,
             );

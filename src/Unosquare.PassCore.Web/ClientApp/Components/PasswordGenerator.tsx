@@ -11,10 +11,7 @@ import { GlobalContext, SnackbarContext } from '../Provider/GlobalContext';
 import { IPasswordGenProps } from '../types/Components';
 import { fetchRequest } from '../Utils/FetchRequest';
 
-export function PasswordGenerator({
-    value,
-    setValue,
-}: IPasswordGenProps) {
+export function PasswordGenerator({ value, setValue }: IPasswordGenProps) {
     const { sendMessage } = use(SnackbarContext)!;
     const { changePasswordForm } = use(GlobalContext)!;
     const [visibility, setVisibility] = useState(false);

@@ -82,7 +82,13 @@ export function ChangePasswordForm({
             newPassword: '',
             newPasswordVerify: newPasswordVerifyHelpblock,
         }),
-        [context?.useEmail, usernameHelpblock, usernameDefaultDomainHelperBlock, currentPasswordHelpblock, newPasswordVerifyHelpblock],
+        [
+            context?.useEmail,
+            usernameHelpblock,
+            usernameDefaultDomainHelperBlock,
+            currentPasswordHelpblock,
+            newPasswordVerifyHelpblock,
+        ],
     );
 
     const getHelperText = useCallback(
@@ -137,8 +143,8 @@ export function ChangePasswordForm({
                     name: 'isUsernameValid',
                     rule: (value, formData, ctx) => isUsernamePatternValid(value, formData, ctx, validationRegex),
                     message: context?.useEmail
-                        ? (context?.errorsPasswordForm?.usernameEmailPattern || 'Invalid email')
-                        : (context?.errorsPasswordForm?.usernamePattern || 'Invalid username'),
+                        ? context?.errorsPasswordForm?.usernameEmailPattern || 'Invalid email'
+                        : context?.errorsPasswordForm?.usernamePattern || 'Invalid username',
                 },
             ],
             currentPassword: [isRequired(context?.errorsPasswordForm?.fieldRequired || 'Field is required')],
@@ -170,10 +176,7 @@ export function ChangePasswordForm({
     }, [submitData, validateAllFields, toSubmitData, fields]);
 
     useEffect(() => {
-        onValidated(
-            Object.keys(errors).some((key) => !!errors[key]) ||
-                (recaptchaRequired && recaptchaToken === ''),
-        );
+        onValidated(Object.keys(errors).some((key) => !!errors[key]) || (recaptchaRequired && recaptchaToken === ''));
     }, [errors, onValidated, recaptchaRequired, recaptchaToken]);
 
     useEffect(() => {
@@ -194,10 +197,7 @@ export function ChangePasswordForm({
     }, []);
 
     return (
-        <Stack
-            spacing={2}
-            sx={{ width: '80%', mx: 'auto', pt: 2 }}
-        >
+        <Stack spacing={2} sx={{ width: '80%', mx: 'auto', pt: 2 }}>
             <TextField
                 autoFocus
                 slotProps={{ htmlInput: { tabIndex: 1 } }}
@@ -210,7 +210,7 @@ export function ChangePasswordForm({
                 value={fields.username}
                 fullWidth
                 error={!!errors.username && (touched.username || !!fields.username)}
-                helperText={getHelperText("username")}
+                helperText={getHelperText('username')}
             />
             <TextField
                 slotProps={{ htmlInput: { tabIndex: 2 } }}
@@ -224,7 +224,7 @@ export function ChangePasswordForm({
                 value={fields.currentPassword}
                 fullWidth
                 error={!!errors.currentPassword && (touched.currentPassword || !!fields.currentPassword)}
-                helperText={getHelperText("currentPassword")}
+                helperText={getHelperText('currentPassword')}
             />
             {usePasswordGeneration ? (
                 <PasswordGenerator value={fields.newPassword} setValue={setGenerated} />
@@ -242,7 +242,7 @@ export function ChangePasswordForm({
                         value={fields.newPassword}
                         fullWidth
                         error={!!errors.newPassword && (touched.newPassword || !!fields.newPassword)}
-                        helperText={getHelperText("newPassword")}
+                        helperText={getHelperText('newPassword')}
                     />
                     {showPasswordMeter && <PasswordStrengthBar newPassword={fields.newPassword} />}
                     <Typography variant="body2" sx={{ marginBottom: '15px' }}>
@@ -260,13 +260,11 @@ export function ChangePasswordForm({
                         value={fields.newPasswordVerify}
                         fullWidth
                         error={!!errors.newPasswordVerify && (touched.newPasswordVerify || !!fields.newPasswordVerify)}
-                        helperText={getHelperText("newPasswordVerify")}
+                        helperText={getHelperText('newPasswordVerify')}
                     />
                 </>
             )}
-            {recaptchaRequired && (
-                <ReCaptcha setToken={setReCaptchaToken} shouldReset={shouldReset} />
-            )}
+            {recaptchaRequired && <ReCaptcha setToken={setReCaptchaToken} shouldReset={shouldReset} />}
         </Stack>
     );
 }

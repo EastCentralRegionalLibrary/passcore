@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export function useEffectWithLoading<T>(
-    effect: () => Promise<T>,
-    initialValue: T
-): [T, boolean, Error | null] {
+export function useEffectWithLoading<T>(effect: () => Promise<T>, initialValue: T): [T, boolean, Error | null] {
     const [getter, setter] = useState(initialValue);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);

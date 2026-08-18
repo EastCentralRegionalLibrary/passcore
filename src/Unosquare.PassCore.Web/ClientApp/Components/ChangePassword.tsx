@@ -23,20 +23,23 @@ export function ChangePassword() {
     const [shouldReset, setReset] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const errorMessages = useMemo<Record<number, string>>(() => ({
-        [ApiErrorCode.FieldRequired]: alerts?.errorFieldRequired || '',
-        [ApiErrorCode.FieldMismatch]: alerts?.errorFieldMismatch || '',
-        [ApiErrorCode.UserNotFound]: alerts?.errorInvalidUser || '',
-        [ApiErrorCode.InvalidCredentials]: alerts?.errorInvalidCredentials || '',
-        [ApiErrorCode.InvalidCaptcha]: alerts?.errorCaptcha || '',
-        [ApiErrorCode.ChangeNotPermitted]: alerts?.errorPasswordChangeNotAllowed || '',
-        [ApiErrorCode.InvalidDomain]: alerts?.errorInvalidDomain || '',
-        [ApiErrorCode.LdapProblem]: alerts?.errorConnectionLdap || '',
-        [ApiErrorCode.ComplexPassword]: alerts?.errorComplexPassword || '',
-        [ApiErrorCode.MinimumScore]: alerts?.errorScorePassword || '',
-        [ApiErrorCode.MinimumDistance]: alerts?.errorDistancePassword || '',
-        [ApiErrorCode.PwnedPassword]: alerts?.errorPwnedPassword || '',
-    }), [alerts]);
+    const errorMessages = useMemo<Record<number, string>>(
+        () => ({
+            [ApiErrorCode.FieldRequired]: alerts?.errorFieldRequired || '',
+            [ApiErrorCode.FieldMismatch]: alerts?.errorFieldMismatch || '',
+            [ApiErrorCode.UserNotFound]: alerts?.errorInvalidUser || '',
+            [ApiErrorCode.InvalidCredentials]: alerts?.errorInvalidCredentials || '',
+            [ApiErrorCode.InvalidCaptcha]: alerts?.errorCaptcha || '',
+            [ApiErrorCode.ChangeNotPermitted]: alerts?.errorPasswordChangeNotAllowed || '',
+            [ApiErrorCode.InvalidDomain]: alerts?.errorInvalidDomain || '',
+            [ApiErrorCode.LdapProblem]: alerts?.errorConnectionLdap || '',
+            [ApiErrorCode.ComplexPassword]: alerts?.errorComplexPassword || '',
+            [ApiErrorCode.MinimumScore]: alerts?.errorScorePassword || '',
+            [ApiErrorCode.MinimumDistance]: alerts?.errorDistancePassword || '',
+            [ApiErrorCode.PwnedPassword]: alerts?.errorPwnedPassword || '',
+        }),
+        [alerts],
+    );
 
     const handleSubmit = useCallback(() => {
         if (!isSubmitting) {
@@ -45,30 +48,33 @@ export function ChangePassword() {
         }
     }, [isSubmitting]);
 
-    const toSubmitData = useCallback(async (formData: IChangePasswordFormInitialModel): Promise<void> => {
-        setSubmit(false);
-        try {
-            const payload = JSON.stringify({ ...formData, recaptcha: token });
-            const response = await fetchRequest<ApiResponse<void>>('api/password', 'POST', payload);
-            if (response?.errors?.length) {
-                const errorAlertMessage = response.errors
-                    .map((error: ApiError) =>
-                        error.errorCode === ApiErrorCode.Generic
-                            ? error.message
-                            : errorMessages[error.errorCode] || 'An unknown error occurred.',
-                    )
-                    .join(' ');
-                sendMessage(errorAlertMessage, 'error');
-                return;
+    const toSubmitData = useCallback(
+        async (formData: IChangePasswordFormInitialModel): Promise<void> => {
+            setSubmit(false);
+            try {
+                const payload = JSON.stringify({ ...formData, recaptcha: token });
+                const response = await fetchRequest<ApiResponse<void>>('api/password', 'POST', payload);
+                if (response?.errors?.length) {
+                    const errorAlertMessage = response.errors
+                        .map((error: ApiError) =>
+                            error.errorCode === ApiErrorCode.Generic
+                                ? error.message
+                                : errorMessages[error.errorCode] || 'An unknown error occurred.',
+                        )
+                        .join(' ');
+                    sendMessage(errorAlertMessage, 'error');
+                    return;
+                }
+                setDialog(true);
+            } catch (err) {
+                const errorMsg = (err as { message?: string })?.message || String(err);
+                sendMessage(`An unexpected error occurred. Please try again later. Error: ${errorMsg}`, 'error');
+            } finally {
+                setIsSubmitting(false);
             }
-            setDialog(true);
-        } catch (err) {
-            const errorMsg = (err as { message?: string })?.message || String(err);
-            sendMessage(`An unexpected error occurred. Please try again later. Error: ${errorMsg}`, 'error');
-        } finally {
-            setIsSubmitting(false);
-        }
-    }, [token, errorMessages, sendMessage]);
+        },
+        [token, errorMessages, sendMessage],
+    );
 
     const onCloseDialog = useCallback(() => {
         setDialog(false);
