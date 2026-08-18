@@ -138,7 +138,7 @@ public class GroupTypeMatchingTests
         await provider.IsMemberOfGroupAsync("testuser", "TargetGroup");
 
         var warning = Assert.Single(
-            logger.Entries.Where(e => e.EventId.Id == 113));
+            logger.Entries, e => e.EventId.Id == 113);
 
         Assert.Equal(LogLevel.Warning, warning.Level);
 

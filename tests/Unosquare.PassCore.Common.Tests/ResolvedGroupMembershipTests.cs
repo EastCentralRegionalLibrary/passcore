@@ -22,6 +22,8 @@ namespace Unosquare.PassCore.Common.Tests;
 public class ResolvedGroupMembershipTests
 {
     private static readonly string[] Groups = { "Domain Admins" };
+    private static readonly string[] RestrictedGroup = new[] { "Restricted" };
+    private static readonly string[] AllowedOtherGroups = new[] { "Allowed", "Other" };
 
     private static ResolvedGroupMembership Resolution(
         GroupMembershipAnswer answer, Func<Exception, Exception>? translate = null) =>
@@ -181,12 +183,12 @@ public class ResolvedGroupMembershipTests
             },
             ex => ex);
 
-        await resolution.IsMemberOfAnyAsync(new[] { "Restricted" });
-        await resolution.IsMemberOfAnyAsync(new[] { "Allowed", "Other" });
+        await resolution.IsMemberOfAnyAsync(RestrictedGroup);
+        await resolution.IsMemberOfAnyAsync(AllowedOtherGroups);
 
         Assert.Equal(2, seen.Count);
-        Assert.Equal(new[] { "Restricted" }, seen[0]);
-        Assert.Equal(new[] { "Allowed", "Other" }, seen[1]);
+        Assert.Equal(RestrictedGroup, seen[0]);
+        Assert.Equal(AllowedOtherGroups, seen[1]);
     }
 
     // ---------------------------------------------------------------

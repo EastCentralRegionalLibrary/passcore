@@ -136,7 +136,7 @@ public class DebugPasswordChangeProviderTests
     {
         var provider = CreateProvider(new DebugProviderOptions { MinimumLength = 12 });
 
-        var requirement = Assert.IsAssignableFrom<IPasswordLengthRequirement>(provider);
+        var requirement = Assert.IsType<IPasswordLengthRequirement>(provider, exactMatch: false);
         Assert.Equal(12, await requirement.GetMinimumLengthAsync());
     }
 

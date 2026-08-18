@@ -25,7 +25,7 @@ namespace Unosquare.PassCore.Common.Tests;
 /// <c>#if WINDOWS</c> and cannot be loaded here at all, so half the allocation
 /// would be invisible to a runtime check.</para>
 /// </summary>
-public class LoggingConventionAuditTests
+public partial class LoggingConventionAuditTests
 {
     private const string RegistryRelativePath =
         "src/Unosquare.PassCore.Common/PasswordChangeProviderBase.cs";
@@ -36,12 +36,23 @@ public class LoggingConventionAuditTests
         "src/Unosquare.PassCore.PasswordProvider/PasswordChangeProvider.cs",
     ];
 
-    private static readonly Regex EventIdDeclaration =
-        new(@"new EventId\(\s*(?<id>\d+)", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"new EventId\(\s*(?<id>\d+)", RegexOptions.CultureInvariant)]
+    private static partial Regex EventIdDeclarationRegex();
 
-    /// <summary>Ad-hoc <c>ILogger</c> extension calls, which bypass the delegate convention (and trip CA1848).</summary>
-    private static readonly Regex AdHocLoggerCall =
-        new(@"Logger\.Log(Trace|Debug|Information|Warning|Error|Critical)\s*\(", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"Logger\.Log(Trace|Debug|Information|Warning|Error|Critical)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex AdHocLoggerCallRegex();
+
+    [GeneratedRegex(@"(?<!@)""(?:[^""\\\n]|\\.)*""")]
+    private static partial Regex StringLiteralRegex();
+
+    [GeneratedRegex(@"\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}")]
+    private static partial Regex PlaceholderRegex();
+
+    [GeneratedRegex(@"(?<low>\d+)-(?<high>\d+)\s")]
+    private static partial Regex RegistryRangeRegex();
+
+    [GeneratedRegex(@"next:\s*(?<next>\d+)")]
+    private static partial Regex RegistryNextRegex();
 
     [Fact]
     public void EveryEventId_IsAllocatedExactlyOnce()
@@ -50,7 +61,7 @@ public class LoggingConventionAuditTests
 
         foreach (var (relativePath, source) in SolutionSources())
         {
-            foreach (Match match in EventIdDeclaration.Matches(source))
+            foreach (Match match in EventIdDeclarationRegex().Matches(source))
             {
                 var id = int.Parse(match.Groups["id"].Value, System.Globalization.CultureInfo.InvariantCulture);
                 if (!byId.TryGetValue(id, out var sites))
@@ -83,7 +94,7 @@ public class LoggingConventionAuditTests
     public void RetiredEventId105_IsNotAllocatedAnywhere()
     {
         var offenders = SolutionSources()
-            .Where(file => EventIdDeclaration.Matches(file.Source)
+            .Where(file => EventIdDeclarationRegex().Matches(file.Source)
                 .Any(m => m.Groups["id"].Value == "105"))
             .Select(file => file.RelativePath)
             .ToList();
@@ -114,7 +125,7 @@ public class LoggingConventionAuditTests
 
         foreach (var (relativePath, source) in SolutionSources())
         {
-            foreach (Match match in EventIdDeclaration.Matches(source))
+            foreach (Match match in EventIdDeclarationRegex().Matches(source))
             {
                 var id = int.Parse(match.Groups["id"].Value, System.Globalization.CultureInfo.InvariantCulture);
 
@@ -208,13 +219,12 @@ public class LoggingConventionAuditTests
 
             var arguments = source[(cursor + 1)..end];
             var format = string.Concat(
-                Regex.Matches(arguments, @"(?<!@)""(?:[^""\\\n]|\\.)*""")
+                StringLiteralRegex().Matches(arguments)
                     .Select(m => m.Value));
 
             // {{ is an escaped brace and is not a placeholder.
-            var placeholders = Regex.Matches(
-                format.Replace("{{", string.Empty, StringComparison.Ordinal),
-                @"\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}").Count;
+            var placeholders = PlaceholderRegex().Matches(
+                format.Replace("{{", string.Empty, StringComparison.Ordinal)).Count;
 
             yield return (typeArguments, placeholders, at);
         }
@@ -257,7 +267,7 @@ public class LoggingConventionAuditTests
         var relativePath = ProviderPaths[providerIndex];
         var source = ReadRepoFile(relativePath);
 
-        var offenders = AdHocLoggerCall.Matches(source)
+        var offenders = AdHocLoggerCallRegex().Matches(source)
             .Select(m => $"{m.Value.TrimEnd('(', ' ')} at offset {m.Index}")
             .ToList();
 
@@ -284,11 +294,11 @@ public class LoggingConventionAuditTests
 
         // Ranges and their next-free values appear in matching order, but not
         // always on the same line (a long description wraps).
-        var lows = Regex.Matches(block, @"(?<low>\d+)-(?<high>\d+)\s").Select(
+        var lows = RegistryRangeRegex().Matches(block).Select(
             m => (Low: int.Parse(m.Groups["low"].Value, System.Globalization.CultureInfo.InvariantCulture),
                   High: int.Parse(m.Groups["high"].Value, System.Globalization.CultureInfo.InvariantCulture))).ToList();
 
-        var nexts = Regex.Matches(block, @"next:\s*(?<next>\d+)").Select(
+        var nexts = RegistryNextRegex().Matches(block).Select(
             m => int.Parse(m.Groups["next"].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
 
         Assert.True(

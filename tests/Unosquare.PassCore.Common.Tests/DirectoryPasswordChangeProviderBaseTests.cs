@@ -21,6 +21,8 @@ namespace Unosquare.PassCore.Common.Tests;
 /// </summary>
 public class DirectoryPasswordChangeProviderBaseTests
 {
+    private static readonly string[] DomainAdminsGroup = new[] { "Domain Admins" };
+
     private sealed class FakeAppSettings : IAppSettings
     {
         public ErrorDisclosureMode ErrorDisclosureMode { get; set; }
@@ -436,7 +438,7 @@ public class DirectoryPasswordChangeProviderBaseTests
             _ => Task.FromResult(GroupMembershipAnswer.Undetermined(cause)));
 
         var thrown = await Assert.ThrowsAsync<DirectoryUnavailableException>(
-            () => resolution.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
+            () => resolution.IsMemberOfAnyAsync(DomainAdminsGroup));
 
         Assert.Same(cause, thrown.InnerException);
     }
@@ -449,7 +451,7 @@ public class DirectoryPasswordChangeProviderBaseTests
         var member = provider.TestResolveMembership(_ => Task.FromResult(GroupMembershipAnswer.Member));
         var notMember = provider.TestResolveMembership(_ => Task.FromResult(GroupMembershipAnswer.NotMember));
 
-        Assert.True(await member.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
-        Assert.False(await notMember.IsMemberOfAnyAsync(new[] { "Domain Admins" }));
+        Assert.True(await member.IsMemberOfAnyAsync(DomainAdminsGroup));
+        Assert.False(await notMember.IsMemberOfAnyAsync(DomainAdminsGroup));
     }
 }

@@ -132,7 +132,7 @@ public class GroupMembershipUndeterminedTests
         await Assert.ThrowsAsync<DirectoryUnavailableException>(
             () => provider.IsMemberOfGroupAsync("testuser", RestrictedGroup));
 
-        var entry = Assert.Single(logger.Entries.Where(e => e.EventId.Id == ServiceAccountFailureEventId));
+        var entry = Assert.Single(logger.Entries, e => e.EventId.Id == ServiceAccountFailureEventId);
         Assert.Equal(LogLevel.Warning, entry.Level);
         Assert.Contains("LDAP_MATCHING_RULE_IN_CHAIN", entry.Message, StringComparison.Ordinal);
         Assert.Contains("ldap.example.com", entry.Message, StringComparison.Ordinal);
