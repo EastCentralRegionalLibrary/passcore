@@ -709,46 +709,48 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         var sb = new StringBuilder(value.Length);
         var escapedBytes = new List<byte>();
 
+        // A run of consecutive \XX escapes is one UTF-8 sequence and has to be decoded
+        // as a unit: decoding each byte alone turns \C3\A9 into two replacement
+        // characters instead of 'é'. So the bytes are buffered, and every exit from a
+        // run flushes them first -- when a literal follows, and at end of input.
+        // Missing one of those flushes drops characters silently, which is why this is
+        // one function rather than three copies of the same four lines.
+        void FlushEscapedBytes()
+        {
+            if (escapedBytes.Count == 0)
+                return;
+
+            sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
+            escapedBytes.Clear();
+        }
+
         for (var i = 0; i < value.Length; i++)
         {
             if (value[i] == '\\')
             {
+                // Advancing i past the escape is how it is consumed; S127 flags that,
+                // but rewriting it as a while loop is longer and no clearer.
                 if (i + 2 < value.Length && IsHexDigit(value[i + 1]) && IsHexDigit(value[i + 2]))
                 {
                     escapedBytes.Add(ParseHexByte(value[i + 1], value[i + 2]));
                     i += 2;
+                    continue;
                 }
-                else
-                {
-                    if (escapedBytes.Count > 0)
-                    {
-                        sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
-                        escapedBytes.Clear();
-                    }
 
-                    if (i + 1 < value.Length)
-                    {
-                        i++;
-                    }
-                    sb.Append(value[i]);
-                }
-            }
-            else
-            {
-                if (escapedBytes.Count > 0)
-                {
-                    sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
-                    escapedBytes.Clear();
-                }
+                FlushEscapedBytes();
+
+                if (i + 1 < value.Length)
+                    i++;
 
                 sb.Append(value[i]);
+                continue;
             }
+
+            FlushEscapedBytes();
+            sb.Append(value[i]);
         }
 
-        if (escapedBytes.Count > 0)
-        {
-            sb.Append(Encoding.UTF8.GetString(escapedBytes.ToArray()));
-        }
+        FlushEscapedBytes();
 
         return sb.ToString();
     }
