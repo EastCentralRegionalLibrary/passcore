@@ -15,7 +15,7 @@ $releases = Invoke-WebRequest $releasesUrl -UseBasicParsing
 
 $releasesJson = ($releases.Content | ConvertFrom-Json)[0]
 $zipName = "passcore.zip"
-$zipUrl = $releasesJson.assets.browser_download_url | where-object {$_ -NotLike "*mac*" -and $_ -NotLike "*linux*"}
+$zipUrl = $releasesJson.assets.browser_download_url | Where-Object {$_ -notlike "*mac*" -and $_ -notlike "*linux*"}
 
 $zipPath = "$($directory)\$($zipName)"
 
@@ -25,11 +25,11 @@ Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
 
 # Unzipping
 Write-Host "Unzipping"
-Expand-Archive $zipPath -dest $directory -force
+Expand-Archive $zipPath -dest $directory -Force
 Remove-Item $zipPath
 
 # Checkin for Net Core Host
-$netCoreHost = Get-wmiobject -class win32_product | Where-Object {$_.Name -match "Microsoft .NET Core Host - 3.0" }
+$netCoreHost = Get-CimInstance -ClassName Win32_Product | Where-Object {$_.Name -match "Microsoft .NET Core Host - 3.0" }
 if([string]::IsNullOrEmpty($netCoreHost)) {
     Write-Host "Please install the hosting bundle and then restart the installation"
     Start-Process "https://dotnet.microsoft.com/download/dotnet-core/thank-you/runtime-aspnetcore-3.0.0-windows-hosting-bundle-installer"
@@ -39,7 +39,7 @@ if([string]::IsNullOrEmpty($netCoreHost)) {
 # IIS setup script
 # Comment or delete the follow lines if you are making a custom installation and setup
 Write-Host "IIS setup running"
-$iisSetup = (new-object net.webclient).DownloadString('https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/IISSetup.ps1')
+$iisSetup = (New-Object net.webclient).DownloadString('https://raw.githubusercontent.com/EastCentralRegionalLibrary/passcore/master/IISSetup.ps1')
 
 Invoke-Command -ScriptBlock ([scriptblock]::Create($iisSetup)) -ArgumentList $directory
 

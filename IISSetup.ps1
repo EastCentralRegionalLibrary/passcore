@@ -32,13 +32,13 @@ try {
     Set-Location IIS:\AppPools\
     
     #check if the app pool exists
-    if (!(Test-Path $iisAppPoolName -pathType container))
+    if (-not (Test-Path $iisAppPoolName -pathType container))
     {
         Write-Host "Creating $($iisAppPoolName)"
         #create the app pool
         $appPool = New-Item $iisAppPoolName
         $appPool | Set-ItemProperty -Name "managedRuntimeVersion" -Value $iisAppPoolDotNetVersion
-        $appPool | Set-ItemProperty -Name "startMode" -value $iisAppPoolStartMode
+        $appPool | Set-ItemProperty -Name "startMode" -Value $iisAppPoolStartMode
     } 
     
     #navigate to the sites root
@@ -60,7 +60,7 @@ try {
     Get-IISAppPool $iisAppPoolName
     $site
     
-    if(!$site) {
+    if (-not $site) {
         Write-Host "No site was created"
         exit 1
     }
