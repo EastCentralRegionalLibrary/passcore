@@ -9,12 +9,7 @@ export interface GlobalSnackbarProps {
     readonly milliSeconds?: number;
 }
 
-export function GlobalSnackbar({
-    open,
-    message,
-    onClose,
-    milliSeconds = 5000,
-}: GlobalSnackbarProps) {
+export function GlobalSnackbar({ open, message, onClose, milliSeconds = 5000 }: GlobalSnackbarProps) {
     const anchorOrigin: SnackbarOrigin = {
         horizontal: 'right',
         vertical: 'bottom',
@@ -28,11 +23,7 @@ export function GlobalSnackbar({
             autoHideDuration={milliSeconds}
             onClose={onClose}
         >
-            <Alert
-                severity={message.messageType}
-                onClose={onClose}
-                variant="filled"
-            >
+            <Alert severity={message.messageType} onClose={onClose} variant="filled">
                 {message.messageText}
             </Alert>
         </Snackbar>

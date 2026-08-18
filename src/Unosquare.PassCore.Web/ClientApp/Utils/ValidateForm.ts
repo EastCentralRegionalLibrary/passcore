@@ -16,7 +16,7 @@ type FieldValidationRules = Partial<Record<keyof IChangePasswordFormInitialModel
 export const validateForm = async (
     formData: IChangePasswordFormInitialModel,
     context: IGlobalContext,
-    fieldRules: FieldValidationRules
+    fieldRules: FieldValidationRules,
 ): Promise<ValidationErrors> => {
     const errors: ValidationErrors = {};
 
@@ -44,7 +44,7 @@ export const validateForm = async (
             if (fieldError) {
                 errors[fieldName] = fieldError;
             }
-        })
+        }),
     );
 
     return errors;

@@ -38,9 +38,12 @@ export function SnackbarContextProvider({ children }: ISnackbarProviderProps) {
         }));
     }, []);
 
-    const providerValue = useMemo(() => ({
-        sendMessage,
-    }), [sendMessage]);
+    const providerValue = useMemo(
+        () => ({
+            sendMessage,
+        }),
+        [sendMessage],
+    );
 
     return (
         <SnackbarContext.Provider value={providerValue}>

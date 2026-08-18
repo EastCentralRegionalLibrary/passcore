@@ -7,15 +7,8 @@ interface IGlobalContextProviderProps {
     readonly settings: IGlobalContext;
 }
 
-export function GlobalContextProvider({
-    children,
-    settings,
-}: IGlobalContextProviderProps) {
+export function GlobalContextProvider({ children, settings }: IGlobalContextProviderProps) {
     const providerValue = useMemo(() => ({ ...settings }), [settings]);
 
-    return (
-        <GlobalContext.Provider value={providerValue}>
-            {children}
-        </GlobalContext.Provider>
-    );
+    return <GlobalContext.Provider value={providerValue}>{children}</GlobalContext.Provider>;
 }

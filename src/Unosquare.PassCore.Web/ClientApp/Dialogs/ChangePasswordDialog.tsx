@@ -12,10 +12,7 @@ interface IChangePasswordDialogProps {
     readonly onClose: () => void;
 }
 
-export function ChangePasswordDialog({
-    open,
-    onClose,
-}: IChangePasswordDialogProps) {
+export function ChangePasswordDialog({ open, onClose }: IChangePasswordDialogProps) {
     const context = use(GlobalContext)!;
     const successAlertBody = context?.alerts?.successAlertBody || '';
     const successAlertTitle = context?.alerts?.successAlertTitle || '';
