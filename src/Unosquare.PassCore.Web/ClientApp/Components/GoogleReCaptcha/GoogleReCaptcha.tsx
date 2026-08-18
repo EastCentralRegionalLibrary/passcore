@@ -45,7 +45,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
     };
 
     private readyIntervalId!: ReturnType<typeof setInterval>;
-    private recaptcha = createRef<HTMLDivElement>();
+    private readonly recaptcha = createRef<HTMLDivElement>();
 
     private widgetId: number | undefined;
 
@@ -58,7 +58,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
 
     public isReady = () =>
         typeof window !== 'undefined' &&
-        typeof window.grecaptcha !== 'undefined' &&
+        window.grecaptcha !== undefined &&
         typeof window.grecaptcha.render === 'function';
 
     public componentWillUnmount() {
@@ -128,7 +128,7 @@ class GoogleReCaptcha extends Component<Partial<IReCaptchaProps>, IReCaptchaStat
     private readonly grecaptcha = () => window.grecaptcha;
 
     private readonly renderManually = () => {
-        if (this.grecaptcha() && this.grecaptcha().render && this.widgetId === undefined) {
+        if (this.grecaptcha()?.render && this.widgetId === undefined) {
             this.widgetId = this.grecaptcha().render(
                 this.recaptcha.current,
                 {

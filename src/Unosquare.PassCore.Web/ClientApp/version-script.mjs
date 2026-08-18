@@ -1,4 +1,4 @@
-import fs from 'fs'; // Import fs using ES6 syntax
+import fs from 'node:fs'; // Import fs using ES6 syntax
 import packageJson from './package.json' with { type: "json" }; // Import JSON to retrieve version
 
 const version = packageJson.version;

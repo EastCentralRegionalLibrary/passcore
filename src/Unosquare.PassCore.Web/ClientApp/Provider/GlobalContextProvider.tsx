@@ -3,8 +3,8 @@ import { GlobalContext } from './GlobalContext';
 import { IGlobalContext } from '../types/Providers';
 
 interface IGlobalContextProviderProps {
-    children: ReactNode;
-    settings: IGlobalContext;
+    readonly children: ReactNode;
+    readonly settings: IGlobalContext;
 }
 
 export function GlobalContextProvider({

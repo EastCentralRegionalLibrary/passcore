@@ -18,7 +18,7 @@ const zxcvbn = new ZxcvbnFactory({
 });
 
 interface PasswordStrengthBarProps {
-    newPassword: string;
+    readonly newPassword: string;
 }
 
 type EmptyStrength = {
@@ -65,12 +65,14 @@ export function PasswordStrengthBar({ newPassword }: PasswordStrengthBarProps) {
         const result = zxcvbn.check(newPassword);
         const score = result.score;
 
-        const barColor =
-            score <= 1
-                ? theme.palette.error.main
-                : score <= 2
-                  ? theme.palette.warning.main
-                  : theme.palette.success.main;
+        const scoreColors: Record<number, string> = {
+            0: theme.palette.error.main,
+            1: theme.palette.error.main,
+            2: theme.palette.warning.main,
+            3: theme.palette.success.main,
+            4: theme.palette.success.main,
+        };
+        const barColor = scoreColors[score] ?? theme.palette.success.main;
 
         return {
             kind: 'evaluated' as const,

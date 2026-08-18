@@ -4,8 +4,8 @@ import { GlobalContext } from '../Provider/GlobalContext';
 import GoogleReCaptcha from './GoogleReCaptcha';
 
 interface IRecaptchaProps {
-    setToken: (token: string) => void;
-    shouldReset: boolean;
+    readonly setToken: (token: string) => void;
+    readonly shouldReset: boolean;
 }
 
 export function ReCaptcha({ setToken, shouldReset }: IRecaptchaProps) {
