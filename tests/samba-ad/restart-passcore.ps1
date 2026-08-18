@@ -97,7 +97,7 @@ while ((Get-Date) -lt $portDeadline) {
 if (Get-NetTCPConnection -State Listen -LocalPort 5000 -ErrorAction SilentlyContinue) {
     Get-NetTCPConnection -State Listen -LocalPort 5000 |
         Select-Object LocalAddress, LocalPort, OwningProcess |
-        Format-Table | Out-String | Write-Host
+            Format-Table | Out-String | Write-Host
     throw "Port 5000 is still held 30s after stopping the previous instance; refusing to relaunch."
 }
 
