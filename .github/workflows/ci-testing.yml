@@ -14,6 +14,17 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    # Measured over the last 29 successful runs: median 2.7 minutes, 26 of them
+    # under 3, and a tail to 21.1 when "Install Playwright Browsers" is slow --
+    # that step runs `npx playwright install --with-deps`, which shells out to
+    # apt-get and is at the mercy of mirror speed. 30 leaves roughly nine
+    # minutes of headroom above the slowest run that has ever passed.
+    #
+    # The point is the other end. With no timeout this job inherits GitHub's
+    # six-hour default, and on 2026-08-18 that same apt-get step hung for over
+    # 70 minutes and would have held a runner for the rest of it.
+    timeout-minutes: 30
+
     env:
       DOTNET_NOLOGO: true
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true

@@ -1,0 +1,13 @@
+# Generated output. Without these, `npm run prettier` reports on build and test
+# artifacts that no one edits, and its result depends on whether you happen to
+# have run the suite locally: test-results/.last-run.json made a local check
+# report 24 files where CI, on a fresh checkout, saw 23. A check that disagrees
+# with CI is a check people learn to ignore.
+#
+# test-results/ and playwright-report/ are Playwright output, and both are
+# already gitignored.
+test-results/
+playwright-report/
+
+# The Parcel bundle, written to the Web project by `npm run build`.
+../wwwroot/
