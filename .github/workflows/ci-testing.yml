@@ -66,10 +66,17 @@ jobs:
             --property:PASSCORE_PROVIDER=DEBUG \
             --no-restore
 
-      - name: Run Frontend Typecheck and Lint
+      # Prettier runs last of the three: a type or lint error says something is
+      # wrong, while a formatting difference only says it is written
+      # differently, and `npm run prettier:fix` resolves the latter in one
+      # command. Nothing enforced this check before, which is how 23 of the
+      # client's files came to disagree with the repository's own
+      # .prettierrc.js.
+      - name: Run Frontend Typecheck, Lint and Format Check
         run: |
           npm run typecheck
           npm run lint
+          npm run prettier
         working-directory: src/Unosquare.PassCore.Web/ClientApp
 
       - name: Run Backend Unit Tests
