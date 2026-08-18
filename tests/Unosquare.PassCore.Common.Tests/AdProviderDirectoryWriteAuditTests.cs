@@ -72,8 +72,14 @@ namespace Unosquare.PassCore.Common.Tests;
 /// providers — that is the preferred outcome, and this file should shrink when
 /// it is available rather than grow.</para>
 /// </summary>
-public class AdProviderDirectoryWriteAuditTests
+public partial class AdProviderDirectoryWriteAuditTests
 {
+    [GeneratedRegex("""(?<verbatim>@"(?:[^"]|"")*")|(?<literal>"(?:[^"\\\n]|\\.)*")|(?<ch>'(?:[^'\\\n]|\\.)*')|(?<line>//[^\n]*)|(?<block>/\*.*?\*/)""", RegexOptions.Singleline)]
+    private static partial Regex CodeSkeletonRegex();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespaceRegex();
+
     private const string ProviderRelativePath =
         "src/Unosquare.PassCore.PasswordProvider/PasswordChangeProvider.cs";
 
@@ -140,7 +146,7 @@ public class AdProviderDirectoryWriteAuditTests
 
         var verificationAt = body.IndexOf("ValidateUserCredentials(", StringComparison.Ordinal);
         Assert.True(
-            verificationAt >= 0,
+            body.Contains("ValidateUserCredentials(", StringComparison.Ordinal),
             "ChangeDirectoryPasswordCore no longer calls ValidateUserCredentials; the ordering this test " +
             "guards has no anchor. Re-establish credential verification before reviewing this test.");
 
@@ -263,11 +269,9 @@ public class AdProviderDirectoryWriteAuditTests
     /// braces or parentheses inside them cannot unbalance the body extraction.
     /// </summary>
     private static string CodeSkeleton(string source) =>
-        Regex.Replace(
+        CodeSkeletonRegex().Replace(
             source,
-            """(?<verbatim>@"(?:[^"]|"")*")|(?<literal>"(?:[^"\\\n]|\\.)*")|(?<ch>'(?:[^'\\\n]|\\.)*')|(?<line>//[^\n]*)|(?<block>/\*.*?\*/)""",
-            static match => match.Groups["line"].Success || match.Groups["block"].Success ? string.Empty : "\"\"",
-            RegexOptions.Singleline);
+            static match => match.Groups["line"].Success || match.Groups["block"].Success ? string.Empty : "\"\"");
 
     /// <summary>
     /// Returns the brace-delimited body of the first method whose declaration
@@ -641,7 +645,7 @@ public class AdProviderDirectoryWriteAuditTests
 
         // Whitespace-normalized so formatting (line breaks, extra spaces
         // around the call) cannot mask a changed argument.
-        var normalizedBody = Regex.Replace(body, @"\s+", " ").Trim();
+        var normalizedBody = WhitespaceRegex().Replace(body, " ").Trim();
 
         Assert.Contains(
             "UsernameQualifier.Resolve( username, _options.DefaultDomain,",

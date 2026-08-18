@@ -15,6 +15,8 @@ namespace Unosquare.PassCore.Common.Tests;
 
 public class PasswordChangeProviderBaseTests
 {
+    private static readonly string[] FirstAndSecondCalls = new[] { "first", "second" };
+
     private sealed class TestProvider : PasswordChangeProviderBase
     {
         private readonly Func<int?> _minimumLengthLookup;
@@ -121,7 +123,7 @@ public class PasswordChangeProviderBaseTests
         var result = await provider.TestChangePasswordAsync(context);
 
         Assert.False(result.IsSuccessful);
-        Assert.Equal(new[] { "first", "second" }, calls);
+        Assert.Equal(FirstAndSecondCalls, calls);
         Assert.Equal(ApiErrorCode.MinimumDistance, result.Errors.Single().ErrorCode);
     }
 

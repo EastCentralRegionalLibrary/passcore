@@ -48,7 +48,7 @@ public class LdapSearchFilterEscapingTests
     {
         var filters = await CapturedFilters(userDn, primaryGroupId: "1234");
 
-        var chainFilter = Assert.Single(filters.Where(f => f.StartsWith(ChainFilterPrefix, StringComparison.Ordinal)));
+        var chainFilter = Assert.Single(filters, f => f.StartsWith(ChainFilterPrefix, StringComparison.Ordinal));
 
         Assert.EndsWith(")", chainFilter, StringComparison.Ordinal);
 
@@ -75,7 +75,7 @@ public class LdapSearchFilterEscapingTests
     {
         var filters = await CapturedFilters("cn=u,ou=people,dc=example,dc=com", primaryGroupId);
 
-        var primaryFilter = Assert.Single(filters.Where(f => f.Contains("primaryGroupToken", StringComparison.Ordinal)));
+        var primaryFilter = Assert.Single(filters, f => f.Contains("primaryGroupToken", StringComparison.Ordinal));
         Assert.Equal($"(primaryGroupToken={primaryGroupId})", primaryFilter);
     }
 
@@ -126,7 +126,7 @@ public class LdapSearchFilterEscapingTests
         await Assert.ThrowsAsync<DirectoryUnavailableException>(
             () => provider.IsMemberOfGroupAsync("u", "RestrictedGroup"));
 
-        var entry = Assert.Single(logger.Entries.Where(e => e.EventId.Id == 106));
+        var entry = Assert.Single(logger.Entries, e => e.EventId.Id == 106);
         Assert.Equal(LogLevel.Warning, entry.Level);
         Assert.Contains("not-a-number", entry.Message, StringComparison.Ordinal);
         Assert.Contains("cn=u,ou=people,dc=example,dc=com", entry.Message, StringComparison.Ordinal);

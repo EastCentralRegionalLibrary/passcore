@@ -10,6 +10,8 @@ namespace Unosquare.PassCore.Common.Tests;
 /// </summary>
 public class AppSettingsValidationTests
 {
+    private static readonly string[] MixedHostnames = new[] { "", "dc1" };
+
     private sealed class FakeAppSettings : IAppSettings
     {
         public ErrorDisclosureMode ErrorDisclosureMode { get; set; }
@@ -140,7 +142,7 @@ public class AppSettingsValidationTests
     public void Required_MixedHostnamesWithOneNonBlankEntry_DoesNotThrow()
     {
         var settings = ValidSettings();
-        settings.LdapHostnames = new[] { "", "dc1" };
+        settings.LdapHostnames = MixedHostnames;
 
         AppSettingsValidation.ValidateServiceAccount(settings, required: true);
     }

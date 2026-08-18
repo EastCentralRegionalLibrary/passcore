@@ -130,7 +130,8 @@ public class LdapSecurityDescriptorTests
         garbage[17] = 0; garbage[18] = 0; garbage[19] = 0;
 
         // Must not throw regardless of what the "ACL" bytes contain.
-        _ = LdapPasswordChangeProvider.SecurityDescriptorDeniesChangePassword(garbage);
+        Assert.Null(Record.Exception(
+            () => LdapPasswordChangeProvider.SecurityDescriptorDeniesChangePassword(garbage)));
     }
 
     [Fact]
