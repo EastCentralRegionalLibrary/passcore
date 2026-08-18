@@ -34,9 +34,8 @@ export function parsePlainTextAndLinks(htmlString: string): ReactNode[] {
             const attributes = parts[i + 1].match(/(\w+)=(['"])(.*?)\2\s*/g) || [];
             const attributeMap: { [key: string]: string } = {};
 
-            const attrRegex = /(\w+)=(['"])(.*?)\2/;
             attributes.forEach((attr: string) => {
-                const match = attrRegex.exec(attr);
+                const match = attr.match(/(\w+)=(['"])(.*?)\2/);
                 if (match) {
                     const [, key, , value] = match;
                     attributeMap[key] = value;
