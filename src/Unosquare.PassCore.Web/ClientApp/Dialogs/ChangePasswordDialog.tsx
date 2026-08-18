@@ -8,8 +8,8 @@ import { use } from 'react';
 import { GlobalContext } from '../Provider/GlobalContext';
 
 interface IChangePasswordDialogProps {
-    open: boolean;
-    onClose: () => void;
+    readonly open: boolean;
+    readonly onClose: () => void;
 }
 
 export function ChangePasswordDialog({

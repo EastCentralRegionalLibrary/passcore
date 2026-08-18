@@ -13,12 +13,12 @@ export async function fetchRequest<T = unknown>(
     requestBody?: unknown
 ): Promise<T> {
     // Determine the body. If requestBody is already a string, use it directly.
-    const body =
-        typeof requestBody === 'string'
-            ? requestBody
-            : requestBody
-                ? JSON.stringify(requestBody)
-                : null;
+    let body: string | null = null;
+    if (typeof requestBody === 'string') {
+        body = requestBody;
+    } else if (requestBody) {
+        body = JSON.stringify(requestBody);
+    }
 
     // Indicate we expect JSON, and only send Content-Type when there is a body.
     const headers = new Headers({ Accept: 'application/json' });

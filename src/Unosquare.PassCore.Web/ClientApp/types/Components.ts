@@ -7,13 +7,13 @@ export interface IChangePasswordFormInitialModel {
 }
 
 export interface IChangePasswordFormProps {
-    submitData: boolean;
-    toSubmitData: (data: IChangePasswordFormInitialModel) => void;
-    onValidated: (isValid: boolean) => void;
-    shouldReset: boolean;
-    changeResetState: (state: boolean) => void;
-    setReCaptchaToken: (token: string) => void;
-    recaptchaToken: string;
+    readonly submitData: boolean;
+    readonly toSubmitData: (data: IChangePasswordFormInitialModel) => void;
+    readonly onValidated: (isValid: boolean) => void;
+    readonly shouldReset: boolean;
+    readonly changeResetState: (state: boolean) => void;
+    readonly setReCaptchaToken: (token: string) => void;
+    readonly recaptchaToken: string;
 }
 
 export interface IPasswordGenProps {

@@ -4,7 +4,7 @@ import { SnackbarContext } from './GlobalContext';
 import { SnackbarMessageType } from '../types/Components';
 
 interface ISnackbarProviderProps {
-    children: ReactNode;
+    readonly children: ReactNode;
 }
 
 interface SnackbarState {

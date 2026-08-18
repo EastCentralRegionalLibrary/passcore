@@ -3,10 +3,10 @@ import Alert from '@mui/material/Alert';
 import { SnackbarMessageType } from '../types/Components';
 
 export interface GlobalSnackbarProps {
-    open: boolean;
-    message: { messageText: string; messageType: SnackbarMessageType };
-    onClose: () => void;
-    milliSeconds?: number;
+    readonly open: boolean;
+    readonly message: { readonly messageText: string; readonly messageType: SnackbarMessageType };
+    readonly onClose: () => void;
+    readonly milliSeconds?: number;
 }
 
 export function GlobalSnackbar({

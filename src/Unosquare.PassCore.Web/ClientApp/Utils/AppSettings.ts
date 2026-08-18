@@ -3,7 +3,7 @@ import { IGlobalContext } from "../types/Providers";
 export async function resolveAppSettings(): Promise<IGlobalContext> {
     const response = await fetch('api/password');
 
-    if (!response || !response.ok) {
+    if (!response?.ok) {
         throw new Error('Error fetching settings.');
     }
 
