@@ -27,6 +27,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Unosquare.PassCore.Common\Unosquare.PassCore.Common.csproj" />
     <ProjectReference Include="..\..\src\Unosquare.PassCore.Testing\Unosquare.PassCore.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Unosquare.PassCore.Web\Unosquare.PassCore.Web.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

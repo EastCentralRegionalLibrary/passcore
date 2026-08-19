@@ -16,7 +16,7 @@ public class DistancePasswordPolicy : IPasswordPolicy
 
         if (context.ClientSettings.MinimumDistance > 0)
         {
-            var distance = MeasureNewPasswordDistance(context.CurrentPassword, context.NewPassword);
+            var distance = MeasureNewPasswordDistance(context.CurrentPassword, context.NewPassword, context.ClientSettings.MinimumDistance);
             if (distance < context.ClientSettings.MinimumDistance)
             {
                 throw new PasswordPolicyViolationException("Password does not meet the minimum distance requirement", ApiErrorCode.MinimumDistance);
@@ -26,31 +26,79 @@ public class DistancePasswordPolicy : IPasswordPolicy
         return Task.CompletedTask;
     }
 
-    private static int MeasureNewPasswordDistance(string currentPassword, string newPassword)
+    /// <summary>
+    /// Measures the Levenshtein distance between two password strings with threshold-aware early exit and bounded O(min(n, m)) memory.
+    /// </summary>
+    /// <param name="currentPassword">The current password.</param>
+    /// <param name="newPassword">The new password.</param>
+    /// <param name="threshold">The distance threshold for early exit.</param>
+    /// <returns>The calculated Levenshtein distance or threshold if bound is reached.</returns>
+    internal static int MeasureNewPasswordDistance(string currentPassword, string newPassword, int threshold = int.MaxValue)
     {
+        ArgumentNullException.ThrowIfNull(currentPassword);
+        ArgumentNullException.ThrowIfNull(newPassword);
+
         var n = currentPassword.Length;
         var m = newPassword.Length;
-        var d = new int[n + 1][];
-        for (var i = 0; i <= n; i++)
-        {
-            d[i] = new int[m + 1];
-        }
 
         if (n == 0) return m;
         if (m == 0) return n;
 
-        for (var i = 0; i <= n; i++) d[i][0] = i;
-        for (var j = 0; j <= m; d[0][j] = j++) { }
+        var lengthDiff = Math.Abs(n - m);
+        if (lengthDiff >= threshold)
+        {
+            return lengthDiff;
+        }
+
+        var s1 = currentPassword;
+        var s2 = newPassword;
+        if (n < m)
+        {
+            s1 = newPassword;
+            s2 = currentPassword;
+            n = s1.Length;
+            m = s2.Length;
+        }
+
+        var row = new int[m + 1];
+
+        for (var j = 0; j <= m; j++)
+        {
+            row[j] = j;
+        }
 
         for (var i = 1; i <= n; i++)
         {
+            var prevDiagonal = row[0];
+            row[0] = i;
+            var minInRow = row[0];
+
+            var char1 = s1[i - 1];
+
             for (var j = 1; j <= m; j++)
             {
-                var cost = (newPassword[j - 1] == currentPassword[i - 1]) ? 0 : 1;
-                d[i][j] = Math.Min(Math.Min(d[i - 1][j] + 1, d[i][j - 1] + 1), d[i - 1][j - 1] + cost);
+                var temp = row[j];
+                var cost = (char1 == s2[j - 1]) ? 0 : 1;
+
+                var distance = Math.Min(
+                    Math.Min(row[j] + 1, row[j - 1] + 1),
+                    prevDiagonal + cost);
+
+                row[j] = distance;
+                prevDiagonal = temp;
+
+                if (distance < minInRow)
+                {
+                    minInRow = distance;
+                }
+            }
+
+            if (minInRow >= threshold)
+            {
+                return minInRow;
             }
         }
 
-        return d[n][m];
+        return row[m];
     }
 }

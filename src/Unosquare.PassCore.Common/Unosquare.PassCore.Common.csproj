@@ -1,10 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<ItemGroup>
 	  <ProjectReference Include="..\PwnedPasswordsSearch\PwnedPasswordsSearch.csproj" />
 	</ItemGroup>
 	<ItemGroup>
 	  <PackageReference Include="zxcvbn-core" />
 	  <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+	</ItemGroup>
+	<ItemGroup>
+	  <InternalsVisibleTo Include="Unosquare.PassCore.Common.Tests" />
 	</ItemGroup>
 	<PropertyGroup>
 		<!-- Inherit from Directory.Build.props -->
