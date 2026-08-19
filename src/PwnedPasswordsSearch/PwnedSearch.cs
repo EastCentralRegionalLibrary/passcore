@@ -76,23 +76,23 @@ namespace PwnedPasswordsSearch
         }
 
         // LoggerMessage delegates for performance optimization
-        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordCheckRequest =
-            LoggerMessage.Define<string>(
+        private static readonly Action<ILogger, Exception?> LogPwnedPasswordCheckRequest =
+            LoggerMessage.Define(
                 LogLevel.Debug,
                 new EventId(300, "PwnedPasswordCheckRequest"),
-                "Pwned Passwords API request for hash prefix: '{HashPrefix}'.");
+                "Querying Pwned Passwords API.");
 
-        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordFound =
-            LoggerMessage.Define<string>(
+        private static readonly Action<ILogger, Exception?> LogPwnedPasswordFound =
+            LoggerMessage.Define(
                 LogLevel.Debug,
                 new EventId(301, "PwnedPasswordFound"),
-                "Pwned password found for hash suffix: '{HashSuffix}'. Password is compromised.");
+                "Pwned Passwords API reported the proposed password as compromised.");
 
-        private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordNotFound =
-            LoggerMessage.Define<string>(
+        private static readonly Action<ILogger, Exception?> LogPwnedPasswordNotFound =
+            LoggerMessage.Define(
                 LogLevel.Debug,
                 new EventId(302, "PwnedPasswordNotFound"),
-                "Pwned password not found for hash prefix: '{HashPrefix}'. Password is not publicly known.");
+                "Pwned password not found in API. Password is not publicly known.");
 
         private static readonly Action<ILogger, string, Exception?> LogPwnedPasswordApiError =
             LoggerMessage.Define<string>(
@@ -118,6 +118,10 @@ namespace PwnedPasswordsSearch
         /// <exception cref="PwnedPasswordsSearchException">Thrown for unexpected errors during the password check process.</exception>
         public async Task<bool> IsPwnedPasswordAsync(string plaintext)
         {
+            string hashResult = string.Empty;
+            string hashPrefix = string.Empty;
+            string hashSuffixToCheck = string.Empty;
+
             try
             {
 #pragma warning disable CA5350 // Do Not Use Weak Cryptographic Algorithms
@@ -128,12 +132,12 @@ namespace PwnedPasswordsSearch
                 var sBuilder = new StringBuilder();
                 foreach (var t in data)
                     sBuilder.Append(t.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
-                var hashResult = sBuilder.ToString().ToUpperInvariant();
+                hashResult = sBuilder.ToString().ToUpperInvariant();
 
-                string hashPrefix = hashResult[..5];
-                string hashSuffixToCheck = hashResult[5..];
+                hashPrefix = hashResult[..5];
+                hashSuffixToCheck = hashResult[5..];
 
-                LogPwnedPasswordCheckRequest(_logger, hashPrefix, null);
+                LogPwnedPasswordCheckRequest(_logger, null);
 
                 var client = _httpClientFactory.CreateClient("PwnedPasswords");
                 HttpResponseMessage? response = null; // Declare response outside using for error context
@@ -151,24 +155,28 @@ namespace PwnedPasswordsSearch
                         string[] parts = line.Split(':');
                         if (parts.Length == 2 && string.Equals(parts[0], hashSuffixToCheck, StringComparison.OrdinalIgnoreCase))
                         {
-                            LogPwnedPasswordFound(_logger, hashSuffixToCheck, null);
+                            LogPwnedPasswordFound(_logger, null);
                             return true; // Password is PWNED!
                         }
                     }
-                    LogPwnedPasswordNotFound(_logger, hashPrefix, null);
+                    LogPwnedPasswordNotFound(_logger, null);
                     return false; // Password not pwned
                 }
                 catch (HttpRequestException ex) when (response != null)
                 {
                     // Capture more context about the API error including status code if available
-                    string errorMessage = $"API request failed with status code: {response.StatusCode}. Error message: {ex.Message}";
-                    LogPwnedPasswordApiError(_logger, errorMessage, ex);
-                    throw new PwnedPasswordsApiException(errorMessage, ex);
+                    string rawMessage = $"API request failed with status code: {response.StatusCode}. Error message: {ex.Message}";
+                    string sanitizedMessage = SanitizeSensitiveData(rawMessage, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                    var sanitizedEx = SanitizeException(ex, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                    LogPwnedPasswordApiError(_logger, sanitizedMessage, sanitizedEx);
+                    throw new PwnedPasswordsApiException(sanitizedMessage, sanitizedEx);
                 }
                 catch (HttpRequestException ex)
                 {
-                    LogPwnedPasswordApiError(_logger, ex.Message, ex);
-                    throw new PwnedPasswordsApiException("Error calling Pwned Passwords API.", ex);
+                    string sanitizedMessage = SanitizeSensitiveData(ex.Message, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                    var sanitizedEx = SanitizeException(ex, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                    LogPwnedPasswordApiError(_logger, sanitizedMessage, sanitizedEx);
+                    throw new PwnedPasswordsApiException("Error calling Pwned Passwords API.", sanitizedEx);
                 }
             }
             catch (PwnedPasswordsApiException)
@@ -177,9 +185,55 @@ namespace PwnedPasswordsSearch
             }
             catch (Exception ex)
             {
-                LogPwnedPasswordUnexpectedError(_logger, ex.Message, ex);
-                throw new PwnedPasswordsSearchException("Unexpected error during pwned password check.", ex);
+                string sanitizedMessage = SanitizeSensitiveData(ex.Message, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                var sanitizedEx = SanitizeException(ex, plaintext, hashResult, hashPrefix, hashSuffixToCheck);
+                LogPwnedPasswordUnexpectedError(_logger, sanitizedMessage, sanitizedEx);
+                throw new PwnedPasswordsSearchException("Unexpected error during pwned password check.", sanitizedEx);
             }
+        }
+
+        private static string SanitizeSensitiveData(string text, string plaintext, string hashResult, string hashPrefix, string hashSuffix)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+
+            var sanitized = text;
+
+            if (!string.IsNullOrEmpty(plaintext))
+                sanitized = sanitized.Replace(plaintext, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrEmpty(hashResult))
+                sanitized = sanitized.Replace(hashResult, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrEmpty(hashSuffix))
+                sanitized = sanitized.Replace(hashSuffix, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrEmpty(hashPrefix))
+            {
+                sanitized = sanitized.Replace($"range/{hashPrefix}", "range/[REDACTED]", StringComparison.OrdinalIgnoreCase);
+                sanitized = sanitized.Replace(hashPrefix, "[REDACTED]", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return sanitized;
+        }
+
+        private static Exception SanitizeException(Exception ex, string plaintext, string hashResult, string hashPrefix, string hashSuffix)
+        {
+            var rawMessage = ex.Message;
+            var sanitizedMessage = SanitizeSensitiveData(rawMessage, plaintext, hashResult, hashPrefix, hashSuffix);
+
+            var inner = ex.InnerException != null ? SanitizeException(ex.InnerException, plaintext, hashResult, hashPrefix, hashSuffix) : null;
+
+            if (string.Equals(rawMessage, sanitizedMessage, StringComparison.Ordinal) && inner == ex.InnerException)
+            {
+                return ex;
+            }
+
+            return ex switch
+            {
+                HttpRequestException => new HttpRequestException(sanitizedMessage, inner),
+                _ => new PwnedPasswordsSearchException(sanitizedMessage, inner)
+            };
         }
     }
 }
