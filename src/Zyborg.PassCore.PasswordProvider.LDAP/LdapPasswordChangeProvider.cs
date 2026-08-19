@@ -69,9 +69,11 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
         LoggerMessage.Define(
             LogLevel.Warning,
             new EventId(100, nameof(LogNoTransportSecurity)),
-            "Neither LdapSecureSocketLayer nor LdapStartTls is enabled; user credentials " +
-            "and new passwords will be sent to the LDAP server unencrypted. Enable one of " +
-            "them unless the connection is protected by other means (e.g. a local test server).");
+            "AllowInsecureLdap is enabled while neither LdapSecureSocketLayer nor " +
+            "LdapStartTls is enabled. LDAP credentials and password-change material " +
+            "will be transmitted without TLS. This configuration should only be used " +
+            "when plaintext LDAP is explicitly required and the transport risk has " +
+            "been accepted.");
 
     private static readonly Action<ILogger, ErrorDisclosureMode, Exception?> LogHideUserNotFoundDeprecated =
         LoggerMessage.Define<ErrorDisclosureMode>(
@@ -1481,6 +1483,13 @@ public class LdapPasswordChangeProvider : DirectoryPasswordChangeProviderBase
                 "LdapSecureSocketLayer and LdapStartTls are mutually exclusive: " +
                 "StartTLS is issued over a plaintext connection, while SecureSocketLayer " +
                 "expects TLS from the first byte. Enable at most one of them.");
+
+        if (!opts.LdapSecureSocketLayer && !opts.LdapStartTls && !opts.AllowInsecureLdap)
+            throw new ArgumentException(
+                "Neither LdapSecureSocketLayer nor LdapStartTls is enabled. Plaintext LDAP " +
+                "is disabled by default because directory credentials and password-change " +
+                "material would be transmitted without TLS. Enable TLS or explicitly set " +
+                "AllowInsecureLdap=true if this insecure configuration is intentional.");
     }
 
     /// <summary>

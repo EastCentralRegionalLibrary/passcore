@@ -71,6 +71,21 @@ public class LdapPasswordChangeOptions : IAppSettings
     /// </value>
     public bool LdapStartTls { get; set; }
 
+
+    /// <summary>
+    /// Gets or sets a value indicating whether insecure/plaintext LDAP is explicitly permitted.
+    /// </summary>
+    /// <remarks>
+    /// Allows the LDAP provider to connect and transmit credentials/password changes without TLS
+    /// when both <see cref="LdapSecureSocketLayer"/> and <see cref="LdapStartTls"/> are disabled.
+    /// Defaults to false. Enabling this exposes LDAP credentials and password-change material to anyone
+    /// capable of observing or modifying the network path and should normally be limited to isolated development/test environments.
+    /// </remarks>
+    /// <value>
+    ///   <c>true</c> if insecure LDAP is explicitly allowed; otherwise, <c>false</c>.
+    /// </value>
+    public bool AllowInsecureLdap { get; set; }
+
     /// <summary>
     /// Gets or sets a value indicating whether [LDAP ignore TLS errors].
     /// </summary>

@@ -14,6 +14,7 @@ public class LdapTransportSecurityTests
     {
         LdapHostnames = new[] { "ldap.example.com" },
         LdapPort = 636,
+        LdapSecureSocketLayer = true,
         LdapUsername = "cn=admin,dc=example,dc=com",
         LdapPassword = "secret",
         LdapSearchBase = "dc=example,dc=com",
@@ -30,40 +31,86 @@ public class LdapTransportSecurityTests
             Array.Empty<IPasswordPolicy>());
 
     [Fact]
-    public void Construct_SslAndStartTlsBothEnabled_Throws()
+    public void Construct_PlaintextWithoutOptIn_Throws()
     {
         var opts = ValidOptions();
-        opts.LdapSecureSocketLayer = true;
-        opts.LdapStartTls = true;
+        opts.LdapSecureSocketLayer = false;
+        opts.LdapStartTls = false;
+        opts.AllowInsecureLdap = false;
 
-        Assert.Throws<ArgumentException>(() => Construct(opts));
+        var ex = Assert.Throws<ArgumentException>(() => Construct(opts));
+        Assert.Contains("Plaintext LDAP", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AllowInsecureLdap=true", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Construct_NoTransportSecurity_LogsWarning()
+    public void Construct_PlaintextWithExplicitOptIn_SucceedsAndLogsWarning()
     {
         var logger = new CapturingLogger();
+        var opts = ValidOptions();
+        opts.LdapSecureSocketLayer = false;
+        opts.LdapStartTls = false;
+        opts.AllowInsecureLdap = true;
 
-        Construct(ValidOptions(), logger);
+        Construct(opts, logger);
 
-        Assert.Contains(logger.Entries, e =>
-            e.Level == LogLevel.Warning &&
-            e.Message.Contains("unencrypted", StringComparison.OrdinalIgnoreCase));
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("AllowInsecureLdap", warning.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("without TLS", warning.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public void Construct_WithTransportSecurity_DoesNotLogWarning(bool ssl, bool startTls)
+    public void Construct_WithTransportSecurity_SucceedsAndDoesNotLogWarning(bool ssl, bool startTls)
     {
         var logger = new CapturingLogger();
         var opts = ValidOptions();
         opts.LdapSecureSocketLayer = ssl;
         opts.LdapStartTls = startTls;
+        opts.AllowInsecureLdap = false;
 
         Construct(opts, logger);
 
         Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Construct_SslAndStartTlsBothEnabled_ThrowsRegardlessOfAllowInsecureLdap(bool allowInsecure)
+    {
+        var opts = ValidOptions();
+        opts.LdapSecureSocketLayer = true;
+        opts.LdapStartTls = true;
+        opts.AllowInsecureLdap = allowInsecure;
+
+        Assert.Throws<ArgumentException>(() => Construct(opts));
+    }
+
+    [Theory]
+    [InlineData(1389, false, true, false, true)]
+    [InlineData(1636, true, false, false, true)]
+    [InlineData(636, false, false, false, false)]
+    [InlineData(389, false, false, true, true)]
+    public void Construct_PortIndependence_ValidationDependsOnlyOnTlsFlags(
+        int port, bool ssl, bool startTls, bool allowInsecure, bool expectedValid)
+    {
+        var opts = ValidOptions();
+        opts.LdapPort = port;
+        opts.LdapSecureSocketLayer = ssl;
+        opts.LdapStartTls = startTls;
+        opts.AllowInsecureLdap = allowInsecure;
+
+        if (expectedValid)
+        {
+            var provider = Construct(opts);
+            Assert.NotNull(provider);
+        }
+        else
+        {
+            Assert.Throws<ArgumentException>(() => Construct(opts));
+        }
     }
 
     [Theory]

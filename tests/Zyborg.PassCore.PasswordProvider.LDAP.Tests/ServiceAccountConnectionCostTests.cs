@@ -112,7 +112,8 @@ public class ServiceAccountConnectionCostTests
         var options = new LdapPasswordChangeOptions
         {
             LdapHostnames = new[] { "ldap.example.com" },
-            LdapPort = 389,
+            LdapPort = 636,
+        LdapSecureSocketLayer = true,
             LdapUsername = "cn=admin,dc=example,dc=com",
             LdapPassword = "secret",
             LdapSearchBase = "dc=example,dc=com",
