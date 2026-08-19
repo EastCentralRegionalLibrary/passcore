@@ -54,6 +54,8 @@ public class LdapAdministrativeResetTests
         LdapUsername = "cn=admin,dc=example,dc=com",
         LdapPassword = "secret",
         LdapSearchBase = "dc=example,dc=com",
+        LdapPort = 636,
+        LdapSecureSocketLayer = true,
         LdapSearchFilter = "(sAMAccountName={Username})",
         AllowAdministrativeReset = allowReset,
         LdapChangePasswordWithDelAdd = delAdd,
