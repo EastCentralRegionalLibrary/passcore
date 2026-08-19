@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PwnedPasswordsSearch;
 using Xunit;
@@ -13,6 +16,12 @@ public class PwnedSearchTests
 {
     // SHA-1("password") = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8 → prefix "5BAA6", suffix "1E4C9B93F3F0682250B6CF8331B7EE68FD8"
     private const string PasswordSuffix = "1E4C9B93F3F0682250B6CF8331B7EE68FD8";
+
+    // SHA-1("LoggingRegressionTestPassword!") = 6C1C9147BD094CD0F22A352E17F5B64FC375330A
+    private const string RegressionPassword = "LoggingRegressionTestPassword!";
+    private const string RegressionFullHash = "6C1C9147BD094CD0F22A352E17F5B64FC375330A";
+    private const string RegressionPrefix = "6C1C9";
+    private const string RegressionSuffix = "147BD094CD0F22A352E17F5B64FC375330A";
 
     [Fact]
     public async Task IsPwnedPasswordAsync_HashSuffixPresent_ReturnsTrue()
@@ -53,47 +62,20 @@ public class PwnedSearchTests
     }
 
     [Fact]
-    public async Task IsPwnedPasswordAsync_TransportFailure_ThrowsApiException()
+    public async Task IsPwnedPasswordAsync_DoesNotSendFullHashOrPlaintext()
     {
-        var factory = new StubHttpClientFactory((_, _) => throw new HttpRequestException("network down"));
-        var search = new PwnedSearch(factory, NullLogger<PwnedSearch>.Instance);
-
-        await Assert.ThrowsAsync<PwnedPasswordsApiException>(() => search.IsPwnedPasswordAsync("password"));
-    }
-
-    [Fact]
-    public async Task IsPwnedPasswordAsync_RequestUriCorrectness()
-    {
-        // Assert the handler receives exactly range/XXXXX where the prefix is the first 5 characters of the uppercase SHA-1 of the input.
-        // SHA-1("password") is 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8, so prefix is 5BAA6 and suffix is 1E4C9B93F3F0682250B6CF8331B7EE68FD8.
-        var factory = new StubHttpClientFactory((req, _) =>
-        {
-            var relativePath = req.RequestUri!.PathAndQuery.TrimStart('/');
-            Assert.Equal("range/5BAA6", relativePath);
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent($"{PasswordSuffix}:42"),
-            };
-        });
-        var search = new PwnedSearch(factory, NullLogger<PwnedSearch>.Instance);
-
-        await search.IsPwnedPasswordAsync("password");
-    }
-
-    [Fact]
-    public async Task IsPwnedPasswordAsync_PlaintextNeverLeavesProcess()
-    {
-        // Assert the request URI and headers contain neither the password nor its full hash.
-        const string plaintext = "super_secret_password_123";
-        // SHA-1("super_secret_password_123") = C4FC9AA3172C6C0770B7C10985DFB5BB78D69066
-        const string fullHash = "C4FC9AA3172C6C0770B7C10985DFB5BB78D69066";
-        const string suffix = "AA3172C6C0770B7C10985DFB5BB78D69066";
+        const string plaintext = "SecretPassword123!";
+        // SHA1("SecretPassword123!") = 65BF280069AF45EB4489F4BD4F701E7469523234
+        const string fullHash = "65BF280069AF45EB4489F4BD4F701E7469523234";
+        const string prefix = "65BF2";
+        const string suffix = "80069AF45EB4489F4BD4F701E7469523234";
 
         var factory = new StubHttpClientFactory((req, _) =>
         {
             var uriString = req.RequestUri!.ToString();
+            Assert.EndsWith($"range/{prefix}", uriString, StringComparison.OrdinalIgnoreCase);
 
-            // Check URI doesn't contain plaintext, full hash, or suffix
+            // Ensure the URL does NOT contain plaintext, full hash, or suffix
             Assert.DoesNotContain(plaintext, uriString, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(fullHash, uriString, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(suffix, uriString, StringComparison.OrdinalIgnoreCase);
@@ -207,7 +189,6 @@ public class PwnedSearchTests
     public async Task IsPwnedPasswordAsync_SuffixMixedCase_ReturnsTrue()
     {
         // Assert that a mixed-case suffix in the response is also correctly matched.
-        // Let's create a mixed case version of the password suffix (e.g., "1e4c9b93f3f0682250b6cf8331b7ee68fd8" with some uppercase: "1E4c9B93f3f0682250b6cf8331b7ee68fd8")
         const string mixedCaseSuffix = "1E4c9B93f3f0682250b6cf8331b7ee68fd8";
         var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -287,6 +268,146 @@ public class PwnedSearchTests
         var ex = await Assert.ThrowsAsync<PwnedPasswordsApiException>(() => search.IsPwnedPasswordAsync("password"));
         Assert.IsNotType<PwnedPasswordsSearchException>(ex);
     }
+
+    // -------------------------------------------------------------------------
+    // Logging regression tests
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_NonCompromisedPassword_LogsDoNotExposeSensitiveData()
+    {
+        var logger = new CapturingLogger<PwnedSearch>();
+        var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:1\r\nBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB:2"),
+        });
+
+        var search = new PwnedSearch(factory, logger);
+        var result = await search.IsPwnedPasswordAsync(RegressionPassword);
+
+        Assert.False(result);
+        AssertNoPasswordDerivedDataInLogs(logger, RegressionPassword, RegressionFullHash, RegressionPrefix, RegressionSuffix);
+
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 300);
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 302);
+    }
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_CompromisedPassword_LogsDoNotExposeSensitiveData()
+    {
+        var logger = new CapturingLogger<PwnedSearch>();
+        var rawResponseLine = $"{RegressionSuffix}:42";
+        var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(rawResponseLine),
+        });
+
+        var search = new PwnedSearch(factory, logger);
+        var result = await search.IsPwnedPasswordAsync(RegressionPassword);
+
+        Assert.True(result);
+        AssertNoPasswordDerivedDataInLogs(logger, RegressionPassword, RegressionFullHash, RegressionPrefix, RegressionSuffix, rawResponseLine);
+
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 300);
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 301);
+    }
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_NonSuccessStatusCode_LogsDoNotExposeSensitiveData()
+    {
+        var logger = new CapturingLogger<PwnedSearch>();
+        var factory = new StubHttpClientFactory((_, _) => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        var search = new PwnedSearch(factory, logger);
+        await Assert.ThrowsAsync<PwnedPasswordsApiException>(() => search.IsPwnedPasswordAsync(RegressionPassword));
+
+        AssertNoPasswordDerivedDataInLogs(logger, RegressionPassword, RegressionFullHash, RegressionPrefix, RegressionSuffix);
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 303);
+    }
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_NetworkException_LogsDoNotExposeSensitiveData()
+    {
+        var logger = new CapturingLogger<PwnedSearch>();
+        var factory = new StubHttpClientFactory((_, _) =>
+            throw new HttpRequestException($"Connection failed for https://api.pwnedpasswords.com/range/{RegressionPrefix}"));
+
+        var search = new PwnedSearch(factory, logger);
+        await Assert.ThrowsAsync<PwnedPasswordsApiException>(() => search.IsPwnedPasswordAsync(RegressionPassword));
+
+        AssertNoPasswordDerivedDataInLogs(logger, RegressionPassword, RegressionFullHash, RegressionPrefix, RegressionSuffix);
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 303);
+    }
+
+    [Fact]
+    public async Task IsPwnedPasswordAsync_UnexpectedException_LogsDoNotExposeSensitiveData()
+    {
+        var logger = new CapturingLogger<PwnedSearch>();
+        var factory = new StubHttpClientFactory((_, _) =>
+            throw new InvalidOperationException($"Unexpected error calling https://api.pwnedpasswords.com/range/{RegressionPrefix}"));
+
+        var search = new PwnedSearch(factory, logger);
+        await Assert.ThrowsAsync<PwnedPasswordsSearchException>(() => search.IsPwnedPasswordAsync(RegressionPassword));
+
+        AssertNoPasswordDerivedDataInLogs(logger, RegressionPassword, RegressionFullHash, RegressionPrefix, RegressionSuffix);
+        Assert.Contains(logger.Entries, e => e.EventId.Id == 304);
+    }
+
+    private static void AssertNoPasswordDerivedDataInLogs(
+        CapturingLogger<PwnedSearch> logger,
+        string plaintext,
+        string fullHash,
+        string prefix,
+        string suffix,
+        string? rawResponseLine = null)
+    {
+        Assert.NotEmpty(logger.Entries);
+
+        foreach (var entry in logger.Entries)
+        {
+            var stringsToCheck = new List<string>
+            {
+                entry.StateString,
+                entry.FormattedMessage,
+            };
+
+            if (entry.Exception != null)
+            {
+                stringsToCheck.Add(entry.Exception.Message);
+                stringsToCheck.Add(entry.Exception.ToString());
+            }
+
+            foreach (var str in stringsToCheck)
+            {
+                Assert.DoesNotContain(plaintext, str, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(fullHash, str, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(prefix, str, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(suffix, str, StringComparison.OrdinalIgnoreCase);
+
+                if (!string.IsNullOrEmpty(rawResponseLine))
+                {
+                    Assert.DoesNotContain(rawResponseLine, str, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            Entries.Add(new LogEntry(logLevel, eventId, state?.ToString() ?? string.Empty, message, exception));
+        }
+    }
+
+    private sealed record LogEntry(LogLevel LogLevel, EventId EventId, string StateString, string FormattedMessage, Exception? Exception);
 
     private sealed class StubHttpClientFactory : IHttpClientFactory
     {
