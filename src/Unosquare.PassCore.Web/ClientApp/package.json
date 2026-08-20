@@ -59,7 +59,7 @@
         "@types/react-dom": "^19.0.0",
         "eslint": "^9.39.4",
         "eslint-plugin-react": "^7.37.5",
-        "eslint-plugin-react-hooks": "^5.2.0",
+        "eslint-plugin-react-hooks": "^7.1.1",
         "globals": "^17.9.0",
         "parcel": "^2.16.4",
         "prettier": "^3.8.3",
