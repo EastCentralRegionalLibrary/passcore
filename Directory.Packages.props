@@ -9,7 +9,7 @@
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
 
-    <PackageVersion Include="System.DirectoryServices" Version="8.0.0" />
+    <PackageVersion Include="System.DirectoryServices" Version="10.0.11" />
     <PackageVersion Include="System.DirectoryServices.AccountManagement" Version="8.0.0" />
 
     <PackageVersion Include="SimpleBase" Version="5.6.2" />
